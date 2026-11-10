@@ -1,6 +1,9 @@
 // The session store owns each file's history and the recovery journal that makes its edits durable.
 #include "session/SessionStore.h"
 #include "recovery/RecoveryRestore.h"
+#include "session/BackgroundAlignment.h"
+#include "storage/OffThread.h"
+#include <QPromise>
 #include <QSignalBlocker>
 #include <algorithm>
 #include <array>
@@ -47,6 +50,7 @@ bool SessionStore::repositions(Action action)
 SessionStore::SessionStore(QString recoveryDirectory, std::shared_ptr<const storage::FileSystem> files, QObject *parent)
     : QObject(parent), journal_(std::move(recoveryDirectory), std::move(files))
 {
+    alignment_ = std::make_unique<BackgroundAlignment>(*this);
     pause_.setSingleShot(true);
     pause_.setInterval(kTypingPause);
     limit_.setSingleShot(true);
@@ -60,6 +64,7 @@ SessionStore::~SessionStore()
     // Nothing listens any more; the records still have to reach the journal.
     const QSignalBlocker quiet(this);
     recordTyping();
+    journal_.close();
 }
 
 const FileSession *SessionStore::file(const std::string &id) const
@@ -94,15 +99,16 @@ Problem SessionStore::pendingError(const std::string &id) const
 
 const Draft *SessionStore::pendingDraft(const std::string &id) const
 {
-    const auto *candidate = journal_.pendingCandidate(id);
-    return candidate ? &candidate->current().draft : nullptr;
+    const auto *candidate = journal_.pendingCandidate(id, retrying_);
+    if (candidate) return &candidate->current().draft;
+    const auto command = commands_.find(id);
+    return command == commands_.end() ? nullptr : &command->second->current().draft;
 }
 
 bool SessionStore::recordTyping()
 {
     endBursts();
-    journal_.finishBehind();
-    return !hasPendingRecovery();
+    return !recording() && !hasPendingRecovery();
 }
 
 void SessionStore::endBursts()
@@ -170,13 +176,20 @@ bool SessionStore::settleRecoveryFailure(const std::string &id, const Problem &e
     return true;
 }
 
-storage::RecoveryCommit SessionStore::commitRecord(const storage::RecoveryTransaction &transaction)
+QFuture<RecoveryJournal::Receipt> SessionStore::commitRecord(const storage::RecoveryTransaction &transaction)
 {
     recordTyping();
-    return journal_.commit(transaction);
+    auto promise = std::make_shared<QPromise<RecoveryJournal::Receipt>>();
+    promise->start();
+    auto future = promise->future();
+    journal_.commit(transaction, [promise](RecoveryJournal::Receipt result) {
+        promise->addResult(result);
+        promise->finish();
+    });
+    return future;
 }
 
-bool SessionStore::discardRecoveryStore()
+QFuture<bool> SessionStore::discardRecoveryStore()
 {
     recordTyping();
     return journal_.discardStore();
@@ -188,21 +201,36 @@ bool SessionStore::startNewRecoveryStore()
     return journal_.startNewStore();
 }
 
-Transition SessionStore::retryRecovery(const std::string &id)
+QFuture<Transition> SessionStore::retryRecovery(const std::string &id)
 {
     recordTyping();
-    const auto action = pendingAction(id);
-    if (!journal_.pending(id)) return file(id) ? Transition::NoChange : Transition::StaleRevision;
-    const auto found = rowOf(id);
-    if (found < 0 || !action) return Transition::StaleRevision;
-    const auto row = static_cast<std::size_t>(found);
-    auto committed = journal_.retryPending(id);
-    if (committed) {
-        files_[row] = std::move(*committed);
-        facts_[row] = files_[row].facts();
+    auto promise = std::make_shared<QPromise<Transition>>();
+    promise->start();
+    auto future = promise->future();
+    if (journal_.busy() || !journal_.pending(id)) {
+        promise->addResult(journal_.busy() ? Transition::Blocked
+                               : file(id)  ? Transition::NoChange
+                                           : Transition::StaleRevision);
+        promise->finish();
+        return future;
     }
-    notify(row, committed ? action : std::nullopt);
-    return journal_.pending(id) ? Transition::Blocked : Transition::Applied;
+    retrying_ = true;
+    journal_.retryPending(
+        id,
+        [this](FileSession candidate, Action action) {
+            const auto row = rowOf(candidate.id());
+            if (row < 0) return;
+            files_[static_cast<std::size_t>(row)] = std::move(candidate);
+            facts_[static_cast<std::size_t>(row)] = files_[static_cast<std::size_t>(row)].facts();
+            notify(static_cast<std::size_t>(row), action);
+        },
+        [this, promise] {
+            retrying_ = false;
+            for (std::size_t row = 0; row < files_.size(); ++row) notify(row, std::nullopt);
+            promise->addResult(hasPendingRecovery() ? Transition::Blocked : Transition::Applied);
+            promise->finish();
+        });
+    return future;
 }
 
 bool SessionStore::canRestoreLoad() const
@@ -220,7 +248,10 @@ void SessionStore::replaceFiles(std::vector<FileSession> files, RecoveryRestore 
     // Typed edits belong in the store being left; SessionCoordinator refuses a
     // replacement while any of them is pending.
     recordTyping();
+    Q_ASSERT(!journal_.busy());
+    ++generation_;
     typing_.clear();
+    commands_.clear();
     Q_EMIT aboutToReplace();
     // The coordinator permits pending entries only for the placeholders of
     // this load. Retry must commit the captured files, never old placeholders.
@@ -261,15 +292,7 @@ bool SessionStore::appendFile(FileSession file)
 void SessionStore::commitOpen(std::size_t row)
 {
     // A launch capture has no earlier text; a failure leaves it pending.
-    (void)journal_.commitCandidate(files_[row], Action::Open, {});
-}
-
-bool SessionStore::commitCandidate(std::size_t row, FileSession candidate, Action action)
-{
-    if (!journal_.commitCandidate(candidate, action, files_[row].current().draft.text)) return false;
-    files_[row] = std::move(candidate);
-    facts_[row] = files_[row].facts();
-    return true;
+    journal_.commitBehind(files_[row], Action::Open, {}, [this, row](auto) { notify(row, std::nullopt); });
 }
 
 void SessionStore::notify(std::size_t row, std::optional<Action> action)
@@ -278,28 +301,49 @@ void SessionStore::notify(std::size_t row, std::optional<Action> action)
     Q_EMIT fileChanged(static_cast<int>(row));
 }
 
-template <typename Command> Transition SessionStore::update(const std::string &id, Action action, Command command)
+template <typename Command>
+QFuture<Transition> SessionStore::update(const std::string &id, Action action, Command command)
 {
     const auto found = rowOf(id);
-    if (found < 0) return Transition::StaleRevision;
+    if (found < 0) return completedFuture(Transition::StaleRevision);
     const auto row = static_cast<std::size_t>(found);
-    // The command's record follows the typed edits before it, and starts a new undo entry.
     recordTyping();
-    if (hasPendingRecovery() || hasRecoveryFailure(id)) return Transition::Blocked;
-    // Copies share the file's immutable revisions, so this costs no text copy.
-    auto candidate = files_[row];
+    if (hasPendingRecovery() || hasRecoveryFailure(id)) return completedFuture(Transition::Blocked);
+    auto candidate = commands_.contains(id) ? *commands_.at(id) : files_[row];
+    const auto previous = candidate.current().draft.text;
     const auto result = command(candidate);
-    if (result != Transition::Applied) return result;
-    const auto committed = commitCandidate(row, std::move(candidate), action);
-    notify(row, committed ? std::optional<Action>(action) : std::nullopt);
-    return committed ? Transition::Applied : Transition::Blocked;
+    if (result != Transition::Applied) return completedFuture(result);
+    const auto token = std::make_shared<const FileSession>(candidate);
+    commands_.insert_or_assign(id, token);
+    auto promise = std::make_shared<QPromise<Transition>>();
+    promise->start();
+    auto future = promise->future();
+    const auto generation = generation_;
+    journal_.commitBehind(
+        candidate, action, previous,
+        [this, id, row, candidate, action, promise, generation, token](RecoveryJournal::Written written) {
+            const bool committed = written == RecoveryJournal::Written::Committed;
+            if (generation == generation_) {
+                if (committed) {
+                    files_[row] = candidate;
+                    facts_[row] = files_[row].facts();
+                }
+                if (const auto next = commands_.find(id); next != commands_.end() && next->second == token)
+                    commands_.erase(next);
+                notify(row, committed ? std::optional<Action>{action} : std::nullopt);
+            }
+            promise->addResult(committed ? Transition::Applied : Transition::Blocked);
+            promise->finish();
+        });
+    notify(row, std::nullopt);
+    return future;
 }
 
-Transition SessionStore::replaceDraft(const std::string &id, RevisionId expected, Draft draft)
+QFuture<Transition> SessionStore::replaceDraft(const std::string &id, RevisionId expected, Draft draft)
 {
     return update(id, Action::ReplaceDraft, [&](auto &file) { return file.replaceDraft(expected, std::move(draft)); });
 }
-Transition SessionStore::editResult(const std::string &id, RevisionId expected, ResultEdit edit)
+QFuture<Transition> SessionStore::editResult(const std::string &id, RevisionId expected, ResultEdit edit)
 {
     return update(id, Action::ReplaceDraft, [&](auto &file) {
         return file.editResult(expected, std::move(edit), {.realignment = Realignment::Deferred});
@@ -310,7 +354,7 @@ Transition SessionStore::typeResult(const std::string &id, RevisionId expected, 
     const auto found = rowOf(id);
     if (found < 0) return Transition::StaleRevision;
     const auto row = static_cast<std::size_t>(found);
-    if (hasPendingRecovery() || hasRecoveryFailure(id)) return Transition::Blocked;
+    if (hasPendingRecovery() || hasRecoveryFailure(id) || commands_.contains(id)) return Transition::Blocked;
     // A typed line break ends the burst before it and starts the next, so one
     // undo never takes back more than one line of typing.
     if (edit.replacement.find('\n') != std::string::npos) endBurst(id);
@@ -354,84 +398,80 @@ Transition SessionStore::installAlignment(const std::string &id, RevisionId revi
     notify(row, std::nullopt);
     return result;
 }
-Transition SessionStore::settleAlignment(const std::string &id)
+QFuture<Transition> SessionStore::awaitAlignment(const std::string &id, RevisionId revision)
 {
-    const auto *settled = file(id);
-    if (!settled) return Transition::StaleRevision;
-    const auto pending = settled->pendingAlignment();
-    if (!pending) return Transition::NoChange;
-    std::shared_ptr<const CorrespondenceMap> aligned;
-    try {
-        aligned = std::make_shared<const CorrespondenceMap>(pending->realigned());
-    } catch (const std::bad_alloc &) {
-        return Transition::OutOfMemory;
-    }
-    return installAlignment(id, settled->current().id, std::move(aligned));
+    return alignment_->waitFor(id, revision);
 }
-Transition SessionStore::applyChoice(const std::string &id, const ChoicePreview &preview, bool confirmReplacement)
+QFuture<Transition> SessionStore::applyChoice(const std::string &id, const ChoicePreview &preview,
+                                              bool confirmReplacement)
 {
     // A preview is made from exact passages, so it is compared with exact ones.
-    (void)settleAlignment(id);
     // Recovery replays the complete text-and-decision transaction as a draft
     // replacement. Undo/redo then retain exactly the same action order.
     return update(id, Action::ReplaceDraft,
                   [&](auto &file) { return branch_truce::applyChoice(file, preview, confirmReplacement); });
 }
-Transition SessionStore::applyNonConflicting(const std::string &id, const NonConflictingPreview &preview, bool confirm)
+QFuture<Transition> SessionStore::applyNonConflicting(const std::string &id, const NonConflictingPreview &preview,
+                                                      bool confirm)
 {
-    (void)settleAlignment(id);
     return update(id, Action::ReplaceDraft,
                   [&](auto &file) { return branch_truce::applyNonConflicting(file, preview, confirm); });
 }
-Transition SessionStore::applyWholeFile(const std::string &id, const WholeFilePreview &preview, bool confirm)
+QFuture<Transition> SessionStore::applyWholeFile(const std::string &id, const WholeFilePreview &preview, bool confirm)
 {
-    (void)settleAlignment(id);
     return update(id, Action::ReplaceDraft,
                   [&](auto &file) { return branch_truce::applyWholeFile(file, preview, confirm); });
 }
-Transition SessionStore::undo(const std::string &id, RevisionId expected)
+QFuture<Transition> SessionStore::undo(const std::string &id, RevisionId expected)
 {
     return update(id, Action::Undo, [&](auto &file) { return file.undo(expected); });
 }
-Transition SessionStore::redo(const std::string &id, RevisionId expected)
+QFuture<Transition> SessionStore::redo(const std::string &id, RevisionId expected)
 {
     return update(id, Action::Redo, [&](auto &file) { return file.redo(expected); });
 }
-Transition SessionStore::discardToCheckpoint(const std::string &id, RevisionId expected)
+QFuture<Transition> SessionStore::discardToCheckpoint(const std::string &id, RevisionId expected)
 {
     return update(id, Action::DiscardToCheckpoint, [&](auto &file) { return file.discardToCheckpoint(expected); });
 }
-Transition SessionStore::discardToStaged(const std::string &id, RevisionId expected)
+QFuture<Transition> SessionStore::discardToStaged(const std::string &id, RevisionId expected)
 {
     return update(id, Action::DiscardToStaged, [&](auto &file) { return file.discardToStaged(expected); });
 }
-Transition SessionStore::beginMarkResolved(const std::string &id, RevisionId expected, bool confirmUndecided)
+QFuture<Transition> SessionStore::beginMarkResolved(const std::string &id, RevisionId expected, bool confirmUndecided)
 {
-    // Mark resolved counts markers against exact passages. Settling them here
-    // keeps them even when the review is refused.
-    (void)settleAlignment(id);
+    if (const auto *current = file(id); current && current->pendingAlignment())
+        return awaitAlignment(id, expected)
+            .then(this,
+                  [this, id, expected, confirmUndecided](Transition aligned) {
+                      if (aligned != Transition::Applied && aligned != Transition::NoChange)
+                          return completedFuture(aligned);
+                      return beginMarkResolved(id, expected, confirmUndecided);
+                  })
+            .unwrap();
     return update(id, Action::MarkResolvedReview,
                   [&](auto &file) { return file.beginMarkResolved(expected, confirmUndecided); });
 }
-Transition SessionStore::recordCheckpoint(const std::string &id, RevisionId revision, Outcome outcome,
-                                          std::string detail)
+QFuture<Transition> SessionStore::recordCheckpoint(const std::string &id, RevisionId revision, Outcome outcome,
+                                                   std::string detail)
 {
     return update(id, Action::ManualSave,
                   [&](auto &file) { return file.recordCheckpoint(revision, outcome, std::move(detail)); });
 }
-Transition SessionStore::recordWrite(const std::string &id, RevisionId revision, Outcome outcome, std::string detail)
+QFuture<Transition> SessionStore::recordWrite(const std::string &id, RevisionId revision, Outcome outcome,
+                                              std::string detail)
 {
     return update(id, Action::WriteOutcome,
                   [&](auto &file) { return file.recordWrite(revision, outcome, std::move(detail)); });
 }
-Transition SessionStore::recordStage(const std::string &id, RevisionId revision, Outcome outcome, std::string objectId,
-                                     std::string mode, std::string detail)
+QFuture<Transition> SessionStore::recordStage(const std::string &id, RevisionId revision, Outcome outcome,
+                                              std::string objectId, std::string mode, std::string detail)
 {
     return update(id, Action::StageOutcome, [&](auto &file) {
         return file.recordStage(revision, outcome, std::move(objectId), std::move(mode), std::move(detail));
     });
 }
-Transition SessionStore::loadLargeFile(const std::string &id)
+QFuture<Transition> SessionStore::loadLargeFile(const std::string &id)
 {
     return update(id, Action::LoadLarge, [](auto &file) { return file.loadLargeFile(); });
 }

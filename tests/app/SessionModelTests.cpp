@@ -4,6 +4,7 @@
 #include "TestSession.h"
 #include "app/SessionModel.h"
 #include "app/Translations.h"
+#include "fixtures/Await.h"
 #include "fixtures/EventLoop.h"
 #include "fixtures/SyncFaults.h"
 #include "session/BackgroundAlignment.h"
@@ -13,6 +14,8 @@
 #include <QSet>
 #include <QTemporaryDir>
 #include <limits>
+
+using test_support::await;
 
 using namespace branch_truce;
 using namespace session_fixtures;
@@ -79,13 +82,13 @@ int main(int argc, char **argv)
         auto edited = launch;
         edited.text = "manual result without conflict markers\n";
         edited.unresolvedMarkers = 0;
-        CHECK(model.replaceDraft("choices", 1, edited) == Transition::Applied);
+        CHECK(await(model.replaceDraft("choices", 1, edited)) == Transition::Applied);
         CHECK(role(model, SessionModel::ConflictCountRole).toInt() == 0);
         CHECK(role(model, SessionModel::UndecidedRole).toInt() > 0);
-        CHECK(model.undo("choices", model.file("choices")->current().id) == Transition::Applied);
+        CHECK(await(model.undo("choices", model.file("choices")->current().id)) == Transition::Applied);
         CHECK(model.file("choices")->current().draft == launch);
         CHECK(role(model, SessionModel::ConflictCountRole).toInt() == 1);
-        CHECK(model.redo("choices", model.file("choices")->current().id) == Transition::Applied);
+        CHECK(await(model.redo("choices", model.file("choices")->current().id)) == Transition::Applied);
         CHECK(model.file("choices")->current().draft == edited);
         CHECK(role(model, SessionModel::ConflictCountRole).toInt() == 0);
         CHECK(replayedFile(model.recoveryDirectory()).current().draft == edited);
@@ -97,13 +100,13 @@ int main(int argc, char **argv)
         CHECK(model.appendFile(sessionFile("status")));
         const auto revision = model.file("status")->current().id;
         CHECK(role(model, SessionModel::StatusIconRole).toString() != "emblem-checked");
-        CHECK(model.recordCheckpoint("status", revision, Outcome::Succeeded) == Transition::Applied);
+        CHECK(await(model.recordCheckpoint("status", revision, Outcome::Succeeded)) == Transition::Applied);
         CHECK(role(model, SessionModel::StatusIconRole).toString() != "emblem-checked");
-        CHECK(model.beginMarkResolved("status", revision) == Transition::Applied);
+        CHECK(await(model.beginMarkResolved("status", revision)) == Transition::Applied);
         CHECK(role(model, SessionModel::StatusIconRole).toString() != "emblem-checked");
-        CHECK(model.recordWrite("status", revision, Outcome::Succeeded) == Transition::Applied);
+        CHECK(await(model.recordWrite("status", revision, Outcome::Succeeded)) == Transition::Applied);
         CHECK(role(model, SessionModel::StatusIconRole).toString() != "emblem-checked");
-        CHECK(model.recordStage("status", revision, Outcome::Succeeded, "verified-object", "100644")
+        CHECK(await(model.recordStage("status", revision, Outcome::Succeeded, "verified-object", "100644"))
               == Transition::Applied);
         CHECK(role(model, SessionModel::StatusIconRole).toString() == "emblem-checked");
     });
@@ -120,31 +123,32 @@ int main(int argc, char **argv)
                          });
         QObject::connect(&model.rows, &QAbstractItemModel::dataChanged, &model,
                          [&](const QModelIndex &top, const QModelIndex &bottom, const QList<int> &roles) {
-                             EXPECT(top.row() == 0 && top == bottom && roles.isEmpty());
+                             EXPECT((top.row() == 0 || top.data(SessionModel::FileIdRole) == "second") && top == bottom
+                                    && roles.isEmpty());
                              ++changes;
                          });
         CHECK(model.appendFile(FileSession("id", "file", draft())));
         const QPersistentModelIndex first(model.index(0));
         CHECK(!model.appendFile(FileSession("id", "duplicate", draft())));
-        CHECK(summaries == 1 && insertions == 1 && changes == 0);
-        CHECK(model.replaceDraft("missing", 1, draft("missing")) == Transition::StaleRevision);
-        CHECK(model.replaceDraft("id", 1, draft()) == Transition::NoChange);
-        CHECK(model.replaceDraft("id", 99, draft("stale")) == Transition::StaleRevision);
-        CHECK(model.recordWrite("id", 1, Outcome::Succeeded) == Transition::StaleRevision);
-        CHECK(summaries == 1 && changes == 0);
-        CHECK(model.replaceDraft("id", 1, draft("changed")) == Transition::Applied);
-        CHECK(changes == 1 && summaries == 2);
-        CHECK(model.beginMarkResolved("id", 2) == Transition::Applied);
-        CHECK(model.recordWrite("id", 2, Outcome::Succeeded) == Transition::InvalidOutcome);
-        CHECK(changes == 2 && summaries == 3);
+        CHECK(summaries == 2 && insertions == 1 && changes == 1);
+        CHECK(await(model.replaceDraft("missing", 1, draft("missing"))) == Transition::StaleRevision);
+        CHECK(await(model.replaceDraft("id", 1, draft())) == Transition::NoChange);
+        CHECK(await(model.replaceDraft("id", 99, draft("stale"))) == Transition::StaleRevision);
+        CHECK(await(model.recordWrite("id", 1, Outcome::Succeeded)) == Transition::StaleRevision);
+        CHECK(summaries == 2 && changes == 1);
+        CHECK(await(model.replaceDraft("id", 1, draft("changed"))) == Transition::Applied);
+        CHECK(changes == 3 && summaries == 4);
+        CHECK(await(model.beginMarkResolved("id", 2)) == Transition::Applied);
+        CHECK(await(model.recordWrite("id", 2, Outcome::Succeeded)) == Transition::InvalidOutcome);
+        CHECK(changes == 5 && summaries == 6);
         CHECK(model.appendFile(FileSession("second", "second", draft())));
         CHECK(first.isValid() && first.row() == 0 && first.data(SessionModel::FileIdRole) == "id");
-        CHECK(insertions == 2 && summaries == 4);
+        CHECK(insertions == 2 && summaries == 8);
     });
     suite.run("Save and publication roles stay distinct and handoff includes every file", [] {
         TestSession model;
         CHECK(model.appendFile(FileSession("first", "a", draft())));
-        CHECK(model.recordCheckpoint("first", 1, Outcome::Succeeded) == Transition::Applied);
+        CHECK(await(model.recordCheckpoint("first", 1, Outcome::Succeeded)) == Transition::Applied);
         CHECK(!role(model, SessionModel::UnsavedRole).toBool());
         CHECK(role(model, SessionModel::ReviewNeededRole).toBool());
         CHECK(!model.file("first")->publication().reviewed());
@@ -167,7 +171,7 @@ int main(int argc, char **argv)
         CHECK(model.appendFile(FileSession("third", "c", draft())));
         resolve(model, "third");
         CHECK(!model.canFinish() && model.resolvedFiles() == 2);
-        CHECK(model.recordCheckpoint("third", 1, Outcome::Failed, "disk full") == Transition::Applied);
+        CHECK(await(model.recordCheckpoint("third", 1, Outcome::Failed, "disk full")) == Transition::Applied);
         CHECK(!model.canFinish() && model.resolvedFiles() == 1);
         CHECK(model.file("third")->publication().checkpointOutcome()->detail == "disk full");
         CHECK(role(model, SessionModel::StatusRole, 2).toString() == "Draft save failed");
@@ -202,27 +206,27 @@ int main(int argc, char **argv)
         choices.decisions["left"] = {};
         CHECK(model.appendFile(sessionFile("undecided", choices)));
         CHECK(model.appendFile(sessionFile("saved")));
-        CHECK(model.recordCheckpoint("saved", 1, Outcome::Succeeded) == Transition::Applied);
+        CHECK(await(model.recordCheckpoint("saved", 1, Outcome::Succeeded)) == Transition::Applied);
         CHECK(model.appendFile(sessionFile("review")));
         CHECK(model.appendFile(sessionFile("newer")));
         resolve(model, "newer");
-        CHECK(model.replaceDraft("newer", 1, draft("newer draft\n")) == Transition::Applied);
+        CHECK(await(model.replaceDraft("newer", 1, draft("newer draft\n"))) == Transition::Applied);
         CHECK(model.appendFile(sessionFile("written")));
-        CHECK(model.beginMarkResolved("written", 1) == Transition::Applied);
-        CHECK(model.recordCheckpoint("written", 1, Outcome::Succeeded) == Transition::Applied);
-        CHECK(model.recordWrite("written", 1, Outcome::Succeeded) == Transition::Applied);
+        CHECK(await(model.beginMarkResolved("written", 1)) == Transition::Applied);
+        CHECK(await(model.recordCheckpoint("written", 1, Outcome::Succeeded)) == Transition::Applied);
+        CHECK(await(model.recordWrite("written", 1, Outcome::Succeeded)) == Transition::Applied);
         CHECK(model.appendFile(sessionFile("published")));
         resolve(model, "published");
         CHECK(model.appendFile(sessionFile("failed")));
-        CHECK(model.beginMarkResolved("failed", 1) == Transition::Applied);
-        CHECK(model.recordCheckpoint("failed", 1, Outcome::Succeeded) == Transition::Applied);
-        CHECK(model.recordWrite("failed", 1, Outcome::Failed, "disk full") == Transition::Applied);
+        CHECK(await(model.beginMarkResolved("failed", 1)) == Transition::Applied);
+        CHECK(await(model.recordCheckpoint("failed", 1, Outcome::Succeeded)) == Transition::Applied);
+        CHECK(await(model.recordWrite("failed", 1, Outcome::Failed, "disk full")) == Transition::Applied);
         CHECK(model.appendFile(FileSession("outside", "diagram.png", {},
                                            {.support = Support::OutsideApp, .supportDetail = "image content"})));
         CHECK(model.appendFile(sessionFile("pending")));
         {
             const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
-            CHECK(model.replaceDraft("pending", 1, draft("pending input\n")) == Transition::Blocked);
+            CHECK(await(model.replaceDraft("pending", 1, draft("pending input\n"))) == Transition::Blocked);
             CHECK(faults->failures == 1);
         }
         CHECK(model.hasPendingRecovery() && !model.canFinish());
@@ -273,7 +277,7 @@ int main(int argc, char **argv)
         CHECK(entries.value("failed").value("status").toString() == "Repository write failed");
         CHECK(entries.value("newer").value("status").toString() == "Earlier result staged; current draft not applied");
 
-        CHECK(model.retryRecovery("pending") == Transition::Applied);
+        CHECK(await(model.retryRecovery("pending")) == Transition::Applied);
         CHECK(!model.hasPendingRecovery() && model.file("pending")->current().draft == draft("pending input\n"));
         summary = model.handoff();
         entries = handoffEntries(summary);
@@ -297,14 +301,14 @@ int main(int argc, char **argv)
         };
         // A fresh draft needs review and Save; the cached facts must follow each outcome.
         CHECK(icon("write") == "vcs-locally-modified");
-        CHECK(model.beginMarkResolved("write", 1) == Transition::Applied);
-        CHECK(model.recordCheckpoint("write", 1, Outcome::Succeeded) == Transition::Applied);
+        CHECK(await(model.beginMarkResolved("write", 1)) == Transition::Applied);
+        CHECK(await(model.recordCheckpoint("write", 1, Outcome::Succeeded)) == Transition::Applied);
         CHECK(icon("write") == "document-save");
-        CHECK(model.recordWrite("write", 1, Outcome::Failed, "disk full") == Transition::Applied);
-        CHECK(model.beginMarkResolved("stage", 1) == Transition::Applied);
-        CHECK(model.recordCheckpoint("stage", 1, Outcome::Succeeded) == Transition::Applied);
-        CHECK(model.recordWrite("stage", 1, Outcome::Succeeded) == Transition::Applied);
-        CHECK(model.recordStage("stage", 1, Outcome::Failed, {}, {}, "index locked") == Transition::Applied);
+        CHECK(await(model.recordWrite("write", 1, Outcome::Failed, "disk full")) == Transition::Applied);
+        CHECK(await(model.beginMarkResolved("stage", 1)) == Transition::Applied);
+        CHECK(await(model.recordCheckpoint("stage", 1, Outcome::Succeeded)) == Transition::Applied);
+        CHECK(await(model.recordWrite("stage", 1, Outcome::Succeeded)) == Transition::Applied);
+        CHECK(await(model.recordStage("stage", 1, Outcome::Failed, {}, {}, "index locked")) == Transition::Applied);
         model.recordRecoveryFailure("recovery", ProblemCode::RecoveryStoreUnavailable);
         const auto entries = handoffEntries(model.handoff());
         for (const auto *id : {"write", "stage", "recovery"}) {
@@ -415,23 +419,23 @@ int main(int argc, char **argv)
         resolve(model, "id");
         auto changed = draft("new result");
         changed.decisions["left"] = {DecisionValue::Ignored, {}};
-        CHECK(model.replaceDraft("id", 1, changed) == Transition::Applied);
+        CHECK(await(model.replaceDraft("id", 1, changed)) == Transition::Applied);
         CHECK(role(model, SessionModel::CanUndoRole).toBool());
         CHECK(model.file("id")->facts().earlierStaged && !model.canFinish());
-        CHECK(model.undo("id", 2) == Transition::Applied);
+        CHECK(await(model.undo("id", 2)) == Transition::Applied);
         CHECK(model.file("id")->current().draft.text == "result\n");
         CHECK(role(model, SessionModel::DecisionsRole).toList()[0].toMap().value("value").toString() == "accepted");
         CHECK(role(model, SessionModel::CanRedoRole).toBool());
         CHECK(role(model, SessionModel::ReviewNeededRole).toBool() && !model.canFinish());
-        CHECK(model.redo("id", 3) == Transition::Applied);
+        CHECK(await(model.redo("id", 3)) == Transition::Applied);
         CHECK(model.file("id")->current().draft.text == "new result");
         CHECK(role(model, SessionModel::DecisionsRole).toList()[0].toMap().value("value").toString() == "ignored");
-        CHECK(model.discardToCheckpoint("id", 4) == Transition::Applied);
-        CHECK(model.recordCheckpoint("id", 2, Outcome::Succeeded) == Transition::StaleRevision);
+        CHECK(await(model.discardToCheckpoint("id", 4)) == Transition::Applied);
+        CHECK(await(model.recordCheckpoint("id", 2, Outcome::Succeeded)) == Transition::StaleRevision);
         CHECK(*model.file("id")->publication().checkpoint() == 1);
-        CHECK(model.discardToStaged("id", 5) == Transition::Applied);
+        CHECK(await(model.discardToStaged("id", 5)) == Transition::Applied);
         CHECK(model.canFinish() && role(model, SessionModel::CurrentRevisionRole).toString() == "1");
-        CHECK(model.recordCheckpoint("id", 4, Outcome::Failed) == Transition::StaleRevision);
+        CHECK(await(model.recordCheckpoint("id", 4, Outcome::Failed)) == Transition::StaleRevision);
         CHECK(model.canFinish());
     });
     suite.run("a settled file reads ready to mark resolved until undo reopens a choice", [] {
@@ -443,10 +447,10 @@ int main(int argc, char **argv)
         const auto choose = [&](SourceSide side, std::size_t section) {
             const auto &file = *model.file("choices");
             const auto &target = test_support::choiceTarget(file, side, ChoiceScope::Section, section);
-            return model.applyChoice(
+            return await(model.applyChoice(
                 "choices",
                 previewChoice(file, file.current().id, target.source.contributionId, ChoiceAction::ResolveUsingSide),
-                true);
+                true));
         };
         const auto settled = [&] {
             return role(model, SessionModel::ProgressRole, row()).toMap().value("settled").toBool();
@@ -460,9 +464,9 @@ int main(int argc, char **argv)
         // Ready is not reviewed or resolved, and the handoff keeps its existing category.
         CHECK(role(model, SessionModel::StatusRole, row()).toString() == "Current result needs review");
         CHECK(!role(model, SessionModel::ResolvedRole, row()).toBool());
-        CHECK(model.undo("choices", model.file("choices")->current().id) == Transition::Applied);
+        CHECK(await(model.undo("choices", model.file("choices")->current().id)) == Transition::Applied);
         CHECK(!settled() && line() != "Ready to mark resolved");
-        CHECK(model.redo("choices", model.file("choices")->current().id) == Transition::Applied);
+        CHECK(await(model.redo("choices", model.file("choices")->current().id)) == Transition::Applied);
         CHECK(settled());
         model.recordRecoveryFailure("choices", ProblemCode::RecoveryStoreUnavailable);
         CHECK(!settled() && line() != "Ready to mark resolved");
@@ -474,29 +478,29 @@ int main(int argc, char **argv)
         CHECK(model.appendFile(FileSession("id", "file", undecided)));
         int changes = 0;
         QObject::connect(&model.rows, &SessionModel::summaryChanged, &model, [&] { ++changes; });
-        CHECK(model.beginMarkResolved("id", 1) == Transition::ConfirmationRequired);
+        CHECK(await(model.beginMarkResolved("id", 1)) == Transition::ConfirmationRequired);
         CHECK(changes == 0 && !model.file("id")->publication().reviewed());
         CHECK(role(model, SessionModel::UndecidedRole).toULongLong() == 1);
-        CHECK(model.beginMarkResolved("id", 1, true) == Transition::Applied);
+        CHECK(await(model.beginMarkResolved("id", 1, true)) == Transition::Applied);
         CHECK(model.file("id")->publication().reviewed()->confirmedUndecided);
         undecided.text = "=======\n";
-        CHECK(model.replaceDraft("id", 1, undecided) == Transition::Applied);
-        CHECK(model.beginMarkResolved("id", 2, true) == Transition::Blocked);
-        CHECK(changes == 2);
+        CHECK(await(model.replaceDraft("id", 1, undecided)) == Transition::Applied);
+        CHECK(await(model.beginMarkResolved("id", 2, true)) == Transition::Blocked);
+        CHECK(changes == 4);
         CHECK(role(model, SessionModel::FinishBlockersRole).toStringList().contains("Known conflict markers remain"));
     });
     for (const auto outcome : {Outcome::Succeeded, Outcome::Failed, Outcome::Uncertain}) {
         suite.run("a delayed write stays visible after a newer Save: " + nameOf(outcome), [=] {
             TestSession model;
             CHECK(model.appendFile(FileSession("id", "file", draft())));
-            CHECK(model.beginMarkResolved("id", 1) == Transition::Applied);
-            CHECK(model.recordCheckpoint("id", 1, Outcome::Succeeded) == Transition::Applied);
-            CHECK(model.replaceDraft("id", 1, draft("new saved draft")) == Transition::Applied);
-            CHECK(model.recordCheckpoint("id", 2, Outcome::Succeeded) == Transition::Applied);
+            CHECK(await(model.beginMarkResolved("id", 1)) == Transition::Applied);
+            CHECK(await(model.recordCheckpoint("id", 1, Outcome::Succeeded)) == Transition::Applied);
+            CHECK(await(model.replaceDraft("id", 1, draft("new saved draft"))) == Transition::Applied);
+            CHECK(await(model.recordCheckpoint("id", 2, Outcome::Succeeded)) == Transition::Applied);
             int changes = 0;
             QObject::connect(&model.rows, &SessionModel::summaryChanged, &model, [&] { ++changes; });
-            CHECK(model.recordWrite("id", 1, outcome, "delayed diagnostic") == Transition::Applied);
-            CHECK(changes == 1);
+            CHECK(await(model.recordWrite("id", 1, outcome, "delayed diagnostic")) == Transition::Applied);
+            CHECK(changes == 2);
             const auto &result = *model.file("id")->publication().writeOutcome();
             const auto status = outcome == Outcome::Succeeded ? "Written, unresolved"
                 : outcome == Outcome::Failed                  ? "Repository write failed"
@@ -518,7 +522,6 @@ int main(int argc, char **argv)
         QTemporaryDir directory;
         CHECK(directory.isValid());
         TestSession model(directory.path() + "/recovery");
-        const BackgroundAlignment alignment(model);
         CHECK(model.appendFile(test_support::choiceFile()));
         auto expected = *model.file("choices");
         CHECK(expected.editResult(1, {{0, 0}, "a"}) == Transition::Applied);
@@ -549,10 +552,10 @@ int main(int argc, char **argv)
         CHECK(model.typeResult("choices", 2, {{1, 1}, "b"}) == Transition::Applied);
         CHECK(model.installAlignment("choices", 2, stale) == Transition::StaleRevision);
         CHECK(model.file("choices")->pendingAlignment() != nullptr);
-        CHECK(model.settleAlignment("choices") == Transition::Applied);
+        CHECK(await(model.awaitAlignment("choices", model.file("choices")->current().id)) == Transition::Applied);
         CHECK(!model.file("choices")->pendingAlignment() && model.file("choices")->correspondence()->aligned());
-        CHECK(model.settleAlignment("choices") == Transition::NoChange);
-        CHECK(model.settleAlignment("missing") == Transition::StaleRevision);
+        CHECK(await(model.awaitAlignment("choices", model.file("choices")->current().id)) == Transition::NoChange);
+        CHECK(await(model.awaitAlignment("missing", 1)) == Transition::StaleRevision);
     });
     return suite.report();
 }

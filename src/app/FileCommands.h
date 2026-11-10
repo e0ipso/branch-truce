@@ -2,6 +2,7 @@
 #pragma once
 #include "CommandGuard.h"
 #include "core/Correspondence.h"
+#include <QFuture>
 #include <QObject>
 #include <QString>
 #include <QtQml/qqmlregistration.h>
@@ -17,7 +18,8 @@ class Selection;
 class SessionStore;
 
 // Every command names the file and the revision the view showed, and is
-// refused when either moved on; refusals and outcomes go to CommandFeedback.
+// refused when either moved on. A true return accepts the request; durable
+// outcomes arrive later through the store and CommandFeedback.
 class FileCommands : public QObject {
     Q_OBJECT
     QML_ELEMENT
@@ -74,8 +76,7 @@ private:
     std::optional<ResultEdit> resultEdit(const CommandTarget &target, int begin, int end, const QString &replacement);
     [[nodiscard]] QString discardedMessage(const FileSession &file) const;
     [[nodiscard]] static QString stagedDiscardMessage();
-    // A discard whose commit failed completes when its file's pending input commits.
-    void pendingDiscardSettled(const std::string &fileId);
+    bool acknowledge(QFuture<Transition> result, const QString &failure = {});
 
     SessionStore &store_;
     const Selection &selection_;
@@ -83,9 +84,5 @@ private:
     ResolutionPublisher &publisher_;
     const MergetoolSession &mergetool_;
     CommandFeedback &feedback_;
-    // The file whose discard waits on recovery retry, so the completion
-    // message describes that file even after the selection moved.
-    std::optional<std::string> discardPendingFileId_;
-    std::optional<std::string> stagedDiscardPendingFileId_;
 };
 }

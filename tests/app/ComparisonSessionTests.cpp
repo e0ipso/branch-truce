@@ -1,6 +1,9 @@
 // The session around the file: a failed discard, Mark resolved, the close handoff, large files and
 // how notices show paths.
 #include "ComparisonScene.h"
+#include "fixtures/Await.h"
+
+using test_support::await;
 
 using namespace comparison_scene;
 
@@ -12,14 +15,14 @@ void comparison_scene::addSessionCases(Groups groups)
         auto saved = fixture.file().current().draft;
         saved.text += "saved app draft\n";
         saved.decisions["kept"] = {DecisionValue::Accepted, 4};
-        CHECK(fixture.controller.store()->replaceDraft("choices", fixture.file().current().id, saved)
+        CHECK(await(fixture.controller.store()->replaceDraft("choices", fixture.file().current().id, saved))
               == Transition::Applied);
         settle([&] { return fixture.controller.selectedFile()->unsaved(); });
         fixture.click("saveDraft");
         auto discarded = saved;
         discarded.text += "discarded edit\n";
         discarded.decisions["kept"] = {DecisionValue::Ignored, {}};
-        CHECK(fixture.controller.store()->replaceDraft("choices", fixture.file().current().id, discarded)
+        CHECK(await(fixture.controller.store()->replaceDraft("choices", fixture.file().current().id, discarded))
               == Transition::Applied);
         settle([&] { return fixture.controller.selectedFile()->unsaved(); });
         auto *discardButton = test_support::fileToolbarControl(fixture.window, "discardUnsaved");
@@ -100,12 +103,12 @@ void comparison_scene::addSessionCases(Groups groups)
         Fixture fixture;
         auto *files = fixture.controller.store();
         CHECK(files->appendFile(namedChoiceFile("saved")));
-        CHECK(files->recordCheckpoint("saved", 1, Outcome::Succeeded) == Transition::Applied);
+        CHECK(await(files->recordCheckpoint("saved", 1, Outcome::Succeeded)) == Transition::Applied);
         CHECK(files->appendFile(namedChoiceFile("published")));
-        CHECK(files->beginMarkResolved("published", 1, true) == Transition::Applied);
-        CHECK(files->recordCheckpoint("published", 1, Outcome::Succeeded) == Transition::Applied);
-        CHECK(files->recordWrite("published", 1, Outcome::Succeeded) == Transition::Applied);
-        CHECK(files->recordStage("published", 1, Outcome::Succeeded, "verified-object", "100644")
+        CHECK(await(files->beginMarkResolved("published", 1, true)) == Transition::Applied);
+        CHECK(await(files->recordCheckpoint("published", 1, Outcome::Succeeded)) == Transition::Applied);
+        CHECK(await(files->recordWrite("published", 1, Outcome::Succeeded)) == Transition::Applied);
+        CHECK(await(files->recordStage("published", 1, Outcome::Succeeded, "verified-object", "100644"))
               == Transition::Applied);
         CHECK(files->file("published")->facts().resolved);
         CHECK(files->appendFile(FileSession("outside", "diagram.png", {},

@@ -22,6 +22,7 @@ Kirigami.ApplicationWindow {
     required property MergetoolStatus mergetool
     // Hiding the file list keeps the selected file, the editor location and the unsaved result.
     property bool fileListVisible: true
+    property bool previewRequested: false
     readonly property bool supportedSelection: selectedFile.supported
     readonly property bool binarySelection: selectedFile.binaryExcluded
     readonly property string selectedAddCommand: OutsideAppText.gitAddCommand(selectedFile.pathBytes)
@@ -47,20 +48,44 @@ Kirigami.ApplicationWindow {
             [guidance, selectedAddCommand]);
     }
     function choose(target: string, action: int): void {
-        if (!choices.previewChoice(selectedFile.fileId, selectedFile.currentRevision, target, action))
-            return;
-        if (choices.choicePreview.confirmationRequired)
-            replacementDialog.open();
-        else
-            choices.applyChoice(false);
+        choices.cancel();
+        window.previewRequested = true;
+        const accepted = choices.previewChoice(selectedFile.fileId, selectedFile.currentRevision, target, action);
+        window.previewRequested = accepted && choices.previewPending;
     }
     function chooseNonConflicting(scope: int): void {
-        if (choices.previewNonConflicting(selectedFile.fileId, selectedFile.currentRevision, scope))
-            nonConflictingDialog.open();
+        choices.cancel();
+        window.previewRequested = true;
+        const accepted = choices.previewNonConflicting(selectedFile.fileId, selectedFile.currentRevision, scope);
+        window.previewRequested = accepted && choices.previewPending;
     }
     function chooseWholeFile(side: int): void {
-        if (choices.previewWholeFile(selectedFile.fileId, selectedFile.currentRevision, side))
-            wholeFileDialog.open();
+        choices.cancel();
+        window.previewRequested = true;
+        const accepted = choices.previewWholeFile(selectedFile.fileId, selectedFile.currentRevision, side);
+        window.previewRequested = accepted && choices.previewPending;
+    }
+    Connections {
+        target: choices
+        function onPreviewPendingChanged(): void {
+            if (!choices.previewPending)
+                window.previewRequested = false;
+        }
+        function onReady(scope: int): void {
+            if (!window.previewRequested)
+                return;
+            window.previewRequested = false;
+            if (scope === ChoicePreviewFlow.Scope.Choice) {
+                if (choices.choicePreview.confirmationRequired)
+                    replacementDialog.open();
+                else
+                    choices.applyChoice(false);
+            } else if (scope === ChoicePreviewFlow.Scope.NonConflicting) {
+                nonConflictingDialog.open();
+            } else {
+                wholeFileDialog.open();
+            }
+        }
     }
     // Refused while an input method composes, so the composition keeps its place.
     function toggleFileList(): bool {
@@ -103,11 +128,20 @@ Kirigami.ApplicationWindow {
         if (completion.retryPendingRecovery())
             window.close();
     }
+    Connections {
+        target: completion
+        function onRecoveryRetried(succeeded: bool): void {
+            if (succeeded)
+                window.close();
+            else
+                recoveryCloseDialog.open();
+        }
+    }
     // Closing the window is an ordinary finish action: with work outstanding it
     // opens the handoff instead, where leaving is a deliberate choice. Input that
     // recovery could not keep blocks the close until it is kept or the user cancels.
     onClosing: close => {
-        // Typing still being recorded is written first, so a failure shows as pending input.
+        // Queue typing first. The handoff waits for durability; a failure offers retry.
         window.commands.recordTyping();
         if (window.files.hasPendingRecovery) {
             close.accepted = false;

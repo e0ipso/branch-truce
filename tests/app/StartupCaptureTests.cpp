@@ -2,6 +2,9 @@
 // and the sources, provenance and formats of merge, rebase and converted files.
 #include "StartupRoutes.h"
 #include "fixtures/AppSession.h"
+#include "fixtures/Await.h"
+
+using test_support::await;
 
 using namespace startup_routes;
 
@@ -47,7 +50,8 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
                     CHECK(selected->support() == expected);
                     CHECK(!selected->supportDetail().isEmpty());
                     CHECK(selected->stage2().isEmpty() && selected->initialResult().isEmpty());
-                    CHECK(model->replaceDraft(id.toStdString(), 1, {"unsafe edit", {}, 0}) == Transition::Blocked);
+                    CHECK(await(model->replaceDraft(id.toStdString(), 1, {"unsafe edit", {}, 0}))
+                          == Transition::Blocked);
                     continue;
                 }
                 CHECK(selected->supported());
@@ -77,12 +81,12 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
             }
             CHECK(supportedIds.size() == 4);
             for (const auto &id : supportedIds) {
-                CHECK(model->replaceDraft(id, 1, {"reviewed supported result\n", {}, 0}) == Transition::Applied);
+                CHECK(await(model->replaceDraft(id, 1, {"reviewed supported result\n", {}, 0})) == Transition::Applied);
                 const auto revision = model->file(id)->current().id;
-                CHECK(model->beginMarkResolved(id, revision) == Transition::Applied);
-                CHECK(model->recordCheckpoint(id, revision, Outcome::Succeeded) == Transition::Applied);
-                CHECK(model->recordWrite(id, revision, Outcome::Succeeded) == Transition::Applied);
-                CHECK(model->recordStage(id, revision, Outcome::Succeeded, "fixture-verified-object", "100644")
+                CHECK(await(model->beginMarkResolved(id, revision)) == Transition::Applied);
+                CHECK(await(model->recordCheckpoint(id, revision, Outcome::Succeeded)) == Transition::Applied);
+                CHECK(await(model->recordWrite(id, revision, Outcome::Succeeded)) == Transition::Applied);
+                CHECK(await(model->recordStage(id, revision, Outcome::Succeeded, "fixture-verified-object", "100644"))
                       == Transition::Applied);
             }
             CHECK(controller.files()->resolvedFiles() == 4 && !controller.completion()->handoff().clean
@@ -184,8 +188,8 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
                     if (failRecovery) {
                         CHECK(model->pendingDraft(loaded.id())
                               && *model->pendingDraft(loaded.id()) == loaded.current().draft);
-                        CHECK(model->retryRecovery(loaded.id()) == Transition::Blocked);
-                        CHECK(model->replaceDraft(loaded.id(), 1, {"must wait for recovery", {}, 0})
+                        CHECK(await(model->retryRecovery(loaded.id())) == Transition::Blocked);
+                        CHECK(await(model->replaceDraft(loaded.id(), 1, {"must wait for recovery", {}, 0}))
                               == Transition::Blocked);
                     }
                 }
@@ -193,7 +197,7 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
                     CHECK(QFile::remove(location));
                     for (const auto path : {"tracked.txt", "excluded.txt"}) {
                         const auto id = openedFile(controller, path).id();
-                        CHECK(model->retryRecovery(id) == Transition::Applied);
+                        CHECK(await(model->retryRecovery(id)) == Transition::Applied);
                     }
                 }
                 CHECK(!model->hasPendingRecovery());
@@ -216,7 +220,7 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
                                                  .toLatin1();
                     CHECK(!store.payload(encodedText, &error).isEmpty() && error.isEmpty());
                 }
-                CHECK(model->replaceDraft(openedFile(controller).id(), 1, {"editable after recovery\n", {}, 0})
+                CHECK(await(model->replaceDraft(openedFile(controller).id(), 1, {"editable after recovery\n", {}, 0}))
                       == Transition::Applied);
                 CHECK(controller.loader()->startupState() == SessionLoader::StartupState::Ready
                       && repo.snapshot() == before);
@@ -281,11 +285,11 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
             auto *model = controller.store();
             auto edited = selected.current().draft;
             edited.text = "later manual edit\n";
-            CHECK(model->replaceDraft(selected.id(), selected.current().id, edited) == Transition::Applied);
+            CHECK(await(model->replaceDraft(selected.id(), selected.current().id, edited)) == Transition::Applied);
             CHECK(*selected.snapshots() == expected);
-            CHECK(model->undo(selected.id(), selected.current().id) == Transition::Applied);
+            CHECK(await(model->undo(selected.id(), selected.current().id)) == Transition::Applied);
             CHECK(selected.current().draft.text == repo.manual.toStdString());
-            CHECK(model->redo(selected.id(), selected.current().id) == Transition::Applied);
+            CHECK(await(model->redo(selected.id(), selected.current().id)) == Transition::Applied);
             writeFile(repo.path("tracked.txt"), "external replacement\n");
             repo.git({"add", "--", "tracked.txt"});
             writeFile(repo.path(".gitattributes"), "tracked.txt -text\n");
@@ -357,7 +361,7 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
             }
             auto edited = selected.current().draft;
             edited.text += " later";
-            CHECK(controller.store()->replaceDraft(selected.id(), selected.current().id, edited)
+            CHECK(await(controller.store()->replaceDraft(selected.id(), selected.current().id, edited))
                   == Transition::Applied);
             CHECK(*selected.snapshots() == captured);
         }
@@ -392,9 +396,9 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
             auto edited = selected.current().draft;
             edited.text = "edited after capture\n";
             auto *model = controller.store();
-            CHECK(model->replaceDraft(selected.id(), selected.current().id, edited) == Transition::Applied);
-            CHECK(model->undo(selected.id(), selected.current().id) == Transition::Applied);
-            CHECK(model->redo(selected.id(), selected.current().id) == Transition::Applied);
+            CHECK(await(model->replaceDraft(selected.id(), selected.current().id, edited)) == Transition::Applied);
+            CHECK(await(model->undo(selected.id(), selected.current().id)) == Transition::Applied);
+            CHECK(await(model->redo(selected.id(), selected.current().id)) == Transition::Applied);
             CHECK(*selected.snapshots() == expected);
         }
     });

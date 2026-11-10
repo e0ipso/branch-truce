@@ -11,6 +11,7 @@
 #include "TestHarness.h"
 #include "app/AppPaths.h"
 #include "app/Application.h"
+#include "fixtures/Await.h"
 #include "fixtures/EventLoop.h"
 #include "fixtures/GitOnPath.h"
 
@@ -36,8 +37,18 @@ inline branch_truce::Application::Config windowConfig(const QString &executable 
 inline void waitOpened(branch_truce::Application &application, const std::string &what)
 {
     auto *loader = application.loader();
-    waitUntil([loader] { return !loader->opening(); },
+    waitUntil([&] { return !loader->opening() && !application.store()->recording(); },
               [&] { return what + " did not finish opening: " + loader->detail().toStdString(); });
+}
+
+// The GUI returns request acceptance; tests await its real persistence boundary.
+inline bool commandResult(branch_truce::Application &application, bool accepted)
+{
+    waitUntil([&] { return !application.store()->recording(); }, "GUI command did not settle");
+    if (!accepted || application.store()->hasPendingRecovery()) return false;
+    for (const auto &file : application.store()->files())
+        await(application.store()->awaitAlignment(file.id(), file.current().id));
+    return true;
 }
 
 // Opens root as a window would and waits until the loader settles, in any state.

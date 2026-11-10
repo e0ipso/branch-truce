@@ -127,7 +127,7 @@ bool ResolutionPublisher::assignParentStaging(const QByteArray &path)
     return false;
 }
 
-bool ResolutionPublisher::busy() const { return attempt_.has_value(); }
+bool ResolutionPublisher::busy() const { return attempt_ != nullptr; }
 bool ResolutionPublisher::confirmationPending() const { return confirmation_.has_value(); }
 QString ResolutionPublisher::confirmationFileId() const
 {
@@ -145,7 +145,7 @@ std::optional<ResolutionPublisher::Offer> ResolutionPublisher::parentStagingOffe
 const ResolutionPublisher::StepHandling &ResolutionPublisher::handling(Step step)
 {
     // In the order of Step. Publish finishes in its own mutation callback.
-    static const std::array<StepHandling, 7> steps{{
+    static const std::array<StepHandling, 8> steps{{
         {.conversion = &ResolutionPublisher::prepared},
         {.task = &ResolutionPublisher::discovered},
         {.task = &ResolutionPublisher::indexed},
@@ -153,6 +153,7 @@ const ResolutionPublisher::StepHandling &ResolutionPublisher::handling(Step step
         {.task = &ResolutionPublisher::staged, .afterWrite = true},
         {.task = &ResolutionPublisher::parentPreflight, .afterWrite = true},
         {.conversion = &ResolutionPublisher::verified, .afterWrite = true},
+        {},
     }};
     return steps.at(static_cast<std::size_t>(step));
 }
@@ -174,41 +175,44 @@ ResolutionPublisher::StartResult ResolutionPublisher::result(Transition transiti
     return {transition, detail, {}};
 }
 
-ResolutionPublisher::StartResult ResolutionPublisher::recordWrite(const std::string &fileId, RevisionId revision,
-                                                                  Outcome outcome, const QString &detail)
-{
-    const auto recorded = files_.recordWrite(fileId, revision, outcome, detail.toStdString());
-    clearAttempt();
-    if (recorded != Transition::Applied)
-        return result(recorded, tr("The repository write could not be recorded. The draft is still available."));
-    return result(Transition::Blocked, detail);
-}
-
 void ResolutionPublisher::fail(Outcome outcome, const QString &detail, bool stage)
 {
     if (!attempt_) return;
+    const auto attempt = attempt_;
     const auto id = attempt_->fileId;
     const auto revision = attempt_->revision;
-    const auto recorded = stage ? files_.recordStage(id, revision, outcome, {}, {}, detail.toStdString())
-                                : files_.recordWrite(id, revision, outcome, detail.toStdString());
+    auto recorded = stage ? files_.recordStage(id, revision, outcome, {}, {}, detail.toStdString())
+                          : files_.recordWrite(id, revision, outcome, detail.toStdString());
     parent_.withdraw();
-    clearAttempt();
-    Q_EMIT changed(recorded == Transition::Applied
-                       ? detail
-                       : tr("The outcome could not be recorded. The draft is still available."));
+    recorded.then(this, [this, attempt, detail](Transition result) {
+        if (attempt_ != attempt) return;
+        clearAttempt();
+        Q_EMIT changed(result == Transition::Applied
+                           ? detail
+                           : tr("The outcome could not be recorded. The draft is still available."));
+    });
 }
 
 void ResolutionPublisher::finishResolved()
 {
     if (!attempt_ || !attempt_->prepared) return;
-    const auto recorded =
-        files_.recordStage(attempt_->fileId, attempt_->revision, Outcome::Succeeded,
-                           attempt_->prepared->canonicalObjectId.toStdString(), attempt_->prepared->mode.toStdString());
-    parent_.withdraw();
-    clearAttempt();
-    Q_EMIT changed(recorded == Transition::Applied
-                       ? tr("Written and resolved.")
-                       : tr("Git has the reviewed result, but the resolution could not be recorded."));
+    const auto attempt = attempt_;
+    const auto id = attempt_->fileId;
+    files_
+        .recordStage(id, attempt_->revision, Outcome::Succeeded, attempt_->prepared->canonicalObjectId.toStdString(),
+                     attempt_->prepared->mode.toStdString())
+        .then(this, [this, attempt](Transition result) {
+            if (attempt_ != attempt) return;
+            const auto *current = file(attempt->fileId);
+            const bool resolved = current && current->current().id == attempt->revision && current->facts().resolved;
+            parent_.withdraw();
+            clearAttempt();
+            Q_EMIT changed(result != Transition::Applied
+                               ? tr("Git has the reviewed result, but the resolution could not be recorded.")
+                               : resolved
+                               ? tr("Written and resolved.")
+                               : tr("The reviewed revision was written, then the draft changed. It is not resolved."));
+        });
 }
 
 void ResolutionPublisher::clearAttempt() { attempt_.reset(); }
@@ -254,9 +258,37 @@ ResolutionPublisher::StartResult ResolutionPublisher::start(const std::string &f
                       tr("Outcome uncertain. Inspect the repository file and index before retrying."));
     if (session->facts().resolved) return result(Transition::NoChange, tr("Written and resolved."));
     confirmation_.reset();
-    const auto review = files_.beginMarkResolved(fileId, expected, confirmUndecided);
+    attempt_ = std::make_shared<Attempt>();
+    attempt_->generation = coordinator_.generation();
+    attempt_->fileId = fileId;
+    attempt_->revision = expected;
+    auto review = files_.beginMarkResolved(fileId, expected, confirmUndecided);
+    if (review.isFinished()) return reviewed(review.result());
+    const auto attempt = attempt_;
+    review.then(this, [this, attempt](Transition result) {
+        if (attempt_ != attempt) return;
+        const auto next = reviewed(result);
+        Q_EMIT changed(next.detail);
+        if (next.markers && next.markers->first())
+            Q_EMIT markersBlocked(QString::fromStdString(attempt->fileId), attempt->revision, next.markers->count(),
+                                  next.markers->first()->line + 1, next.detail);
+    });
+    return result(Transition::Applied, tr("Preparing the reviewed result. Waiting for durable recovery."));
+}
+
+ResolutionPublisher::StartResult ResolutionPublisher::reviewed(Transition review)
+{
+    if (!attempt_) return result(Transition::StaleRevision, {});
+    const auto fileId = attempt_->fileId;
+    const auto expected = attempt_->revision;
+    const auto *session = file(fileId);
+    if (!session || session->current().id != expected) {
+        clearAttempt();
+        return result(Transition::StaleRevision, tr("The result changed. Mark resolved was not applied."));
+    }
     if (review == Transition::ConfirmationRequired) {
         confirmation_ = std::make_pair(fileId, expected);
+        clearAttempt();
         return result(Transition::ConfirmationRequired,
                       tr("Confirm that this result is intentional. Some source choices are still undecided."));
     }
@@ -268,74 +300,100 @@ ResolutionPublisher::StartResult ResolutionPublisher::start(const std::string &f
                                   .arg(remainingMarkers(markers))
                                   .arg(static_cast<qulonglong>(markers.first()->line + 1)));
         refused.markers = std::move(markers);
+        clearAttempt();
         return refused;
     }
-    if (review != Transition::Applied)
+    if (review != Transition::Applied) {
+        clearAttempt();
         return result(review, tr("Mark resolved is blocked. The repository file is unchanged."));
-    session = file(fileId);
-    if (!session) return result(Transition::StaleRevision, tr("The result changed. Mark resolved was not applied."));
-    if (!session->publication().checkpointed(expected)) {
-        const auto saved = files_.recordCheckpoint(fileId, expected, Outcome::Succeeded);
-        if (saved != Transition::Applied)
-            return result(
-                saved,
-                tr("Draft save failed. The edited result is still available, and the repository file is unchanged."));
     }
-    session = file(fileId);
-    if (!session || !session->snapshots())
-        return recordWrite(fileId, expected, Outcome::Failed,
-                           tr("Repository write failed. The saved draft is still available."));
+    const auto attempt = attempt_;
+    files_.recordCheckpoint(fileId, expected, Outcome::Succeeded).then(this, [this, attempt](Transition saved) {
+        if (attempt_ != attempt) return;
+        if (saved != Transition::Applied && saved != Transition::NoChange) {
+            clearAttempt();
+            Q_EMIT changed(
+                tr("Draft save failed. The edited result is still available, and the repository file is unchanged."));
+            return;
+        }
+        preparePublication();
+    });
+    return result(Transition::Applied, tr("Publishing the reviewed result."));
+}
+
+void ResolutionPublisher::preparePublication()
+{
+    if (!attempt_) return;
+    const auto fileId = attempt_->fileId;
+    const auto expected = attempt_->revision;
+    const auto *session = file(fileId);
+    if (!session || session->current().id != expected || !session->snapshots()) {
+        fail(Outcome::Failed, tr("Repository write failed. The saved draft is still available."), false);
+        return;
+    }
     const auto serialized = storage::serializeText(QByteArray::fromStdString(session->current().draft.text),
                                                    session->snapshots()->launchResult.text.format);
-    if (!serialized.document)
-        return recordWrite(fileId, expected, Outcome::Failed,
-                           serialized.problem.isEmpty()
-                               ? tr("Repository write failed. The saved draft is still available.")
-                               : problem_text::text(serialized.problem));
-    auto baseline = baselines_.find(fileId);
-    if (baseline == baselines_.end() || !baseline->second.destination) {
-        const auto missingLaunch = [&] {
-            return recordWrite(
-                fileId, expected, Outcome::Failed,
-                baseline == baselines_.end() || baseline->second.diagnostic.isEmpty()
-                    ? tr("Repository write failed. No launch destination is available, and the file is unresolved.")
-                    : baseline->second.diagnostic);
-        };
-        // Restart only has the launch snapshot. A successful write already replaced
-        // that file, so keep the write when the live bytes are still that revision.
-        if (!previouslyWritten(*session, expected)) return missingLaunch();
-        const auto live = storage::captureDestination(repository_.worktreeRoot,
-                                                      QByteArray::fromStdString(session->path()), destinations_);
-        const auto *written = session->revision(expected);
-        const auto writtenBytes = written ? serializedRevision(*session, *written) : std::nullopt;
-        if (!live.destination || !writtenBytes || live.destination->bytes() != *writtenBytes
-            || *writtenBytes != serialized.document->originalBytes) {
-            return recordWrite(fileId, expected, Outcome::Failed,
-                               live.destination
-                                   ? tr("The repository file no longer matches the written revision.")
-                                   : (live.problem.isEmpty() ? tr("Repository write failed. No launch destination "
-                                                                  "is available, and the file is unresolved.")
-                                                             : problem_text::text(live.problem)));
-        }
-        if (baseline == baselines_.end())
-            baselines_.emplace(fileId, Baseline{std::move(live.destination), QString{}});
-        else {
-            baseline->second.destination = std::move(live.destination);
-            baseline->second.diagnostic.clear();
-        }
+    if (!serialized.document) {
+        fail(Outcome::Failed,
+             serialized.problem.isEmpty() ? tr("Repository write failed. The saved draft is still available.")
+                                          : problem_text::text(serialized.problem),
+             false);
+        return;
     }
-    parent_.withdraw();
-    attempt_ = Attempt{};
-    attempt_->generation = coordinator_.generation();
-    attempt_->fileId = fileId;
-    attempt_->revision = expected;
     attempt_->path = QByteArray::fromStdString(session->path());
     attempt_->mode = QByteArray::fromStdString(session->snapshots()->resultMode);
     attempt_->serialized = serialized.document->originalBytes;
     attempt_->parentOwned = parentOwns(attempt_->path);
-    if (!startPrepare())
-        return result(Transition::Blocked, tr("Publication could not start. The draft is still available."));
-    return result(Transition::Applied, tr("Publishing the reviewed result."));
+    parent_.withdraw();
+    const auto baseline = baselines_.find(fileId);
+    if (baseline != baselines_.end() && baseline->second.destination) {
+        startPrepare();
+        return;
+    }
+    if (!previouslyWritten(*session, expected)) {
+        fail(Outcome::Failed,
+             baseline == baselines_.end() || baseline->second.diagnostic.isEmpty()
+                 ? tr("Repository write failed. No launch destination is available, and the file is unresolved.")
+                 : baseline->second.diagnostic,
+             false);
+        return;
+    }
+    inspectDestination([this](storage::DestinationCapture live) {
+        if (!live.destination || live.destination->bytes() != attempt_->serialized) {
+            fail(Outcome::Failed,
+                 live.problem.isEmpty() ? tr("The repository file no longer matches the written revision.")
+                                        : problem_text::text(live.problem),
+                 false);
+            return;
+        }
+        baselines_.insert_or_assign(attempt_->fileId, Baseline{live.destination, {}});
+        startPrepare();
+    });
+}
+
+void ResolutionPublisher::inspectDestination(std::function<void(storage::DestinationCapture)> inspected)
+{
+    if (!attempt_) return;
+    auto capture = std::make_shared<storage::DestinationCapture>();
+    QPointer<ResolutionPublisher> self(this);
+    attempt_->step = Step::Inspect;
+    attempt_->task = coordinator_.submit(
+        attempt_->fileId, attempt_->revision,
+        [capture, root = repository_.worktreeRoot, path = attempt_->path, files = destinations_](const TaskInput &,
+                                                                                                 const TaskControl &) {
+            *capture = storage::captureDestination(root, path, files);
+            return TaskResult{};
+        },
+        [self, capture, inspected = std::move(inspected)](const TaskCompletion &completion) {
+            if (!self || !self->accept(completion)) return;
+            if (completion.result.status != TaskStatus::Succeeded) {
+                self->fail(Outcome::Failed, problem_text::text(completion.result.problem), self->preserveWrite());
+                return;
+            }
+            inspected(*capture);
+        });
+    if (attempt_->task == 0)
+        fail(Outcome::Failed, tr("Publication could not start. The draft is still available."), preserveWrite());
 }
 
 void ResolutionPublisher::cancelConfirmation()
@@ -352,7 +410,7 @@ bool ResolutionPublisher::verifyParentAcknowledgment(const std::string &fileId, 
     const auto *session = file(fileId);
     if (!session || session->current().id != expected || !previouslyWritten(*session, expected)) return false;
     if (!parent_.owns(offer->path)) return false;
-    attempt_ = Attempt{};
+    attempt_ = std::make_shared<Attempt>();
     attempt_->generation = coordinator_.generation();
     attempt_->fileId = fileId;
     attempt_->revision = expected;
@@ -485,14 +543,17 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
              preserveWrite());
         return;
     }
-    // A recorded write does not prove the file still holds it: a failed mergetool
-    // exit moves Git's backup back over MERGED. Skip publication only while the
-    // live bytes are still the written revision.
+    inspectDestination([this](storage::DestinationCapture capture) { inspectedIndex(std::move(capture)); });
+}
+
+void ResolutionPublisher::inspectedIndex(storage::DestinationCapture current)
+{
+    if (!attempt_) return;
+    const auto *session = file(attempt_->fileId);
+    if (!session || !session->snapshots()) return;
     const bool written = previouslyWritten(*session, attempt_->revision) && baselines_.contains(attempt_->fileId)
         && baselines_.at(attempt_->fileId).destination
         && baselines_.at(attempt_->fileId).destination->bytes() == attempt_->serialized;
-    const auto current = written ? storage::captureDestination(repository_.worktreeRoot, attempt_->path, destinations_)
-                                 : storage::DestinationCapture{};
     if (written && !attempt_->parentOwned
         && (!current.destination || current.destination->bytes() != attempt_->serialized)) {
         fail(Outcome::Failed,
@@ -521,7 +582,7 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
     // A failed exit moves that backup back over a written file, so the launch
     // bytes are accepted after a write as well.
     if (attempt_->parentOwned) {
-        auto live = storage::captureDestination(repository_.worktreeRoot, attempt_->path, destinations_);
+        auto live = current;
         auto baseline = baselines_.find(attempt_->fileId);
         if (!live.destination || baseline == baselines_.end() || !baseline->second.destination
             || (live.destination->bytes() != baseline->second.destination->bytes()
@@ -594,23 +655,20 @@ void ResolutionPublisher::published(const TaskCompletion &completion, const stor
              false);
         return;
     }
-    const auto recorded = files_.recordWrite(attempt_->fileId, attempt_->revision, Outcome::Succeeded);
-    if (recorded != Transition::Applied) {
-        clearAttempt();
-        Q_EMIT changed(tr("The repository write could not be recorded. The draft is still available."));
-        return;
-    }
-    if (attempt_->parentOwned) {
+    const auto attempt = attempt_;
+    const auto id = attempt_->fileId;
+    files_.recordWrite(id, attempt_->revision, Outcome::Succeeded).then(this, [this, attempt](Transition recorded) {
+        if (attempt_ != attempt) return;
+        if (recorded != Transition::Applied) {
+            clearAttempt();
+            Q_EMIT changed(tr("The repository write could not be recorded. The draft is still available."));
+            return;
+        }
         git::Request request;
-        request.operation = git::Operation::CheckParentStaging;
+        request.operation = attempt_->parentOwned ? git::Operation::CheckParentStaging : git::Operation::StageFile;
         request.path = attempt_->path;
-        launch(Step::ParentPreflight, request);
-        return;
-    }
-    git::Request request;
-    request.operation = git::Operation::StageFile;
-    request.path = attempt_->path;
-    launch(Step::Stage, request);
+        launch(attempt_->parentOwned ? Step::ParentPreflight : Step::Stage, request);
+    });
 }
 
 void ResolutionPublisher::staged(const TaskCompletion &completion)
@@ -689,11 +747,15 @@ void ResolutionPublisher::noteStale(const TaskCompletion &completion)
         const auto &live = attempt_->published->destination;
         if (live && live->bytes() == attempt_->serialized)
             baselines_.insert_or_assign(attempt_->fileId, Baseline{live, QString{}});
-        const auto recorded = files_.recordWrite(attempt_->fileId, attempt_->revision, Outcome::Succeeded);
-        clearAttempt();
-        Q_EMIT changed(recorded == Transition::Applied
-                           ? tr("The reviewed revision was written, then the draft changed. It is not resolved.")
-                           : tr("The repository write finished after the draft changed."));
+        const auto attempt = attempt_;
+        const auto id = attempt_->fileId;
+        files_.recordWrite(id, attempt_->revision, Outcome::Succeeded).then(this, [this, attempt](Transition recorded) {
+            if (attempt_ != attempt) return;
+            clearAttempt();
+            Q_EMIT changed(recorded == Transition::Applied
+                               ? tr("The reviewed revision was written, then the draft changed. It is not resolved.")
+                               : tr("The repository write finished after the draft changed."));
+        });
         return;
     }
     const bool stage = handling(attempt_->step).afterWrite || preserveWrite();

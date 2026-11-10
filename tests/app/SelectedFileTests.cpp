@@ -7,7 +7,9 @@
 #include "app/SelectedFile.h"
 #include "app/Selection.h"
 #include "app/Translations.h"
+#include "core/ExactLineCorrespondence.h"
 #include "fixtures/AppSession.h"
+#include "fixtures/Await.h"
 #include "fixtures/Files.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/RecoveryJournal.h"
@@ -16,10 +18,16 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQmlExpression>
+#include <QSemaphore>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <atomic>
 #include <stdexcept>
 #include <vector>
+
+using test_support::await;
+using test_support::awaitAligned;
+using test_support::commandResult;
 
 using namespace branch_truce;
 using namespace session_fixtures;
@@ -42,6 +50,28 @@ FileSession viewFile()
     sources.launchResult.text = test_support::choiceText(earlier);
     return FileSession("choices", sources.path, {earlier, {}, 0}, {.snapshots = sources, .initializeChoices = true});
 }
+
+// A deterministic alignment gate, armed only after the launch map exists.
+class AlignmentGate final : public CorrespondenceAlgorithm {
+public:
+    mutable std::atomic_bool armed{false}, entered{false};
+    mutable std::atomic_int comparisons{0};
+    mutable QSemaphore release;
+    std::string_view identity() const noexcept override { return "exact-line/1"; }
+    std::vector<Passage> compare(std::string_view source, std::string_view result) const override
+    {
+        ++comparisons;
+        if (armed.exchange(false)) {
+            entered = true;
+            if (!release.tryAcquire(1, 5000)) throw std::bad_alloc();
+        }
+        return ExactLineCorrespondence().compare(source, result);
+    }
+};
+struct ReleaseAlignment {
+    std::shared_ptr<AlignmentGate> gate;
+    ~ReleaseAlignment() { gate->release.release(); }
+};
 
 // The UTF-16 offset where a 1-based line starts, found without the controller.
 int lineOffset(const QString &text, int line)
@@ -188,7 +218,8 @@ struct RegionView {
     SelectedFile *file() { return controller.selectedFile(); }
     SelectedFile *edit(ResultEdit edit)
     {
-        CHECK(controller.store()->editResult("choices", revision(), std::move(edit)) == Transition::Applied);
+        CHECK(awaitAligned(*controller.store(), controller.store()->editResult("choices", revision(), std::move(edit)))
+              == Transition::Applied);
         return file();
     }
     // Types at an offset into the first occurrence of some result text.
@@ -201,17 +232,17 @@ struct RegionView {
     SelectedFile *choose(const QString &id, ChoiceAction action)
     {
         const auto preview = previewChoice(*controller.store()->file("choices"), revision(), id.toStdString(), action);
-        CHECK(controller.store()->applyChoice("choices", preview, true) == Transition::Applied);
+        CHECK(await(controller.store()->applyChoice("choices", preview, true)) == Transition::Applied);
         return file();
     }
     SelectedFile *undo()
     {
-        CHECK(controller.store()->undo("choices", revision()) == Transition::Applied);
+        CHECK(await(controller.store()->undo("choices", revision())) == Transition::Applied);
         return file();
     }
     SelectedFile *redo()
     {
-        CHECK(controller.store()->redo("choices", revision()) == Transition::Applied);
+        CHECK(await(controller.store()->redo("choices", revision())) == Transition::Applied);
         return file();
     }
     Application controller{test_support::windowConfig()};
@@ -264,17 +295,18 @@ int main(int argc, char **argv)
             focused.clear();
             return complete;
         };
-        CHECK(model.editResult("choices", model.file("choices")->current().id, {{0, 0}, "manual prefix\n"})
+        CHECK(awaitAligned(
+                  model, model.editResult("choices", model.file("choices")->current().id, {{0, 0}, "manual prefix\n"}))
               == Transition::Applied);
         selected.sync();
         CHECK(checkPublication() != initial);
         // Status-only refreshes must not recompute the same QML projection.
         selected.sync();
         CHECK(observed.isEmpty() && focused.isEmpty());
-        CHECK(model.undo("choices", model.file("choices")->current().id) == Transition::Applied);
+        CHECK(await(model.undo("choices", model.file("choices")->current().id)) == Transition::Applied);
         selected.sync();
         CHECK(checkPublication() == initial);
-        CHECK(model.redo("choices", model.file("choices")->current().id) == Transition::Applied);
+        CHECK(await(model.redo("choices", model.file("choices")->current().id)) == Transition::Applied);
         selected.sync();
         CHECK(checkPublication() != initial);
         // Without files nothing is selected and the projection empties.
@@ -292,7 +324,7 @@ int main(int argc, char **argv)
         Selection selection(model.rows, guard);
         SelectedFile selected(model.rows, selection);
         CHECK(selection.select(QStringLiteral("choices")));
-        CHECK(model.editResult("choices", 1, {{6, 8}, "S\n"}) == Transition::Applied);
+        CHECK(model.typeResult("choices", 1, {{6, 8}, "S\n"}) == Transition::Applied);
         const auto *file = model.file("choices");
         const auto pending = file->pendingAlignment();
         CHECK(pending && selected.markerOrphans().size() == 1);
@@ -351,7 +383,9 @@ int main(int argc, char **argv)
         CHECK(identity.isValid() && sources.isValid() && result.isValid() && decisions.isValid());
         const auto source = selected->stage2();
         const auto revision = [&] { return controller.store()->file("choices")->current().id; };
-        CHECK(controller.store()->editResult("choices", revision(), {{0, 0}, "typed "}) == Transition::Applied);
+        CHECK(
+            awaitAligned(*controller.store(), controller.store()->editResult("choices", revision(), {{0, 0}, "typed "}))
+            == Transition::Applied);
         CHECK(controller.selectedFile() == selected);
         CHECK(identity.count() == 0 && sources.count() == 0 && result.count() == 1 && decisions.count() == 0);
         CHECK(selected->stage2() == source && selected->resultText().startsWith("typed "));
@@ -360,7 +394,7 @@ int main(int argc, char **argv)
         const auto target = regionId(selected, "stage2", "line", 6);
         const auto preview =
             previewChoice(*controller.store()->file("choices"), revision(), target.toStdString(), ChoiceAction::Ignore);
-        CHECK(controller.store()->applyChoice("choices", preview) == Transition::Applied);
+        CHECK(await(controller.store()->applyChoice("choices", preview)) == Transition::Applied);
         CHECK(identity.count() == 0 && sources.count() == 0 && result.count() == 1 && decisions.count() == 1);
     });
     suite.run("accepted controller edit keeps source signals and row status in sync", [] {
@@ -378,7 +412,8 @@ int main(int argc, char **argv)
         QSignalSpy status(selected, &SelectedFile::statusChanged);
         QSignalSpy rows(controller.files(), &QAbstractItemModel::dataChanged);
         CHECK(sources.isValid() && identity.isValid() && result.isValid() && status.isValid() && rows.isValid());
-        CHECK(controller.commands()->editResult("choices", originalRevision, 0, 0, QString::fromUtf8("é ")));
+        CHECK(commandResult(
+            controller, controller.commands()->editResult("choices", originalRevision, 0, 0, QString::fromUtf8("é "))));
         CHECK(controller.selectedFile() == selected && selected->stage2() == originalSource);
         CHECK(sources.count() == 0 && identity.count() == 0 && result.count() == 1);
         CHECK(status.count() == 1 && rows.count() == 1);
@@ -388,7 +423,8 @@ int main(int argc, char **argv)
         CHECK(selected->currentRevision() == row.data(SessionModel::CurrentRevisionRole).toString());
         CHECK(selected->status() == row.data(SessionModel::StatusRole).toString());
         CHECK(selected->progress() == row.data(SessionModel::ProgressRole).toMap());
-        CHECK(!controller.commands()->editResult("choices", originalRevision, 0, 0, "stale"));
+        CHECK(
+            !commandResult(controller, controller.commands()->editResult("choices", originalRevision, 0, 0, "stale")));
         CHECK(sources.count() == 0 && identity.count() == 0 && result.count() == 1 && status.count() == 1
               && rows.count() == 1);
     });
@@ -400,7 +436,8 @@ int main(int argc, char **argv)
         QObject::connect(controller.selectedFile(), &SelectedFile::statusChanged, [&] { ++changes; });
         const auto revision = [&] { return controller.store()->file("choices")->current().id; };
 
-        CHECK(controller.store()->editResult("choices", revision(), {{0, 0}, "inserted é\U0001F600\n"})
+        CHECK(awaitAligned(*controller.store(),
+                           controller.store()->editResult("choices", revision(), {{0, 0}, "inserted é\U0001F600\n"}))
               == Transition::Applied);
         auto file = controller.selectedFile();
         CHECK(changes > 0 && file->currentRevision() == "2");
@@ -427,7 +464,7 @@ int main(int argc, char **argv)
         const auto choose = [&](const QString &id, ChoiceAction action) {
             const auto preview =
                 previewChoice(*controller.store()->file("choices"), revision(), id.toStdString(), action);
-            CHECK(controller.store()->applyChoice("choices", preview, true) == Transition::Applied);
+            CHECK(await(controller.store()->applyChoice("choices", preview, true)) == Transition::Applied);
         };
         changes = 0;
         choose(regionId(file, "stage2", "line", 6), ChoiceAction::Accept);
@@ -459,7 +496,9 @@ int main(int argc, char **argv)
 
         // A hand edit inside accepted text marks it manual and leaves the undecided competitor alone.
         const auto at = controller.store()->file("choices")->current().draft.text.find("left conflict") + 5;
-        CHECK(controller.store()->editResult("choices", revision(), {{at, at}, "hand "}) == Transition::Applied);
+        CHECK(awaitAligned(*controller.store(),
+                           controller.store()->editResult("choices", revision(), {{at, at}, "hand "}))
+              == Transition::Applied);
         file = controller.selectedFile();
         CHECK(file->currentRevision() == "5");
         const auto regions = file->regions();
@@ -468,7 +507,7 @@ int main(int argc, char **argv)
         CHECK(regions[8].toMap().value("state").toString() == "undecided"
               && regions[9].toMap().value("state").toString() == "undecided");
         checkRange(regions[6].toMap(), "result", file->resultText(), 6, 7);
-        CHECK(controller.store()->undo("choices", revision()) == Transition::Applied);
+        CHECK(await(controller.store()->undo("choices", revision())) == Transition::Applied);
         file = controller.selectedFile();
         CHECK(file->regions()[6].toMap().value("state").toString() == "accepted");
         CHECK(file->resultText().contains("\nleft conflict\n"));
@@ -506,20 +545,20 @@ int main(int argc, char **argv)
         CHECK(preview("stage2", ChoicePreviewFlow::Action::Accept));
         CHECK(view.controller.feedback()->message()
               == "Accept changes only this scope and leaves the other side undecided.");
-        CHECK(view.controller.choices()->applyChoice());
+        CHECK(commandResult(view.controller, view.controller.choices()->applyChoice()));
         file = view.file();
         CHECK(file->resultText() == QString::fromStdString(test_support::markedText()));
         CHECK(preview("stage3", ChoicePreviewFlow::Action::Ignore));
         CHECK(view.controller.feedback()->message().contains("marker lines and ignored text are removed"));
-        CHECK(view.controller.choices()->applyChoice());
+        CHECK(commandResult(view.controller, view.controller.choices()->applyChoice()));
         file = view.file();
         const auto resolved = QStringLiteral("header\nleft first\nleft second\nbridge\n"
                                              "<<<<<<< ours\nleft later\n=======\nright later\n>>>>>>> theirs\ntail\n");
         CHECK(file->resultText() == resolved);
         CHECK(region(file, regionId(file, "stage2", "section", 2)).value("state").toString() == "accepted");
         CHECK(view.controller.store()->file("choices")->current().draft.unresolvedMarkers == 1);
-        CHECK(view.undo()->resultText() == QString::fromStdString(test_support::markedText()));
-        CHECK(view.redo()->resultText() == resolved);
+        CHECK(await(view.undo())->resultText() == QString::fromStdString(test_support::markedText()));
+        CHECK(await(view.redo())->resultText() == resolved);
     });
     suite.run("a hand edit marks the regions containing it in every decision state until a choice replaces it", [] {
         RegionView view;
@@ -585,7 +624,7 @@ int main(int argc, char **argv)
         CHECK(handEdits(file) == std::vector<bool>{false, false, false, true, true, false, true, true, true, true});
         auto &files = *view.controller.store();
         const auto preview = previewWholeFile(*files.file("choices"), view.revision(), SourceSide::Stage2);
-        CHECK(files.applyWholeFile("choices", preview, true) == Transition::Applied);
+        CHECK(await(files.applyWholeFile("choices", preview, true)) == Transition::Applied);
         file = view.file();
         CHECK(handEdits(file) == noHandEdits);
         CHECK(!regionStates(file).contains("manual") && !regionStates(file).contains("undecided"));
@@ -597,14 +636,14 @@ int main(int argc, char **argv)
         CHECK(handEdits(file) == conflictLineEdited);
         file = view.choose(leftConflict, ChoiceAction::Accept);
         CHECK(handEdits(file) == noHandEdits && regionStates(file)[6] == "accepted");
-        file = view.undo();
+        file = await(view.undo());
         CHECK(handEdits(file) == conflictLineEdited && regionStates(file)[6] == "undecided");
         CHECK(file->resultText().contains("\nbase hand conflict\n"));
-        file = view.undo();
+        file = await(view.undo());
         CHECK(handEdits(file) == noHandEdits && file->resultText().contains("\nbase conflict\n"));
-        file = view.redo();
+        file = await(view.redo());
         CHECK(handEdits(file) == conflictLineEdited && file->resultText().contains("\nbase hand conflict\n"));
-        file = view.redo();
+        file = await(view.redo());
         CHECK(handEdits(file) == noHandEdits && regionStates(file)[6] == "accepted");
         CHECK(file->resultText().contains("\nleft conflict\n"));
     });
@@ -632,8 +671,8 @@ int main(int argc, char **argv)
         RegionView unchanged(test_support::choiceFile());
         auto &files = *unchanged.controller.store();
         const auto wholeLeft = [&] {
-            return files.applyWholeFile(
-                "choices", previewWholeFile(*files.file("choices"), unchanged.revision(), SourceSide::Stage2), true);
+            return await(files.applyWholeFile(
+                "choices", previewWholeFile(*files.file("choices"), unchanged.revision(), SourceSide::Stage2), true));
         };
         CHECK(wholeLeft() == Transition::Applied);
         const auto typed = unchanged.text().find("left first") + 5;
@@ -658,7 +697,8 @@ int main(int argc, char **argv)
         CHECK(model.appendFile(test_support::choiceFile()));
         const auto revision = [&] { return model.file("choices")->current().id; };
         const auto edit = [&](ResultEdit value) {
-            CHECK(model.editResult("choices", revision(), std::move(value)) == Transition::Applied);
+            CHECK(awaitAligned(model, model.editResult("choices", revision(), std::move(value)))
+                  == Transition::Applied);
         };
         const auto replayed = [&] {
             const auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
@@ -678,18 +718,18 @@ int main(int argc, char **argv)
         const auto section =
             test_support::choiceTarget(*model.file("choices"), SourceSide::Stage2, ChoiceScope::Section)
                 .source.contributionId;
-        CHECK(model.applyChoice("choices",
-                                previewChoice(*model.file("choices"), revision(), section, ChoiceAction::Accept), true)
+        CHECK(await(model.applyChoice(
+                  "choices", previewChoice(*model.file("choices"), revision(), section, ChoiceAction::Accept), true))
               == Transition::Applied);
         CHECK(replayed() == cleared);
-        CHECK(model.undo("choices", revision()) == Transition::Applied);
+        CHECK(await(model.undo("choices", revision())) == Transition::Applied);
         CHECK(replayed() == deleted);
-        CHECK(model.redo("choices", revision()) == Transition::Applied);
+        CHECK(await(model.redo("choices", revision())) == Transition::Applied);
         CHECK(replayed() == cleared);
 
         const auto wholeLeft = [&] {
-            return model.applyWholeFile("choices",
-                                        previewWholeFile(*model.file("choices"), revision(), SourceSide::Stage2), true);
+            return await(model.applyWholeFile(
+                "choices", previewWholeFile(*model.file("choices"), revision(), SourceSide::Stage2), true));
         };
         CHECK(wholeLeft() == Transition::Applied);
         const auto typed = model.file("choices")->current().draft.text.find("left first") + 5;
@@ -700,9 +740,9 @@ int main(int argc, char **argv)
         // This record repeats the previous draft and differs only in its hand edits.
         CHECK(wholeLeft() == Transition::Applied);
         CHECK(replayed() == cleared);
-        CHECK(model.undo("choices", revision()) == Transition::Applied);
+        CHECK(await(model.undo("choices", revision())) == Transition::Applied);
         CHECK(replayed() == manual);
-        CHECK(model.redo("choices", revision()) == Transition::Applied);
+        CHECK(await(model.redo("choices", revision())) == Transition::Applied);
         CHECK(replayed() == cleared);
     });
     suite.run("recovery replay restores each region's hand-edit flag with the text and decisions", [] {
@@ -713,7 +753,8 @@ int main(int argc, char **argv)
         const auto revision = [&] { return model.file("choices")->current().id; };
         const auto type = [&](const std::string &near, const std::string &typed) {
             const auto at = model.file("choices")->current().draft.text.find(near) + 5;
-            CHECK(model.editResult("choices", revision(), {{at, at}, typed}) == Transition::Applied);
+            CHECK(awaitAligned(model, model.editResult("choices", revision(), {{at, at}, typed}))
+                  == Transition::Applied);
         };
         // A fresh replay of the journal shows the same regions as the live model.
         const auto replayed = [&] {
@@ -731,19 +772,19 @@ int main(int argc, char **argv)
         const auto leftConflict =
             test_support::choiceTarget(*model.file("choices"), SourceSide::Stage2, ChoiceScope::Line, 2)
                 .source.contributionId;
-        CHECK(model.applyChoice("choices",
-                                previewChoice(*model.file("choices"), revision(), leftConflict, ChoiceAction::Accept),
-                                true)
-              == Transition::Applied);
+        CHECK(
+            await(model.applyChoice(
+                "choices", previewChoice(*model.file("choices"), revision(), leftConflict, ChoiceAction::Accept), true))
+            == Transition::Applied);
         // Replay applies the choice as a whole-draft replacement, which must not count as typing.
         auto snapshot = replayed();
         CHECK(snapshot.first == noHandEdits && snapshot.second[6] == "accepted");
         type("left conflict", "hand ");
         type("base removed", "hand ");
-        CHECK(model.undo("choices", revision()) == Transition::Applied);
+        CHECK(await(model.undo("choices", revision())) == Transition::Applied);
         snapshot = replayed();
         CHECK(snapshot.first == conflictLineEdited && snapshot.second[6] == "manual");
-        CHECK(model.redo("choices", revision()) == Transition::Applied);
+        CHECK(await(model.redo("choices", revision())) == Transition::Applied);
         snapshot = replayed();
         CHECK(snapshot.first == std::vector<bool>{false, false, false, true, true, false, true, true, true, true});
     });
@@ -753,7 +794,7 @@ int main(int argc, char **argv)
         test_support::TestSession model(directory.path() + "/recovery");
         CHECK(model.appendFile(viewFile()));
         const auto at = model.file("choices")->current().draft.text.find("base conflict") + 5;
-        CHECK(model.editResult("choices", 1, {{at, at}, "hand "}) == Transition::Applied);
+        CHECK(awaitAligned(model, model.editResult("choices", 1, {{at, at}, "hand "})) == Transition::Applied);
         const auto recorded = model.file("choices")->correspondence()->handEditedAnchors();
         CHECK(recorded.size() == 4);
         auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
@@ -780,5 +821,54 @@ int main(int argc, char **argv)
         replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
         CHECK(!replay.succeeded && replay.files.empty());
     });
+    for (const auto replacement : {"none", "revision", "session", "selection", "action", "cancel"}) {
+        suite.run(std::string("a preview awaits one alignment and fences a pending ") + replacement, [=] {
+            Application controller(test_support::windowConfig());
+            auto algorithm = std::make_shared<AlignmentGate>();
+            auto sources = *test_support::choiceFile().snapshots();
+            const auto text = sources.launchResult.text.utf8;
+            CHECK(controller.store()->appendFile(
+                FileSession("choices", sources.path, {text, {}, 0},
+                            {.snapshots = sources, .initializeChoices = true, .algorithm = algorithm})));
+            CHECK(controller.selection()->select("choices"));
+            algorithm->armed = true;
+            ReleaseAlignment release{algorithm};
+            CHECK(controller.store()->typeResult("choices", 1, {{0, 0}, "typed "}) == Transition::Applied);
+            test_support::waitUntil([&] { return algorithm->entered.load(); }, "alignment did not reach the gate");
+            const auto comparisons = algorithm->comparisons.load();
+            auto *choices = controller.choices();
+            QSignalSpy ready(choices, &ChoicePreviewFlow::ready);
+            CHECK(choices->previewWholeFile("choices", "2", ChoicePreviewFlow::Side::RightSide));
+            CHECK(choices->previewPending() && choices->wholeFilePreview().isEmpty() && ready.empty());
+            CHECK(algorithm->comparisons == comparisons);
+            const std::string change(replacement);
+            if (change == "revision")
+                CHECK(controller.store()->typeResult("choices", 2, {{0, 0}, "newer "}) == Transition::Applied);
+            else if (change == "session") {
+                controller.store()->recordTyping();
+                test_support::waitUntil([&] { return !controller.store()->recording(); }, "typing did not commit");
+                controller.store()->replaceFiles({test_support::choiceFile()});
+            } else if (change == "selection") {
+                CHECK(controller.store()->appendFile(FileSession("other", "other.txt", {})));
+                CHECK(controller.selection()->select("other"));
+            } else if (change == "action") {
+                CHECK(choices->previewWholeFile("choices", "2", ChoicePreviewFlow::Side::LeftSide));
+            } else if (change == "cancel") {
+                choices->cancel();
+            }
+            algorithm->release.release();
+            if (change == "none" || change == "action") {
+                test_support::waitUntil([&] { return ready.size() == 1; }, "the requested preview was not delivered");
+                CHECK(!choices->previewPending());
+                CHECK(choices->wholeFilePreview().value("side").toString() == (change == "none" ? "Right" : "Left"));
+                CHECK(controller.store()->file("choices")->current().id == 2);
+            } else {
+                test_support::waitUntil([&] { return !choices->previewPending(); }, "stale preview remained pending");
+                await(controller.store()->awaitAlignment("choices", controller.store()->file("choices")->current().id));
+                QCoreApplication::processEvents();
+                CHECK(ready.empty() && choices->wholeFilePreview().isEmpty());
+            }
+        });
+    }
     return suite.report();
 }

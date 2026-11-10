@@ -317,7 +317,7 @@ void ResultEditorAdapter::sync()
     const bool lossless = loaded == desired && !desired.contains(QChar(0x2028)) && !desired.contains(QChar(0x2029))
         && !desired.contains(QLatin1Char('\r'));
     setEditable(file && file->support() == Support::Supported && lossless && !store_.hasPendingRecovery()
-                && !store_.hasRecoveryFailure(file->id()));
+                && !store_.hasRecoveryFailure(file->id()) && !store_.commandPending(file->id()));
     if (!lossless && file && file->support() == Support::Supported)
         Q_EMIT notice(
             tr("This text cannot be edited losslessly by the current editor. Its captured result is retained."));

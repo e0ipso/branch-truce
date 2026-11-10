@@ -4,6 +4,7 @@
 #include "app/AppPaths.h"
 #include "app/SessionHandoff.h"
 #include "app/SessionModel.h"
+#include "fixtures/Await.h"
 #include "session/SessionStore.h"
 #include <QVariantList>
 #include <QVariantMap>
@@ -19,6 +20,28 @@ public:
         std::shared_ptr<const branch_truce::storage::FileSystem> files = branch_truce::storage::systemFileSystem())
         : SessionStore(std::move(directory), std::move(files)), rows(*this)
     {}
+    bool appendFile(branch_truce::FileSession file)
+    {
+        const bool accepted = SessionStore::appendFile(std::move(file));
+        settle();
+        return accepted;
+    }
+    void replaceFiles(std::vector<branch_truce::FileSession> files, branch_truce::RecoveryRestore *restore = nullptr)
+    {
+        settle();
+        SessionStore::replaceFiles(std::move(files), restore);
+        settle();
+    }
+    bool recordTyping()
+    {
+        SessionStore::recordTyping();
+        settle();
+        return !hasPendingRecovery();
+    }
+    void settle()
+    {
+        test_support::waitUntil([this] { return !recording(); }, "recovery did not settle");
+    }
     branch_truce::SessionModel rows;
 
     [[nodiscard]] int totalFiles() const { return rows.totalFiles(); }
@@ -50,7 +73,7 @@ public:
     }
     bool retryPendingRecovery(const QString &id)
     {
-        return retryRecovery(id.toStdString()) == branch_truce::Transition::Applied;
+        return await(retryRecovery(id.toStdString())) == branch_truce::Transition::Applied;
     }
 };
 }

@@ -5,6 +5,7 @@
 #include "TestSession.h"
 #include "app/Selection.h"
 #include "app/SessionModel.h"
+#include "fixtures/Await.h"
 #include "fixtures/ChoiceFile.h"
 #include "recovery/RecoveryRestore.h"
 #include "storage/RecoveryStore.h"
@@ -17,6 +18,8 @@
 #include <string>
 
 namespace session_fixtures {
+using test_support::await;
+
 using namespace branch_truce;
 using test_support::TestSession;
 
@@ -33,10 +36,11 @@ inline QVariant role(const TestSession &model, int value, int row = 0) { return 
 inline void resolve(TestSession &model, const std::string &id)
 {
     const auto revision = model.file(id)->current().id;
-    CHECK(model.beginMarkResolved(id, revision) == Transition::Applied);
-    CHECK(model.recordCheckpoint(id, revision, Outcome::Succeeded) == Transition::Applied);
-    CHECK(model.recordWrite(id, revision, Outcome::Succeeded) == Transition::Applied);
-    CHECK(model.recordStage(id, revision, Outcome::Succeeded, "verified-object", "100644") == Transition::Applied);
+    CHECK(await(model.beginMarkResolved(id, revision)) == Transition::Applied);
+    CHECK(await(model.recordCheckpoint(id, revision, Outcome::Succeeded)) == Transition::Applied);
+    CHECK(await(model.recordWrite(id, revision, Outcome::Succeeded)) == Transition::Applied);
+    CHECK(await(model.recordStage(id, revision, Outcome::Succeeded, "verified-object", "100644"))
+          == Transition::Applied);
 }
 inline FileSession recoverableFile()
 {
@@ -145,9 +149,9 @@ inline void checkRecoveredHistory(TestSession &model, const Draft &before, const
         CHECK(!model.hasPendingRecovery());
     };
     check(chosen);
-    CHECK(model.undo("choices", model.file("choices")->current().id) == Transition::Applied);
+    CHECK(await(model.undo("choices", model.file("choices")->current().id)) == Transition::Applied);
     check(before);
-    CHECK(model.redo("choices", model.file("choices")->current().id) == Transition::Applied);
+    CHECK(await(model.redo("choices", model.file("choices")->current().id)) == Transition::Applied);
     check(chosen);
     auto reopened = replayedFile(model.recoveryDirectory());
     CHECK(reopened.undo(reopened.current().id) == Transition::Applied && reopened.current().draft == before);
@@ -157,23 +161,24 @@ inline void checkRecoveredHistory(TestSession &model, const Draft &before, const
 inline QString recordIntent(TestSession &model, const std::string &id, MutationKind kind)
 {
     const auto mutation = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    CHECK(model.commitRecord(mutationRecoveryTransaction(*model.file(id), {mutation, kind, {}})).succeeded);
+    CHECK(
+        await(model.commitRecord(mutationRecoveryTransaction(*model.file(id), {mutation, kind, {}}))).commit.succeeded);
     return mutation;
 }
 
 inline void preparePublication(TestSession &model, const std::string &id, bool staging)
 {
     const auto revision = model.file(id)->current().id;
-    CHECK(model.beginMarkResolved(id, revision, true) == Transition::Applied);
-    CHECK(model.recordCheckpoint(id, revision, Outcome::Succeeded) == Transition::Applied);
-    if (staging) CHECK(model.recordWrite(id, revision, Outcome::Succeeded) == Transition::Applied);
+    CHECK(await(model.beginMarkResolved(id, revision, true)) == Transition::Applied);
+    CHECK(await(model.recordCheckpoint(id, revision, Outcome::Succeeded)) == Transition::Applied);
+    if (staging) CHECK(await(model.recordWrite(id, revision, Outcome::Succeeded)) == Transition::Applied);
 }
 
 inline void completePublication(TestSession &model, const std::string &id, bool staging)
 {
     const auto revision = model.file(id)->current().id;
-    CHECK((staging ? model.recordStage(id, revision, Outcome::Succeeded, "verified-object", "100644")
-                   : model.recordWrite(id, revision, Outcome::Succeeded))
+    CHECK((staging ? await(model.recordStage(id, revision, Outcome::Succeeded, "verified-object", "100644"))
+                   : await(model.recordWrite(id, revision, Outcome::Succeeded)))
           == Transition::Applied);
 }
 

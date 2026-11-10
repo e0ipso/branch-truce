@@ -14,7 +14,6 @@
 #include "core/Correspondence.h"
 #include "mergetool/MergetoolSession.h"
 #include "publication/ResolutionPublisher.h"
-#include "session/BackgroundAlignment.h"
 #include "session/SessionCoordinator.h"
 #include "session/SessionStore.h"
 #include <QObject>
@@ -84,7 +83,6 @@ private:
     SessionStore store_;
     SessionModel files_;
     SessionCoordinator coordinator_;
-    BackgroundAlignment alignment_;
     ResolutionPublisher publisher_;
     MergetoolSession mergetool_;
     ResultEditorAdapter editor_;

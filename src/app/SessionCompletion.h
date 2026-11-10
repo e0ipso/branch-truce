@@ -33,12 +33,13 @@ public:
     // launchers to leave their paths unresolved and runs no Git command.
     // Refused while pending input or a running resolution could be lost.
     Q_INVOKABLE bool leave();
-    // Retries every file's pending recovery input; true when none is left.
+    // Retries the pending FIFO asynchronously; recoveryRetried reports its outcome.
     Q_INVOKABLE bool retryPendingRecovery();
 
 Q_SIGNALS:
     // The handoff or the outcome may have changed.
     void changed();
+    void recoveryRetried(bool succeeded);
     // Emitted once by finish or leave; outcome is final.
     void sessionEnded(const QString &outcome, bool clean);
 

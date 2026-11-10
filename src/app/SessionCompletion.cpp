@@ -43,6 +43,7 @@ bool SessionCompletion::finish()
 
 bool SessionCompletion::leave()
 {
+    store_.recordTyping();
     const auto summary = handoff();
     if (!summary.canLeave) {
         if (!summary.leaveBlocker.isEmpty()) feedback_.show(summary.leaveBlocker);
@@ -70,10 +71,13 @@ bool SessionCompletion::leave()
 
 bool SessionCompletion::retryPendingRecovery()
 {
-    std::vector<std::string> pending;
-    for (const auto &file : store_.files())
-        if (store_.pendingAction(file.id())) pending.push_back(file.id());
-    for (const auto &id : pending) (void)store_.retryRecovery(id);
-    return !store_.hasPendingRecovery();
+    for (const auto &file : store_.files()) {
+        if (!store_.pendingAction(file.id())) continue;
+        // One retry replays the store's dependent FIFO, including other files.
+        store_.retryRecovery(file.id()).then(
+            this, [this](Transition result) { Q_EMIT recoveryRetried(result == Transition::Applied); });
+        return false;
+    }
+    return !store_.recording();
 }
 }

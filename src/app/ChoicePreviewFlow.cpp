@@ -11,6 +11,7 @@
 #include "TextPositions.h"
 #include <QStringList>
 #include <map>
+#include <utility>
 
 namespace branch_truce {
 using qt_text::utf8;
@@ -79,9 +80,7 @@ ChoicePreviewFlow::ChoicePreviewFlow(SessionStore &store, const SessionModel &fi
     // A preview belongs to the file selected when it was made.
     connect(&selection_, &Selection::changed, this, &ChoicePreviewFlow::cancel);
     // The view reads the pending file, which a session replacement can remove.
-    connect(&files_, &SessionModel::modelReset, this, [this] {
-        if (const auto scope = pendingScope()) Q_EMIT changed(*scope);
-    });
+    connect(&store_, &SessionStore::aboutToReplace, this, &ChoicePreviewFlow::cancel);
 }
 
 std::optional<ChoicePreviewFlow::Scope> ChoicePreviewFlow::pendingScope() const
@@ -100,10 +99,33 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QStrin
         checkCommand(store_, selection_.fileId(), editor_.composing(), fileId, revision, CommandCheck::Selected);
     if (const auto *refused = std::get_if<Transition>(&checked)) return feedback_.report(*refused);
     const auto &[file, expected] = std::get<CommandTarget>(checked);
-    // A preview reads exact passages; typing leaves them provisional until aligned.
-    if (const auto aligned = store_.settleAlignment(fileId.toStdString());
-        aligned != Transition::Applied && aligned != Transition::NoChange)
-        return feedback_.report(aligned);
+    if (file->current().id != expected) return feedback_.report(Transition::StaleRevision);
+    if (!file->pendingAlignment()) return prepare(scope, fileId, expected, option, target);
+    const auto request = request_;
+    waiting_ = true;
+    Q_EMIT previewPendingChanged();
+    feedback_.show(tr("Waiting for the current result to align before previewing."));
+    store_.awaitAlignment(fileId.toStdString(), expected)
+        .then(this, [this, request, scope, fileId, expected, option, target](Transition result) {
+            if (request != request_ || selection_.fileId() != fileId) return;
+            waiting_ = false;
+            if (result != Transition::Applied && result != Transition::NoChange) {
+                Q_EMIT previewPendingChanged();
+                feedback_.report(result);
+                return;
+            }
+            prepare(scope, fileId, expected, option, target);
+            Q_EMIT previewPendingChanged();
+        });
+    return true;
+}
+
+bool ChoicePreviewFlow::prepare(Scope scope, const QString &fileId, RevisionId expected, Option option,
+                                const QString &target)
+{
+    const auto *file = store_.file(fileId.toStdString());
+    if (!file || file->current().id != expected || selection_.fileId() != fileId || editor_.composing())
+        return feedback_.report(Transition::StaleRevision);
     decltype(pending_) pending;
     QString message;
     bool accepted = false;
@@ -145,6 +167,7 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QStrin
         pending_ = std::move(pending);
         fileId_ = fileId;
         Q_EMIT changed(scope);
+        Q_EMIT ready(scope);
     }
     return accepted;
 }
@@ -155,24 +178,28 @@ bool ChoicePreviewFlow::apply(Scope scope, bool confirm)
     if (editor_.composing()) return feedback_.report(Transition::Blocked);
     const auto pending = pending_;
     const auto id = fileId_.toStdString();
-    auto result = Transition::Blocked;
+    QFuture<Transition> result;
     if (const auto *choice = std::get_if<ChoicePreview>(&pending))
         result = store_.applyChoice(id, *choice, confirm);
     else if (const auto *changes = std::get_if<NonConflictingPreview>(&pending))
         result = store_.applyNonConflicting(id, *changes, confirm);
     else if (const auto *whole = std::get_if<WholeFilePreview>(&pending))
         result = store_.applyWholeFile(id, *whole, confirm);
-    // A single choice that replaces manual work stays pending until confirmed.
-    if (scope != Scope::Choice || result != Transition::ConfirmationRequired) {
-        pending_ = std::monostate{};
-        fileId_.clear();
-        Q_EMIT changed(scope);
-    }
-    return feedback_.report(result);
+    if (!result.isValid()) return feedback_.report(Transition::Blocked);
+    if (result.isFinished() && result.result() == Transition::ConfirmationRequired)
+        return feedback_.report(result.result());
+    pending_ = std::monostate{};
+    fileId_.clear();
+    Q_EMIT changed(scope);
+    if (result.isFinished()) return feedback_.report(result.result());
+    result.then(this, [this](Transition outcome) { feedback_.report(outcome); });
+    return true;
 }
 
 void ChoicePreviewFlow::cancel()
 {
+    ++request_;
+    if (std::exchange(waiting_, false)) Q_EMIT previewPendingChanged();
     const auto previous = pendingScope();
     pending_ = std::monostate{};
     fileId_.clear();

@@ -1,6 +1,11 @@
 // Editing the result in the window: typing, input methods, the shared edit actions and clipboard,
 // previews and confirmations, and Save and discard.
 #include "ComparisonScene.h"
+#include "fixtures/AppSession.h"
+#include "fixtures/Await.h"
+
+using test_support::await;
+using test_support::commandResult;
 
 using namespace comparison_scene;
 
@@ -235,7 +240,7 @@ void comparison_scene::addEditingCases(Groups groups)
                            CHECK(label.startsWith(scopeName == "right" ? "Right" : "Left")
                                  || (scopeName == "both" && label.startsWith("Right")));
                        }
-                       CHECK(fixture.controller.choices()->applyNonConflicting());
+                       CHECK(commandResult(fixture.controller, fixture.controller.choices()->applyNonConflicting()));
                        CHECK(fixture.controller.store()->file("other")->current().id == other.id);
                        CHECK(fixture.controller.store()->file("other")->current().draft == other.draft);
                        const auto replay =
@@ -245,6 +250,27 @@ void comparison_scene::addEditingCases(Groups groups)
                            CHECK(file.current().draft == fixture.controller.store()->file(file.id())->current().draft);
                    });
     }
+    scenes.run("an immediately ready replacement opens after cancelling a pending preview", [] {
+        Fixture fixture;
+        auto &store = *fixture.controller.store();
+        CHECK(store.typeResult("choices", fixture.file().current().id, {{0, 0}, "typed "}) == Transition::Applied);
+        const auto revision = fixture.file().current().id;
+        const auto pending = fixture.file().pendingAlignment();
+        CHECK(pending);
+        CHECK(QMetaObject::invokeMethod(fixture.window, "chooseWholeFile",
+                                        Q_ARG(int, static_cast<int>(ChoicePreviewFlow::Side::LeftSide))));
+        CHECK(fixture.controller.choices()->previewPending());
+        CHECK(!fixture.object("wholeFileDialog")->property("visible").toBool());
+        // No event-loop turn delivers the first request's completion before its replacement.
+        CHECK(
+            store.installAlignment("choices", revision, std::make_shared<const CorrespondenceMap>(pending->realigned()))
+            == Transition::Applied);
+        CHECK(QMetaObject::invokeMethod(fixture.window, "chooseWholeFile",
+                                        Q_ARG(int, static_cast<int>(ChoicePreviewFlow::Side::RightSide))));
+        CHECK(fixture.object("wholeFileDialog")->property("visible").toBool());
+        CHECK(fixture.controller.choices()->wholeFilePreview().value("side").toString() == "Right");
+        CHECK(QMetaObject::invokeMethod(fixture.object("wholeFileDialog"), "reject"));
+    });
     for (const int operation : {0, 1, 2}) {
         scenes.run(
             std::string("confirmation, cancellation and a stale application preserve the draft: ")
@@ -270,9 +296,11 @@ void comparison_scene::addEditingCases(Groups groups)
                                                  : static_cast<int>(ChoicePreviewFlow::Side::RightSide))));
                 };
                 const auto apply = [&] {
-                    return operation == 0 ? fixture.controller.choices()->applyChoice(true)
-                        : operation == 1  ? fixture.controller.choices()->applyNonConflicting()
-                                          : fixture.controller.choices()->applyWholeFile();
+                    return operation == 0
+                        ? commandResult(fixture.controller, fixture.controller.choices()->applyChoice(true))
+                        : operation == 1
+                        ? commandResult(fixture.controller, fixture.controller.choices()->applyNonConflicting())
+                        : commandResult(fixture.controller, fixture.controller.choices()->applyWholeFile());
                 };
                 const auto *dialogName = operation == 0 ? "replacementDialog"
                     : operation == 1                    ? "nonConflictingDialog"
@@ -288,8 +316,9 @@ void comparison_scene::addEditingCases(Groups groups)
                       && fixture.file().current().draft == before.draft);
                 fixture.checkRecovered(before.draft);
                 open();
-                CHECK(fixture.controller.commands()->editResult("choices", QString::number(before.id), 0, 0,
-                                                                "newer manual edit\n"));
+                CHECK(commandResult(fixture.controller,
+                                    fixture.controller.commands()->editResult("choices", QString::number(before.id), 0,
+                                                                              0, "newer manual edit\n")));
                 const auto newer = fixture.file().current();
                 // A refused confirmation keeps the dialog open and says why.
                 CHECK(QMetaObject::invokeMethod(dialog, "confirm"));
@@ -307,7 +336,7 @@ void comparison_scene::addEditingCases(Groups groups)
         auto saved = fixture.file().current().draft;
         saved.text += "saved app draft\n";
         saved.decisions["kept"] = {DecisionValue::Accepted, 4};
-        CHECK(fixture.controller.store()->replaceDraft("choices", fixture.file().current().id, saved)
+        CHECK(await(fixture.controller.store()->replaceDraft("choices", fixture.file().current().id, saved))
               == Transition::Applied);
         settle([&] { return fixture.controller.selectedFile()->unsaved(); });
         fixture.click("saveDraft");
@@ -331,7 +360,7 @@ void comparison_scene::addEditingCases(Groups groups)
         auto discarded = saved;
         discarded.text += "discarded edit\n";
         discarded.decisions["kept"] = {DecisionValue::Ignored, {}};
-        CHECK(fixture.controller.store()->replaceDraft("choices", fixture.file().current().id, discarded)
+        CHECK(await(fixture.controller.store()->replaceDraft("choices", fixture.file().current().id, discarded))
               == Transition::Applied);
         settle([&] { return fixture.controller.selectedFile()->unsaved(); });
         CHECK(fixture.file().revision(*fixture.file().publication().checkpoint())->draft == saved);
@@ -346,10 +375,11 @@ void comparison_scene::addEditingCases(Groups groups)
         CHECK(replay.files.front().current().draft != discarded && !replay.files.front().publication().written()
               && !replay.files.front().publication().staged());
 
-        CHECK(fixture.controller.commands()->editResult("choices", QString::number(fixture.file().current().id),
-                                                        static_cast<int>(QString::fromStdString(saved.text).size()),
-                                                        static_cast<int>(QString::fromStdString(saved.text).size()),
-                                                        "retry me\n"));
+        CHECK(commandResult(fixture.controller,
+                            fixture.controller.commands()->editResult(
+                                "choices", QString::number(fixture.file().current().id),
+                                static_cast<int>(QString::fromStdString(saved.text).size()),
+                                static_cast<int>(QString::fromStdString(saved.text).size()), "retry me\n")));
         const auto edited = fixture.file().current().draft;
         {
             const test_support::ArmedFault fault(*fixture.faults, test_support::SyncFaults::Point::JournalSync);
