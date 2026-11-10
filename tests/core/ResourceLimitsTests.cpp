@@ -55,11 +55,11 @@ void metadataAdmissionHasIndependentCountAndByteBoundaries()
     const auto bytes = 16
         * (512 + sources.path.size() + sources.provenance.sessionId.size() + sources.stage2->objectId.size()
            + sources.stage3->objectId.size());
-    CHECK(choiceTargets(sources, file.algorithm(), {16, bytes}).size() == 4);
+    CHECK(choiceTargets(sources, *file.algorithm(), {16, bytes}).size() == 4);
     for (const auto budget : {MetadataBudget{15, bytes}, MetadataBudget{16, bytes - 1}}) {
         bool refused = false;
         try {
-            (void)choiceTargets(sources, file.algorithm(), budget);
+            (void)choiceTargets(sources, *file.algorithm(), budget);
         } catch (const std::length_error &) {
             refused = true;
         }

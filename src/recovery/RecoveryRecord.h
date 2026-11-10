@@ -1,7 +1,7 @@
 // Recovery records encode a file's state at an acknowledgment boundary and read each field back typed.
 #pragma once
 
-#include "core/SessionState.h"
+#include "core/SessionCheckpoint.h"
 #include "recovery/RecoveryNames.h"
 #include "storage/RecoveryStore.h"
 #include <QJsonObject>
@@ -15,14 +15,10 @@
 
 namespace branch_truce {
 
-// The two publication facts not exposed as user-facing outcomes. Replay tracks
-// them at the same domain transitions that change PublicationState.
-struct RecoveryBoundary {
-    RevisionId floor = 1;
-    bool reviewSaved = false;
-};
-[[nodiscard]] storage::RecoveryTransaction recoveryCheckpoint(const storage::RecoveryStore &store);
-[[nodiscard]] storage::RecoveryTransaction recoveryFileCheckpoint(const FileSession &file, RecoveryBoundary boundary);
+[[nodiscard]] storage::RecoveryTransaction
+recoveryCheckpoint(const storage::RecoveryStore &store,
+                   std::shared_ptr<const CorrespondenceAlgorithm> correspondence = {});
+[[nodiscard]] storage::RecoveryTransaction recoveryFileCheckpoint(const FileSession &file);
 
 // The repository mutation a mutation record is about. An intent has no
 // observation; the observation record repeats the intent with one.
@@ -63,8 +59,7 @@ public:
     RecoveryRecordReader(const storage::RecoveryStore &store, const QJsonObject &state,
                          qint64 retainedBytes = 256 * 1024 * 1024,
                          const QMap<QByteArray, QByteArray> *encodedPayloads = nullptr);
-    [[nodiscard]] std::pair<FileSession, RecoveryBoundary>
-    checkpointFile(std::shared_ptr<const CorrespondenceAlgorithm> correspondence = {}) const;
+    [[nodiscard]] FileSession checkpointFile(std::shared_ptr<const CorrespondenceAlgorithm> correspondence = {}) const;
     [[nodiscard]] RecoveryAction action() const;
     [[nodiscard]] std::string fileId() const;
     [[nodiscard]] std::string path() const;

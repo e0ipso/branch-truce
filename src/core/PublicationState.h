@@ -75,6 +75,21 @@ struct FileFacts {
     bool settled = false;
 };
 
+// Complete publication evidence, including gates that affect later outcomes.
+// SessionCheckpoint validates it together with retained history before import.
+struct PublicationCheckpoint {
+    RevisionId floor = 1;
+    std::optional<RevisionId> checkpoint;
+    std::optional<Review> reviewed;
+    // The review's checkpoint outcome survives ordinary Saves of newer drafts.
+    bool reviewSaved = false;
+    std::optional<RevisionId> written;
+    std::optional<StagedResult> staged;
+    std::optional<OperationOutcome> checkpointOutcome;
+    std::optional<OperationOutcome> writeOutcome;
+    std::optional<OperationOutcome> stageOutcome;
+};
+
 // The outcomes adapters report for one file's revisions, and what they mean
 // for the current revision. Revisions below the outcome floor were discarded,
 // so outcomes for them are stale unless the revision is current again.
@@ -85,20 +100,20 @@ struct FileFacts {
 class PublicationState {
 public:
     PublicationState() = default;
-    explicit PublicationState(RevisionId floor) noexcept : outcomeFloor_(floor) {}
+    explicit PublicationState(RevisionId floor) noexcept { state_.floor = floor; }
 
     // The revision the last successful Save stored.
-    [[nodiscard]] const std::optional<RevisionId> &checkpoint() const noexcept { return checkpoint_; }
-    [[nodiscard]] const std::optional<Review> &reviewed() const noexcept { return reviewed_; }
+    [[nodiscard]] const std::optional<RevisionId> &checkpoint() const noexcept { return state_.checkpoint; }
+    [[nodiscard]] const std::optional<Review> &reviewed() const noexcept { return state_.reviewed; }
     // The reviewed revision the last successful write put in the worktree.
-    [[nodiscard]] const std::optional<RevisionId> &written() const noexcept { return written_; }
-    [[nodiscard]] const std::optional<StagedResult> &staged() const noexcept { return staged_; }
+    [[nodiscard]] const std::optional<RevisionId> &written() const noexcept { return state_.written; }
+    [[nodiscard]] const std::optional<StagedResult> &staged() const noexcept { return state_.staged; }
     [[nodiscard]] const std::optional<OperationOutcome> &checkpointOutcome() const noexcept
     {
-        return checkpointOutcome_;
+        return state_.checkpointOutcome;
     }
-    [[nodiscard]] const std::optional<OperationOutcome> &writeOutcome() const noexcept { return writeOutcome_; }
-    [[nodiscard]] const std::optional<OperationOutcome> &stageOutcome() const noexcept { return stageOutcome_; }
+    [[nodiscard]] const std::optional<OperationOutcome> &writeOutcome() const noexcept { return state_.writeOutcome; }
+    [[nodiscard]] const std::optional<OperationOutcome> &stageOutcome() const noexcept { return state_.stageOutcome; }
     // Nothing was saved, reviewed, written or staged yet.
     [[nodiscard]] bool untouched() const noexcept;
     // `revision` is the checkpoint and its Save is the latest one and succeeded.
@@ -131,24 +146,17 @@ public:
                                   std::size_t undecided) const;
 
 private:
+    friend struct SessionCheckpoint;
+    [[nodiscard]] static PublicationState restore(PublicationCheckpoint checkpoint, const RevisionHistory &history);
     [[nodiscard]] bool fenced(RevisionId revision, RevisionId current) const noexcept
     {
-        return revision < outcomeFloor_ && revision != current;
+        return revision < state_.floor && revision != current;
     }
     [[nodiscard]] std::vector<Blocker> blockers(const Revision &current, Support support, const FileFacts &facts,
                                                 bool written, bool staged) const;
     [[nodiscard]] FileStatus status(const FileFacts &facts, Support support, bool checkpoint) const;
 
-    RevisionId outcomeFloor_ = 1;
-    std::optional<RevisionId> checkpoint_;
-    std::optional<Review> reviewed_;
-    // The review's checkpoint outcome survives ordinary Saves of newer drafts.
-    bool reviewCheckpointSucceeded_ = false;
-    std::optional<RevisionId> written_;
-    std::optional<StagedResult> staged_;
-    std::optional<OperationOutcome> checkpointOutcome_;
-    std::optional<OperationOutcome> writeOutcome_;
-    std::optional<OperationOutcome> stageOutcome_;
+    PublicationCheckpoint state_;
 };
 
 }

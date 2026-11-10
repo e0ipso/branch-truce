@@ -427,3 +427,13 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     branch_truce_add_unit_test(recovery.continuation recovery/RecoveryContinuationTests.cpp
         LIBS branch_truce_session PRIVATE_XDG)
 endif()
+
+# Stable destination reads and complete engine checkpoints have independent boundary cases.
+if(BRANCH_TRUCE_BUILD_DESKTOP)
+    branch_truce_add_unit_test(storage.destination-reader storage/DestinationReaderTests.cpp
+        LIBS branch_truce_storage PRIVATE_XDG)
+    branch_truce_add_unit_test(recovery.session-checkpoint recovery/SessionCheckpointTests.cpp
+        LIBS branch_truce_session PRIVATE_XDG)
+    branch_truce_add_unit_test(publication.large-file app/LargeFilePublicationTests.cpp
+        LIBS branch_truce_controller PRIVATE_XDG TIMEOUT 60)
+endif()

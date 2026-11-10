@@ -237,7 +237,9 @@ storage::RecoveryTransaction recoveryTransaction(const FileSession &file, Recove
     Encoder encoder;
     const auto &publication = file.publication();
     encoder.transaction.id = transactionId;
-    encoder.transaction.continuation = recoveryCheckpoint;
+    encoder.transaction.continuation = [algorithm = file.algorithm()](const storage::RecoveryStore &store) {
+        return recoveryCheckpoint(store, algorithm);
+    };
     auto &state = encoder.transaction.state;
     state = {{field::schema, schema},
              {field::action, nameOf(recoveryActionNames, action)},
@@ -254,7 +256,7 @@ storage::RecoveryTransaction recoveryTransaction(const FileSession &file, Recove
     if (action == RecoveryAction::Open) {
         state.insert(field::snapshots, encoder.snapshots(file.snapshots()));
         // Decision IDs come from this algorithm's passages.
-        state.insert(field::alignment, encoder.bytes(file.algorithm().identity()));
+        state.insert(field::alignment, encoder.bytes(file.algorithm()->identity()));
     }
     if (const auto &reviewed = publication.reviewed())
         state.insert(field::reviewed,
@@ -279,11 +281,12 @@ storage::RecoveryTransaction recoveryTransaction(const FileSession &file, Recove
     return std::move(encoder.transaction);
 }
 
-storage::RecoveryTransaction recoveryFileCheckpoint(const FileSession &file, RecoveryBoundary boundary)
+storage::RecoveryTransaction recoveryFileCheckpoint(const FileSession &file)
 {
     Encoder encoder;
     encoder.transaction = recoveryTransaction(file, RecoveryAction::Open, {}, {});
-    const auto history = file.checkpointHistory();
+    const auto checkpoint = SessionCheckpoint::capture(file);
+    const auto &history = checkpoint.history;
     QJsonArray revisions, entries;
     for (const auto &revision : history.revisions) {
         auto value = encoder.current(*revision, {});
@@ -298,23 +301,26 @@ storage::RecoveryTransaction recoveryFileCheckpoint(const FileSession &file, Rec
                                                  {"current", QString::number(history.current)},
                                                  {"launch", QString::number(history.launch)},
                                                  {"next", QString::number(history.next)},
-                                                 {"floor", QString::number(boundary.floor)},
-                                                 {"reviewSaved", boundary.reviewSaved}});
+                                                 {"aligned", checkpoint.aligned},
+                                                 {"floor", QString::number(checkpoint.publication.floor)},
+                                                 {"reviewSaved", checkpoint.publication.reviewSaved}});
     return std::move(encoder.transaction);
 }
 
-std::pair<FileSession, RecoveryBoundary>
-RecoveryRecordReader::checkpointFile(std::shared_ptr<const CorrespondenceAlgorithm> correspondence) const
+FileSession RecoveryRecordReader::checkpointFile(std::shared_ptr<const CorrespondenceAlgorithm> correspondence) const
 {
     const auto history = state_.value("history").toObject();
-    RecoveryBoundary boundary{number(history.value("floor")), boolean(history.value("reviewSaved"))};
-    RevisionHistory::Checkpoint checkpoint;
+    SessionCheckpoint imported;
+    auto &checkpoint = imported.history;
+    auto &publication = imported.publication;
+    imported.aligned = boolean(history.value("aligned"));
+    publication.floor = number(history.value("floor"));
+    publication.reviewSaved = boolean(history.value("reviewSaved"));
     checkpoint.current = number(history.value("current"));
     checkpoint.launch = number(history.value("launch"));
     checkpoint.next = number(history.value("next"));
     checkpoint.cursor = number(history.value("cursor"));
-    requireRecord(history.value("entries").isArray() && history.value("revisions").isArray() && boundary.floor
-                      && boundary.floor <= checkpoint.next,
+    requireRecord(history.value("entries").isArray() && history.value("revisions").isArray(),
                   "Invalid recovery checkpoint history.");
     for (const auto &entry : history.value("entries").toArray()) checkpoint.entries.push_back(number(entry));
     requireRecord(!checkpoint.entries.empty() && checkpoint.entries.size() <= kMaxHistoryEntries
@@ -344,74 +350,32 @@ RecoveryRecordReader::checkpointFile(std::shared_ptr<const CorrespondenceAlgorit
                       .algorithm = correspondence});
     if (support() == Support::Supported && file.support() == Support::LargeFile)
         requireRecord(file.loadLargeFile() == Transition::Applied, "Unsupported checkpoint large file.");
-    requireRecord(file.algorithm().identity() == alignment(), "Unsupported checkpoint correspondence.");
-    // Recreate publication through its public domain operations in revision
-    // order. Successful writes/stages necessarily had a successful Save and
-    // review. Later failed outcomes and the discard floor are then restored.
-    const auto reference = [&](QJsonValue value) -> RevisionId {
-        return value.isNull() ? 0 : number(value.toObject().value(field::id));
+    requireRecord(file.algorithm()->identity() == alignment(), "Unsupported checkpoint correspondence.");
+    const auto reference = [&](QJsonValue value) -> std::optional<RevisionId> {
+        return value.isNull() ? std::nullopt : std::optional<RevisionId>{number(value.toObject().value(field::id))};
     };
-    const auto saved = reference(state_.value(field::checkpoint));
-    const auto written = reference(state_.value(field::written));
+    publication.checkpoint = reference(state_.value(field::checkpoint));
+    publication.written = reference(state_.value(field::written));
     const auto reviewed = state_.value(field::reviewed);
-    const auto review = reviewed.isNull() ? 0 : reference(reviewed.toObject().value(field::revision));
+    if (!reviewed.isNull())
+        publication.reviewed = Review{reference(reviewed.toObject().value(field::revision)).value(),
+                                      boolean(reviewed.toObject().value(field::confirmedUndecided))};
     const auto staged = state_.value(field::staged);
-    const auto stage = staged.isNull() ? 0 : reference(staged.toObject().value(field::revision));
+    if (!staged.isNull()) {
+        const auto [object, mode] = stagedObject();
+        publication.staged = StagedResult{reference(staged.toObject().value(field::revision)).value(), object, mode,
+                                          boolean(staged.toObject().value(field::confirmedUndecided))};
+    }
     const auto readOutcome = [&](QLatin1StringView key) -> std::optional<OperationOutcome> {
         return state_.value(key).isNull() ? std::nullopt : std::optional{outcome(state_.value(key))};
     };
-    const auto saveOutcome = readOutcome(field::checkpointOutcome);
-    const auto writeOutcome = readOutcome(field::writeOutcome);
-    const auto stageOutcome = readOutcome(field::stageOutcome);
-    std::set<RevisionId> ids{saved, written, review, stage};
-    if (writeOutcome) ids.insert(writeOutcome->revision);
-    if (stageOutcome) ids.insert(stageOutcome->revision);
-    requireRecord(!boundary.reviewSaved || review, "Checkpoint Save evidence has no review.");
-    for (auto id : ids) requireRecord(id < checkpoint.next, "Invalid checkpoint publication revision.");
-    for (const auto &value : {saveOutcome, writeOutcome, stageOutcome})
-        requireRecord(!value || (value->revision && value->revision < checkpoint.next),
-                      "Invalid checkpoint outcome revision.");
-    PublicationState publication;
-    const auto applied = [](Transition result) {
-        requireRecord(result == Transition::Applied, "Invalid checkpoint publication.");
-    };
-    for (auto id : ids) {
-        if (!id) continue;
-        const bool writes = id == written || id == stage || (writeOutcome && writeOutcome->revision == id)
-            || (stageOutcome && stageOutcome->revision == id);
-        if (id == saved || writes || (id == review && boundary.reviewSaved))
-            applied(publication.recordCheckpoint(true, id, id, Outcome::Succeeded, {}));
-        if (writes || id == review) {
-            const bool confirmed = id == review ? boolean(reviewed.toObject().value(field::confirmedUndecided))
-                : id == stage                   ? boolean(staged.toObject().value(field::confirmedUndecided))
-                                                : false;
-            publication.markResolved(id, confirmed);
-        }
-        if (id == written || id == stage || (stageOutcome && stageOutcome->revision == id))
-            applied(publication.recordWrite(id, id, Outcome::Succeeded, {}));
-        if (id == stage) {
-            publication.markResolved(id, boolean(staged.toObject().value(field::confirmedUndecided)));
-            const auto [object, mode] = stagedObject();
-            applied(publication.recordStage(id, id, Outcome::Succeeded, object, mode, {}));
-        }
-        if (stageOutcome && stageOutcome->revision == id) {
-            const auto [object, mode] = stagedObject();
-            applied(publication.recordStage(id, id, stageOutcome->outcome, object, mode, stageOutcome->detail));
-        }
-        if (writeOutcome && writeOutcome->revision == id)
-            applied(publication.recordWrite(id, id, writeOutcome->outcome, writeOutcome->detail));
-        if (id == review) publication.markResolved(id, boolean(reviewed.toObject().value(field::confirmedUndecided)));
-    }
-    publication.discardedToCheckpoint(boundary.floor);
-    if (saveOutcome)
-        applied(publication.recordCheckpoint(true, saveOutcome->revision, saveOutcome->revision, saveOutcome->outcome,
-                                             saveOutcome->detail));
-    if (review && !boundary.reviewSaved)
-        publication.markResolved(review, boolean(reviewed.toObject().value(field::confirmedUndecided)));
-    file.restoreHistory(std::move(checkpoint), std::move(revisions), std::move(publication));
-    const auto encoded = recoveryFileCheckpoint(file, boundary);
+    publication.checkpointOutcome = readOutcome(field::checkpointOutcome);
+    publication.writeOutcome = readOutcome(field::writeOutcome);
+    publication.stageOutcome = readOutcome(field::stageOutcome);
+    std::move(imported).restore(file, std::move(revisions));
+    const auto encoded = recoveryFileCheckpoint(file);
     requireRecord(encoded.state == state_, "Noncanonical recovery checkpoint.");
-    return {std::move(file), boundary};
+    return file;
 }
 
 void requireRecord(bool condition, const char *detail)

@@ -42,7 +42,7 @@ public:
                         std::shared_ptr<const storage::FileSystem> destinations = storage::systemFileSystem(),
                         QObject *parent = nullptr);
 
-    // Blocking: reads every supported file's destination, so a load worker
+    // Blocking: reads supported and deferred large-file destinations, so a load worker
     // calls it. A destination must still be the captured launch result.
     [[nodiscard]] static Baselines readBaselines(const QString &worktreeRoot, const std::vector<FileSession> &files,
                                                  const std::shared_ptr<const storage::FileSystem> &destinations);

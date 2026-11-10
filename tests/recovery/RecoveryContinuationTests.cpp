@@ -1,5 +1,6 @@
 // Continuation preserves domain histories while bounded discovery refuses incomplete inventories.
 #include "TestHarness.h"
+#include "core/ExactLineCorrespondence.h"
 #include "fixtures/Await.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/Files.h"
@@ -15,6 +16,23 @@
 using namespace branch_truce;
 using namespace branch_truce::storage;
 namespace {
+class WholeText final : public CorrespondenceAlgorithm {
+public:
+    std::string_view identity() const noexcept override { return "whole-text/checkpoint"; }
+    std::vector<Passage> compare(std::string_view source, std::string_view result) const override
+    {
+        return {
+            {{0, source.size()}, {0, result.size()}, source == result ? PassageKind::Equal : PassageKind::Ambiguous}};
+    }
+};
+FileSession choiceFile(const std::shared_ptr<const CorrespondenceAlgorithm> &algorithm)
+{
+    const auto original = test_support::choiceFile();
+    return FileSession(original.id(), original.path(), {original.current().draft.text, {}, 0},
+                       {.snapshots = *original.snapshots(), .initializeChoices = true, .algorithm = algorithm});
+}
+const std::vector<std::shared_ptr<const CorrespondenceAlgorithm>> algorithms{
+    std::make_shared<const ExactLineCorrespondence>(), std::make_shared<const WholeText>()};
 RecoveryLimits smallLimits()
 {
     RecoveryLimits limits;
@@ -29,10 +47,10 @@ std::shared_ptr<RecoveryLease> leased(const QString &path, std::shared_ptr<const
 }
 void equivalent(const FileSession &actual, const FileSession &expected)
 {
-    CHECK(recoveryFileCheckpoint(actual, {}).state == recoveryFileCheckpoint(expected, {}).state);
+    CHECK(recoveryFileCheckpoint(actual).state == recoveryFileCheckpoint(expected).state);
     CHECK(actual.facts().blockers == expected.facts().blockers);
     CHECK(actual.canUndo() == expected.canUndo() && actual.canRedo() == expected.canRedo());
-    for (const auto &revision : expected.checkpointHistory().revisions) {
+    for (const auto &revision : SessionCheckpoint::capture(expected).history.revisions) {
         auto a = actual;
         auto b = expected;
         CHECK(a.recordCheckpoint(revision->id, Outcome::Failed) == b.recordCheckpoint(revision->id, Outcome::Failed));
@@ -45,7 +63,7 @@ void equivalent(const FileSession &actual, const FileSession &expected)
 }
 void replayEquals(const RecoveryLease &lease, const FileSession &expected)
 {
-    const auto replay = replayRecovery(lease.store());
+    const auto replay = replayRecovery(lease.store(), expected.algorithm());
     CHECK(replay.succeeded && replay.files.size() == 1);
     equivalent(replay.files.front(), expected);
 }
@@ -109,114 +127,128 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     test_support::configure(argc, argv);
     test_support::Suite suite("RecoveryContinuationTests");
-    suite.run("repeated continuations preserve decisions, hand edits, protected revisions and history cursor", [] {
-        QTemporaryDir directory;
-        const auto lease = leased(directory.path() + "/store");
-        auto file = test_support::choiceFile();
-        commit(lease, file, RecoveryAction::Open, {});
-        auto draft = file.current().draft;
-        draft.decisions.begin()->second.value = DecisionValue::Ignored;
-        const auto before = file.current().draft.text;
-        CHECK(file.replaceDraft(file.current().id, draft) == Transition::Applied);
-        commit(lease, file, RecoveryAction::ReplaceDraft, before);
-        CHECK(file.beginMarkResolved(file.current().id, true) == Transition::Applied);
-        commit(lease, file, RecoveryAction::MarkResolvedReview, file.current().draft.text);
-        CHECK(file.recordCheckpoint(file.current().id, Outcome::Succeeded) == Transition::Applied);
-        commit(lease, file, RecoveryAction::ManualSave, file.current().draft.text);
-        CHECK(file.recordWrite(file.current().id, Outcome::Succeeded) == Transition::Applied);
-        commit(lease, file, RecoveryAction::WriteOutcome, file.current().draft.text);
-        CHECK(file.recordStage(file.current().id, Outcome::Succeeded, "object", "100644") == Transition::Applied);
-        commit(lease, file, RecoveryAction::StageOutcome, file.current().draft.text);
-        for (int i = 0; i < 18; ++i) {
-            edit(lease, file, "hand edit " + std::to_string(i) + "\n");
-            const auto previous = file.current().draft.text;
-            const auto action = i % 2 ? RecoveryAction::Undo : RecoveryAction::ManualSave;
-            if (i % 2)
-                CHECK(file.undo(file.current().id) == Transition::Applied);
-            else
-                CHECK(file.recordCheckpoint(file.current().id, Outcome::Succeeded) == Transition::Applied);
-            commit(lease, file, action, previous);
-            if (i % 2) {
-                const auto text = file.current().draft.text;
-                CHECK(file.redo(file.current().id) == Transition::Applied);
-                commit(lease, file, RecoveryAction::Redo, text);
-            }
-        }
-        CHECK(lease->store().read().transactions.size() <= 4);
-        const auto live = recoveryCheckpoint(lease->store());
-        CHECK(QDir(lease->directory() + "/payloads").entryList(QDir::Files).size() <= live.payloads.size() + 16);
-        CHECK(!QFileInfo::exists(lease->directory() + "/journal-next"));
-        const auto snapshot = replayRecovery(lease->store()).files.front();
-        auto replayUndo = snapshot;
-        auto liveUndo = file;
-        while (liveUndo.canUndo()) {
-            CHECK(liveUndo.undo(liveUndo.current().id) == Transition::Applied);
-            CHECK(replayUndo.undo(replayUndo.current().id) == Transition::Applied);
-            equivalent(replayUndo, liveUndo);
-        }
-        while (liveUndo.canRedo()) {
-            CHECK(liveUndo.redo(liveUndo.current().id) == Transition::Applied);
-            CHECK(replayUndo.redo(replayUndo.current().id) == Transition::Applied);
-            equivalent(replayUndo, liveUndo);
-        }
-        CHECK(file.publication().written() && file.publication().staged());
-        CHECK(!file.facts().resolved && file.facts().needsReview);
-        const auto previous = file.current().draft.text;
-        CHECK(file.discardToCheckpoint(file.current().id) == Transition::Applied);
-        commit(lease, file, RecoveryAction::DiscardToCheckpoint, previous);
-        edit(lease, file, "after discard\n");
-        const auto stagedPrevious = file.current().draft.text;
-        CHECK(file.discardToStaged(file.current().id) == Transition::Applied);
-        commit(lease, file, RecoveryAction::DiscardToStaged, stagedPrevious);
-        for (int i = 0; i < 4; ++i) edit(lease, file, "after staged discard\n");
-    });
+    for (const auto &algorithm : algorithms) {
+        suite.run("repeated continuations preserve decisions, hand edits, protected revisions and history cursor",
+                  [algorithm] {
+                      QTemporaryDir directory;
+                      const auto lease = leased(directory.path() + "/store");
+                      auto file = choiceFile(algorithm);
+                      commit(lease, file, RecoveryAction::Open, {});
+                      auto draft = file.current().draft;
+                      draft.decisions.begin()->second.value = DecisionValue::Ignored;
+                      const auto before = file.current().draft.text;
+                      CHECK(file.replaceDraft(file.current().id, draft) == Transition::Applied);
+                      commit(lease, file, RecoveryAction::ReplaceDraft, before);
+                      CHECK(file.beginMarkResolved(file.current().id, true) == Transition::Applied);
+                      commit(lease, file, RecoveryAction::MarkResolvedReview, file.current().draft.text);
+                      CHECK(file.recordCheckpoint(file.current().id, Outcome::Succeeded) == Transition::Applied);
+                      commit(lease, file, RecoveryAction::ManualSave, file.current().draft.text);
+                      CHECK(file.recordWrite(file.current().id, Outcome::Succeeded) == Transition::Applied);
+                      commit(lease, file, RecoveryAction::WriteOutcome, file.current().draft.text);
+                      CHECK(file.recordStage(file.current().id, Outcome::Succeeded, "object", "100644")
+                            == Transition::Applied);
+                      commit(lease, file, RecoveryAction::StageOutcome, file.current().draft.text);
+                      for (int i = 0; i < 18; ++i) {
+                          edit(lease, file, "hand edit " + std::to_string(i) + "\n");
+                          const auto previous = file.current().draft.text;
+                          const auto action = i % 2 ? RecoveryAction::Undo : RecoveryAction::ManualSave;
+                          if (i % 2)
+                              CHECK(file.undo(file.current().id) == Transition::Applied);
+                          else
+                              CHECK(file.recordCheckpoint(file.current().id, Outcome::Succeeded)
+                                    == Transition::Applied);
+                          commit(lease, file, action, previous);
+                          if (i % 2) {
+                              const auto text = file.current().draft.text;
+                              CHECK(file.redo(file.current().id) == Transition::Applied);
+                              commit(lease, file, RecoveryAction::Redo, text);
+                          }
+                      }
+                      CHECK(lease->store().read().transactions.size() <= 4);
+                      const auto live = recoveryCheckpoint(lease->store(), algorithm);
+                      CHECK(QDir(lease->directory() + "/payloads").entryList(QDir::Files).size()
+                            <= live.payloads.size() + 16);
+                      CHECK(!QFileInfo::exists(lease->directory() + "/journal-next"));
+                      const auto snapshot = replayRecovery(lease->store(), algorithm).files.front();
+                      CHECK(!replayRecovery(lease->store(), algorithms[algorithm == algorithms[0] ? 1 : 0]).succeeded);
+                      auto replayUndo = snapshot;
+                      auto liveUndo = file;
+                      while (liveUndo.canUndo()) {
+                          CHECK(liveUndo.undo(liveUndo.current().id) == Transition::Applied);
+                          CHECK(replayUndo.undo(replayUndo.current().id) == Transition::Applied);
+                          equivalent(replayUndo, liveUndo);
+                      }
+                      while (liveUndo.canRedo()) {
+                          CHECK(liveUndo.redo(liveUndo.current().id) == Transition::Applied);
+                          CHECK(replayUndo.redo(replayUndo.current().id) == Transition::Applied);
+                          equivalent(replayUndo, liveUndo);
+                      }
+                      CHECK(file.publication().written() && file.publication().staged());
+                      CHECK(!file.facts().resolved && file.facts().needsReview);
+                      const auto previous = file.current().draft.text;
+                      CHECK(file.discardToCheckpoint(file.current().id) == Transition::Applied);
+                      commit(lease, file, RecoveryAction::DiscardToCheckpoint, previous);
+                      edit(lease, file, "after discard\n");
+                      const auto stagedPrevious = file.current().draft.text;
+                      CHECK(file.discardToStaged(file.current().id) == Transition::Applied);
+                      commit(lease, file, RecoveryAction::DiscardToStaged, stagedPrevious);
+                      for (int i = 0; i < 4; ++i) edit(lease, file, "after staged discard\n");
+                  });
+    }
     for (const auto point :
          {RolloverFault::Fault::Rename, RolloverFault::Fault::AfterRenameSync, RolloverFault::Fault::Cleanup}) {
-        suite.run("failed head publication, directory sync and cleanup keep equivalent acknowledged history", [point] {
-            QTemporaryDir directory;
-            const auto files = std::make_shared<RolloverFault>();
-            const auto lease = leased(directory.path() + "/store", files);
-            auto file = test_support::choiceFile();
-            commit(lease, file, RecoveryAction::Open, {});
-            for (int i = 0; i < 3; ++i) edit(lease, file, std::to_string(i));
-            const auto acknowledged = file;
-            auto draft = file.current().draft;
-            draft.text += "pending";
-            CHECK(file.replaceDraft(file.current().id, draft) == Transition::Applied);
-            const auto pending =
-                recoveryTransaction(file, RecoveryAction::ReplaceDraft, "pending", acknowledged.current().draft.text);
-            files->fault = point;
-            CHECK(!lease->commit(pending).succeeded);
-            CHECK(files->fault == RolloverFault::Fault::None);
-            replayEquals(*lease, acknowledged);
-            CHECK(lease->commit(pending).succeeded && lease->commit(pending).succeeded);
-            replayEquals(*lease, file);
-        });
+        for (const auto &algorithm : algorithms) {
+            suite.run("failed head publication, directory sync and cleanup keep equivalent acknowledged history",
+                      [point, algorithm] {
+                          QTemporaryDir directory;
+                          const auto files = std::make_shared<RolloverFault>();
+                          const auto lease = leased(directory.path() + "/store", files);
+                          auto file = choiceFile(algorithm);
+                          commit(lease, file, RecoveryAction::Open, {});
+                          for (int i = 0; i < 3; ++i) edit(lease, file, std::to_string(i));
+                          const auto acknowledged = file;
+                          auto draft = file.current().draft;
+                          draft.text += "pending";
+                          CHECK(file.replaceDraft(file.current().id, draft) == Transition::Applied);
+                          const auto pending = recoveryTransaction(file, RecoveryAction::ReplaceDraft, "pending",
+                                                                   acknowledged.current().draft.text);
+                          files->fault = point;
+                          CHECK(!lease->commit(pending).succeeded);
+                          CHECK(files->fault == RolloverFault::Fault::None);
+                          replayEquals(*lease, acknowledged);
+                          CHECK(lease->commit(pending).succeeded && lease->commit(pending).succeeded);
+                          replayEquals(*lease, file);
+                      });
+        }
     }
-    suite.run("uncertain flush IDs and exact unresolved mutation targets survive several continuations", [] {
-        QTemporaryDir directory;
-        const auto files = std::make_shared<RolloverFault>();
-        const auto lease = leased(directory.path() + "/store", files);
-        auto file = test_support::choiceFile();
-        commit(lease, file, RecoveryAction::Open, {});
-        const auto target = file;
-        const MutationFact fact{QUuid::createUuid().toString(QUuid::WithoutBraces), MutationKind::Publication, {}};
-        const auto intent = mutationRecoveryTransaction(target, fact);
-        files->arm(test_support::SyncFaults::Point::JournalSync);
-        CHECK(!lease->commit(intent).succeeded);
-        for (int i = 0; i < 14; ++i) edit(lease, file, std::to_string(i));
-        CHECK(lease->commit(intent).succeeded);
-        auto observation = fact;
-        observation.observation = MutationObservation::Uncertain;
-        CHECK(lease->commit(mutationRecoveryTransaction(target, observation)).succeeded);
-        for (int i = 0; i < 4; ++i) edit(lease, file, "observed");
-        const auto replay = replayRecovery(lease->store());
-        CHECK(replay.succeeded && replay.mutations.size() == 1);
-        CHECK(replay.mutations.front().id == fact.id
-              && replay.mutations.front().observation == observation.observation);
-        equivalent(replay.mutations.front().target, target);
-        equivalent(replay.files.front(), file);
-    });
+    for (const auto &algorithm : algorithms) {
+        suite.run("uncertain flush IDs and exact unresolved mutation targets survive several continuations",
+                  [algorithm] {
+                      QTemporaryDir directory;
+                      const auto files = std::make_shared<RolloverFault>();
+                      const auto lease = leased(directory.path() + "/store", files);
+                      auto file = choiceFile(algorithm);
+                      commit(lease, file, RecoveryAction::Open, {});
+                      const auto target = file;
+                      const MutationFact fact{
+                          QUuid::createUuid().toString(QUuid::WithoutBraces), MutationKind::Publication, {}};
+                      const auto intent = mutationRecoveryTransaction(target, fact);
+                      files->arm(test_support::SyncFaults::Point::JournalSync);
+                      CHECK(!lease->commit(intent).succeeded);
+                      for (int i = 0; i < 14; ++i) edit(lease, file, std::to_string(i));
+                      CHECK(lease->commit(intent).succeeded);
+                      auto observation = fact;
+                      observation.observation = MutationObservation::Uncertain;
+                      CHECK(lease->commit(mutationRecoveryTransaction(target, observation)).succeeded);
+                      for (int i = 0; i < 4; ++i) edit(lease, file, "observed");
+                      const auto replay = replayRecovery(lease->store(), algorithm);
+                      CHECK(replay.succeeded && replay.mutations.size() == 1);
+                      CHECK(replay.mutations.front().id == fact.id
+                            && replay.mutations.front().observation == observation.observation);
+                      equivalent(replay.mutations.front().target, target);
+                      equivalent(replay.files.front(), file);
+                  });
+    }
     for (const auto point :
          {test_support::SyncFaults::Point::PayloadSync, test_support::SyncFaults::Point::DirectorySync}) {
         suite.run("checkpoint payload and prepublication sync failures preserve the original journal", [point] {
@@ -239,6 +271,19 @@ int main(int argc, char **argv)
             replayEquals(*lease, file);
         });
     }
+    suite.run("a pending transaction owns its configured algorithm until continuation completes", [] {
+        auto algorithm = std::make_shared<const WholeText>();
+        const std::weak_ptr<const CorrespondenceAlgorithm> lifetime = algorithm;
+        auto transaction = recoveryTransaction(choiceFile(algorithm), RecoveryAction::Open, "owned", {});
+        algorithm.reset();
+        CHECK(!lifetime.expired());
+        QTemporaryDir directory;
+        const auto lease = leased(directory.path() + "/store");
+        CHECK(lease->commit(transaction).succeeded);
+        CHECK(transaction.continuation(lease->store()).state.contains("checkpointSchema"));
+        transaction = {};
+        CHECK(lifetime.expired());
+    });
     suite.run("unsupported checkpoint schema and inconsistent history are rejected", [] {
         QTemporaryDir directory;
         const auto source = leased(directory.path() + "/source");

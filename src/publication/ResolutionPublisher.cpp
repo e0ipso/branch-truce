@@ -74,11 +74,13 @@ ResolutionPublisher::readBaselines(const QString &worktreeRoot, const std::vecto
 {
     Baselines baselines;
     for (const auto &session : files) {
-        if (session.support() != Support::Supported || !session.snapshots()) continue;
+        if ((session.support() != Support::Supported && session.support() != Support::LargeFile)
+            || !session.snapshots())
+            continue;
         Baseline baseline;
-        const auto captured =
-            storage::captureDestination(worktreeRoot, QByteArray::fromStdString(session.path()), destinations);
         const auto &launch = session.snapshots()->launchResult;
+        const auto captured = storage::captureDestination(worktreeRoot, QByteArray::fromStdString(session.path()),
+                                                          destinations, &launch.identity);
         if (!captured.destination)
             baseline.diagnostic = problem_text::text(captured.problem);
         else if (captured.destination->identity() != launch.identity
