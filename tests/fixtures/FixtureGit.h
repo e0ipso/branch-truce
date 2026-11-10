@@ -4,16 +4,13 @@
 // user's and the system's configuration, and a way to run it without a shell. Qt-free, so the
 // engine tests use it for `git merge-file` too.
 
+#include "fixtures/FixtureProcess.h"
+
 #include <algorithm>
-#include <array>
-#include <cerrno>
 #include <cstdlib>
-#include <optional>
-#include <spawn.h>
 #include <string>
 #include <string_view>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -59,59 +56,6 @@ inline std::vector<std::pair<std::string, std::string>> isolatedGitVariables(con
             {"GIT_CONFIG_NOSYSTEM", "1"},
             {"GIT_CONFIG_GLOBAL", globalConfig},
             {"GIT_TERMINAL_PROMPT", "0"}};
-}
-
-// A process's standard output and its wait status, which is -1 when the
-// process could not be started.
-struct ProcessOutput {
-    std::string text;
-    int status = -1;
-};
-
-// Runs `arguments` without a shell and reads its standard output to the end. An absolute first
-// argument runs that file; otherwise PATH is searched. `environment` replaces the inherited one.
-inline ProcessOutput readProcess(std::vector<std::string> arguments,
-                                 const std::optional<std::vector<std::string>> &environment = std::nullopt)
-{
-    ProcessOutput output;
-    std::array<int, 2> ends{};
-    if (pipe(ends.data()) != 0) return output;
-    std::vector<char *> argv;
-    argv.reserve(arguments.size() + 1);
-    for (auto &argument : arguments) argv.push_back(argument.data());
-    argv.push_back(nullptr);
-    std::vector<std::string> variables = environment.value_or(std::vector<std::string>{});
-    std::vector<char *> envp;
-    for (auto &variable : variables) envp.push_back(variable.data());
-    envp.push_back(nullptr);
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_adddup2(&actions, ends[1], STDOUT_FILENO);
-    posix_spawn_file_actions_addclose(&actions, ends[0]);
-    posix_spawn_file_actions_addclose(&actions, ends[1]);
-    pid_t child = 0;
-    char *const *childEnvironment = environment ? envp.data() : environ;
-    const bool started = (arguments.front().starts_with('/')
-                              ? posix_spawn(&child, argv.front(), &actions, nullptr, argv.data(), childEnvironment)
-                              : posix_spawnp(&child, argv.front(), &actions, nullptr, argv.data(), childEnvironment))
-        == 0;
-    posix_spawn_file_actions_destroy(&actions);
-    close(ends[1]);
-    std::array<char, 4096> buffer{};
-    while (started) {
-        const auto count = read(ends[0], buffer.data(), buffer.size());
-        if (count == 0 || (count < 0 && errno != EINTR)) break;
-        if (count > 0) output.text.append(buffer.data(), static_cast<std::size_t>(count));
-    }
-    // Closing the read end first lets a child still writing end on SIGPIPE.
-    close(ends[0]);
-    if (!started) return output;
-    int status = 0;
-    while (waitpid(child, &status, 0) == -1) {
-        if (errno != EINTR) return output;
-    }
-    output.status = status;
-    return output;
 }
 
 } // namespace test_support

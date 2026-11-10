@@ -64,10 +64,6 @@ void waitFor(const std::string &what, const std::function<bool()> &ready,
              const std::function<std::string()> &state = {});
 // Runs the event loop until ready() holds or `deadlineMs` pass, and returns whether it held.
 bool heldWithin(const std::function<bool()> &ready, int deadlineMs);
-// Runs the event loop until the window has drawn two more frames, so every animation a step
-// started has advanced and every binding it changed is applied.
-void untilFramesDrawn(QQuickWindow *window);
-
 // What one journey owns, so no journey sees another's state: an offline Git guard that logs the
 // app's Git calls, a recovery root that holds the journey's sessions, and an owner-only runtime
 // directory for the mergetool socket. Every Scene of the journey shares it, as successive windows
@@ -163,7 +159,8 @@ struct HandoffEntry {
 // The real Main scene over a controller that opened the repository itself.
 class Scene {
 public:
-    Scene(Sandbox &sandbox, const Repository &repository);
+    Scene(Sandbox &sandbox, const Repository &repository,
+          std::shared_ptr<const branch_truce::storage::FileSystem> files = branch_truce::storage::systemFileSystem());
     ~Scene();
     Scene(const Scene &) = delete;
     Scene &operator=(const Scene &) = delete;

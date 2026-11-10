@@ -1,5 +1,7 @@
 // The sandbox, the scene and the typed readers every journey shares.
 #include "acceptance/JourneyScene.h"
+#include "fixtures/FileToolbar.h"
+#include "fixtures/QmlWarnings.h"
 
 #include "fixtures/EventLoop.h"
 #include "fixtures/QuickScene.h"
@@ -63,16 +65,6 @@ bool heldWithin(const std::function<bool()> &ready, int deadlineMs)
     }
 }
 
-void untilFramesDrawn(QQuickWindow *window)
-{
-    QSignalSpy frames(window, &QQuickWindow::frameSwapped);
-    window->update();
-    test_support::settleFor("two rendered frames", [&] {
-        if (frames.count() < 2) window->update();
-        return frames.count() >= 2;
-    });
-}
-
 Repository::Repository(const std::vector<PathSpec> &paths, Stop stop)
 {
     git({"config", "remote.origin.url", "https://offline.invalid/never-contact"});
@@ -130,11 +122,14 @@ QProcessEnvironment Sandbox::mergetoolEnvironment(const Repository &repository) 
     return environment;
 }
 
-Scene::Scene(Sandbox &sandbox, const Repository &repository)
+Scene::Scene(Sandbox &sandbox, const Repository &repository, std::shared_ptr<const storage::FileSystem> files)
     : sandbox_(sandbox), gitCallsBefore_(sandbox.git().calls().size())
 {
-    controller_ = std::make_unique<Application>(sandbox.config(repository));
+    auto config = sandbox.config(repository);
+    config.files = std::move(files);
+    controller_ = std::make_unique<Application>(std::move(config));
     engine_ = std::make_unique<QQmlApplicationEngine>();
+    test_support::failOnQmlWarnings(*engine_);
     engine_->setInitialProperties(controller_->windowProperties());
     engine_->loadFromModule("BranchTruce", "Main");
     CHECK(engine_->rootObjects().size() == 1);
@@ -172,7 +167,7 @@ Scene::~Scene()
 QQuickItem *Scene::item(const char *name) const
 {
     const auto objectName = QString::fromLatin1(name);
-    auto *found = test_support::visibleItem(window_->contentItem(), objectName);
+    auto *found = test_support::visualItem(window_->contentItem(), objectName, true);
     if (!found) found = window_->findChild<QQuickItem *>(objectName);
     // A toolbar creates its buttons outside the QObject tree, so look in the item tree too.
     if (!found) found = test_support::visualItem(window_->contentItem(), objectName);

@@ -4,6 +4,7 @@
 #include "acceptance/JourneySuite.h"
 #include "fixtures/Await.h"
 #include "fixtures/QuickScene.h"
+#include "fixtures/SyncFaults.h"
 
 #include <QDialogButtonBox>
 #include <QFile>
@@ -27,7 +28,7 @@ namespace {
 
 // Resolves two files, keeps a newer draft on one of them, saves one, types in one, and makes a
 // repository write and a Git resolution fail on the last two.
-void leaveEveryKindOfWork(Scene &scene, const Repository &repo)
+void leaveEveryKindOfWork(Scene &scene, const Repository &repo, test_support::SyncFaults &files)
 {
     clickFile(scene, "done.txt");
     markResolvedByMouse(scene);
@@ -45,8 +46,9 @@ void leaveEveryKindOfWork(Scene &scene, const Repository &repo)
     clickFile(scene, "locked/failing.txt");
     appendToResult(scene, "fails");
     {
-        ReadOnlyDirectory locked(repo.path("locked"));
+        const test_support::ArmedFault failure(files, test_support::SyncFaults::Point::PublicationExchange);
         markResolvedByMouse(scene);
+        CHECK(files.failures == 1);
     }
     // A failed repository write keeps the saved app draft and leaves the file unresolved.
     const auto failed = scene.progress();
@@ -121,10 +123,11 @@ void routesReturnToTheirFiles(Scene &scene, QObject *dialog)
 void handoffSeparatesTheWork(Sandbox &sandbox)
 {
     Repository repo(handoffPaths());
-    Scene scene(sandbox, repo);
+    const auto files = std::make_shared<test_support::SyncFaults>();
+    Scene scene(sandbox, repo, files);
     auto &app = scene.app();
     CHECK(app.files()->totalFiles() == 7);
-    leaveEveryKindOfWork(scene, repo);
+    leaveEveryKindOfWork(scene, repo, *files);
     auto *dialog = scene.object("handoffDialog");
     handoffNamesEachFile(scene, dialog);
     routesReturnToTheirFiles(scene, dialog);

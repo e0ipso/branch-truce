@@ -97,18 +97,4 @@ std::string loaderState(const branch_truce::SessionLoader &loader);
 std::unique_ptr<mergetool_fixture::ParentProcess> startMergetool(const Sandbox &sandbox, const Repository &repo,
                                                                  const QStringList &paths);
 
-// --- file system ---------------------------------------------------------------------------
-
-// Owner-only read and execute on one directory, restored on scope exit.
-class ReadOnlyDirectory {
-public:
-    explicit ReadOnlyDirectory(QString path);
-    ~ReadOnlyDirectory();
-    ReadOnlyDirectory(const ReadOnlyDirectory &) = delete;
-    ReadOnlyDirectory &operator=(const ReadOnlyDirectory &) = delete;
-
-private:
-    QString path_;
-};
-
 } // namespace journey

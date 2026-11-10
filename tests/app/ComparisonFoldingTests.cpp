@@ -1,5 +1,13 @@
 // Conflict markers in the result: folded blocks, their rows and choices, and conflict navigation.
-#include "ComparisonScene.h"
+#include "ComparisonCases.h"
+#include "ComparisonEditor.h"
+#include "ComparisonFolds.h"
+#include "ComparisonGeometry.h"
+#include "ComparisonMarks.h"
+#include "ComparisonNavigationChecks.h"
+#include "ComparisonRecovery.h"
+#include "ComparisonSessionChecks.h"
+#include "ComparisonTextProbes.h"
 #include "fixtures/AppSession.h"
 #include "fixtures/Await.h"
 
@@ -17,7 +25,8 @@ void comparison_scene::addFoldingCases(Groups groups)
         [] {
             // markedFile(true) writes both sections between markers with diff3 base sections:
             // blocks on lines 2-11 and 13-19, whose marker lines are 2, 5, 8, 11, 13, 15, 17 and 19.
-            Fixture fixture(test_support::markedFile(true));
+            Application controller(test_support::windowConfig());
+            Fixture fixture(controller, test_support::markedFile(true));
             settlePanes(fixture);
             const auto text = QString::fromStdString(test_support::markedText(true));
             const auto markerLines = linesStarting(fixture, {"<<<<<<<", "|||||||", "=======", ">>>>>>>"});
@@ -91,21 +100,22 @@ void comparison_scene::addFoldingCases(Groups groups)
                 CHECK(bands[0].ends_with(">2-12") && bands[1].ends_with(">13-20"));
             }
             // The toggle shows the raw lines as conflicts, drops the rows and changes no work.
-            const auto before = captureWork(fixture);
+            const auto before = captureWork(fixture, *controller.selectedFile());
             auto *toggle = fixture.object("showConflictMarkers");
             CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
             CHECK(toggle->property("checked").toBool());
             expectLook(fixture, "with the markers shown", {{}, numbers(1, lineCount + 1), blockLines, {}, 11});
-            checkUnchanged(fixture, before);
+            checkUnchanged(fixture, *controller.selectedFile(), before);
             CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
             expectLook(fixture, "with the markers folded again", folded);
-            checkUnchanged(fixture, before);
+            checkUnchanged(fixture, *controller.selectedFile(), before);
         });
     scenes.run("unmapped recognized markers fold without offering unsafe choices", [] {
-        Fixture fixture(test_support::underlinedBaseFile(false));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::underlinedBaseFile(false));
         settlePanes(fixture);
         CHECK(fixture.file().markers().blocks.size() == 1 && fixture.file().markerSections().empty());
-        const auto blocks = fixture.controller.selectedFile()->markerBlocks();
+        const auto blocks = controller.selectedFile()->markerBlocks();
         CHECK(blocks.size() == 1 && blocks.front().toMap().value("folded").toBool());
         CHECK(blocks.front().toMap().value("sections").toStringList().isEmpty());
         settle([&] { return foldedLines(fixture) == numbers(3, 15); });
@@ -113,51 +123,51 @@ void comparison_scene::addFoldingCases(Groups groups)
         CHECK(fixture.item("resultConflictRow-2")->property("text").toString() == "Unresolved conflict");
         for (auto *item : fixture.item("resultFoldedRows")->findChildren<QQuickItem *>())
             CHECK(!item->objectName().startsWith("resultTakeBoth-") || !item->isVisible());
-        const auto original = captureWork(fixture);
+        const auto original = captureWork(fixture, *controller.selectedFile());
         const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
-        CHECK(!fixture.controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
-                                                           QString::fromStdString(target.source.contributionId),
-                                                           ChoicePreviewFlow::Action::CombineLeftFirst));
-        checkUnchanged(fixture, original);
+        CHECK(!controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
+                                                   QString::fromStdString(target.source.contributionId),
+                                                   ChoicePreviewFlow::Action::CombineLeftFirst));
+        checkUnchanged(fixture, *controller.selectedFile(), original);
         auto *toggle = fixture.object("showConflictMarkers");
         CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
         settle([&] { return foldedLines(fixture).isEmpty(); });
-        checkUnchanged(fixture, original);
+        checkUnchanged(fixture, *controller.selectedFile(), original);
         // Edit the recognizable closing marker while raw lines are visible.
         const auto end = static_cast<int>(fixture.text().indexOf("theirs") + 6);
-        fixture.select(end, end);
-        fixture.key(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
-        const auto edited = captureWork(fixture);
+        select(fixture, end, end);
+        key(fixture, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+        const auto edited = captureWork(fixture, *controller.selectedFile());
         CHECK(edited.draft.text != original.draft.text && edited.draft.decisions == original.draft.decisions);
         CHECK(fixture.file().markers().blocks.size() == 1 && fixture.file().markerSections().empty());
         CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
         settle([&] { return foldedLines(fixture) == numbers(3, 15); });
-        checkUnchanged(fixture, edited);
-        CHECK(commandResult(
-            fixture.controller,
-            fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
+        checkUnchanged(fixture, *controller.selectedFile(), edited);
+        CHECK(commandResult(controller,
+                            controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.file().current().draft == original.draft);
         settle([&] { return foldedLines(fixture) == numbers(3, 15); });
-        CHECK(commandResult(
-            fixture.controller,
-            fixture.controller.commands()->redo("choices", QString::number(fixture.file().current().id))));
+        CHECK(commandResult(controller,
+                            controller.commands()->redo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.file().current().draft == edited.draft);
         settle([&] { return foldedLines(fixture) == numbers(3, 15); });
-        const auto redone = captureWork(fixture);
+        const auto redone = captureWork(fixture, *controller.selectedFile());
         CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
         settle([&] { return foldedLines(fixture).isEmpty(); });
-        checkUnchanged(fixture, redone);
-        fixture.checkRecovered(edited.draft);
+        checkUnchanged(fixture, *controller.selectedFile(), redone);
+        checkRecovered(*controller.store(), *controller.files(), edited.draft);
     });
     scenes.run("a long marker label stays one row with wrapping enabled", [] {
         auto marked = test_support::markedText();
         marked.replace(marked.find("<<<<<<< ours"), std::string("<<<<<<< ours").size(),
                        "<<<<<<< " + std::string(400, 'x'));
-        Fixture fixture(test_support::choiceFile("header\nleft first\nleft second\nbridge\nleft later\ntail\n",
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller,
+                        test_support::choiceFile("header\nleft first\nleft second\nbridge\nleft later\ntail\n",
                                                  "header\nright first\nright second\nbridge\nright later\ntail\n",
                                                  marked));
         settlePanes(fixture);
-        const auto before = captureWork(fixture);
+        const auto before = captureWork(fixture, *controller.selectedFile());
         CHECK(fixture.item("wrapLines")->setProperty("checked", true));
         expectLook(fixture, "folded with wrapping", markedFolded());
         auto &document = resultDocument(fixture);
@@ -166,69 +176,71 @@ void comparison_scene::addFoldingCases(Groups groups)
         settle([&] { return document.findBlockByNumber(1).layout()->lineCount() > 1; });
         CHECK(QMetaObject::invokeMethod(fixture.object("showConflictMarkers"), "trigger"));
         expectLook(fixture, "folded again with wrapping", markedFolded());
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
     });
     scenes.run("keys and selections step over a folded block and its row", [] {
         // markedFile(): the first block is lines 2-8, folded into its row on line 2.
-        Fixture fixture(test_support::markedFile());
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::markedFile());
         settlePanes(fixture);
         expectLook(fixture, "at launch", markedFolded());
         const auto text = fixture.text();
-        const auto before = captureWork(fixture);
+        const auto before = captureWork(fixture, *controller.selectedFile());
         const auto at = [&](const char *line) { return static_cast<int>(text.indexOf(QLatin1String(line))); };
         auto *editor = fixture.item("resultText");
         const auto selection = [&] {
             return std::pair{editor->property("selectionStart").toInt(), editor->property("selectionEnd").toInt()};
         };
         // Down from column 3 of the header passes the row and the folded block and keeps the column.
-        fixture.select(3, 3);
+        select(fixture, 3, 3);
         expectCursor(fixture, "after placing the cursor", 3);
-        fixture.key(Qt::Key_Down);
+        key(fixture, Qt::Key_Down);
         expectCursor(fixture, "down from the header", at("bridge") + 3);
-        fixture.key(Qt::Key_Up);
+        key(fixture, Qt::Key_Up);
         expectCursor(fixture, "up from bridge", 3);
         // Right at the end of the header and Left at the start of bridge cross the block.
-        fixture.select(at("header") + 6, at("header") + 6);
-        fixture.key(Qt::Key_Right);
+        select(fixture, at("header") + 6, at("header") + 6);
+        key(fixture, Qt::Key_Right);
         expectCursor(fixture, "right over the block", at("bridge"));
-        fixture.key(Qt::Key_Left);
+        key(fixture, Qt::Key_Left);
         expectCursor(fixture, "left over the block", at("header") + 6);
         // Shift+Down extends a selection over the block and keeps its anchor.
-        fixture.select(0, 0);
-        fixture.key(Qt::Key_Down, Qt::ShiftModifier);
+        select(fixture, 0, 0);
+        key(fixture, Qt::Key_Down, Qt::ShiftModifier);
         expectCursor(fixture, "shift+down over the block", at("bridge"));
         CHECK(selection() == std::pair(0, at("bridge")));
         // Consecutive keys can arrive before the queued cursor check. Each uses the
         // preceding visible position and keeps the original selection anchor.
-        fixture.select(3, 3);
-        fixture.key(Qt::Key_Down, Qt::ShiftModifier);
-        fixture.key(Qt::Key_Down, Qt::ShiftModifier);
+        select(fixture, 3, 3);
+        key(fixture, Qt::Key_Down, Qt::ShiftModifier);
+        key(fixture, Qt::Key_Down, Qt::ShiftModifier);
         expectCursor(fixture, "two shift+down keys", at("tail") + 3);
         CHECK(selection() == std::pair(3, at("tail") + 3));
-        fixture.key(Qt::Key_Up, Qt::ShiftModifier);
+        key(fixture, Qt::Key_Up, Qt::ShiftModifier);
         expectCursor(fixture, "shift+up from tail", at("bridge") + 3);
         CHECK(selection() == std::pair(3, at("bridge") + 3));
         // A selection set by code that ends in a folded block ends before its row instead.
-        fixture.select(0, at("======="));
+        select(fixture, 0, at("======="));
         expectCursor(fixture, "after selecting into the block", at("header") + 6);
         CHECK(selection() == std::pair(0, at("header") + 6));
         // A cursor set by code on the row goes on to the line after the block.
-        fixture.select(at("<<<<<<< ours") + 2, at("<<<<<<< ours") + 2);
+        select(fixture, at("<<<<<<< ours") + 2, at("<<<<<<< ours") + 2);
         expectCursor(fixture, "after placing the cursor on the row", at("bridge"));
         CHECK(fixture.text() == text);
         expectLook(fixture, "after keyboard navigation", markedFolded());
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
     });
     scenes.run("a recognizable edited end marker remains folded and can be shown", [] {
-        Fixture fixture(test_support::markedFile());
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::markedFile());
         settlePanes(fixture);
         const auto folded = markedFolded();
         expectLook(fixture, "at launch", folded);
         const auto launched = fixture.text();
         // Backspace at the start of "bridge" joins it to the folded end marker above it.
         const auto bridge = static_cast<int>(launched.indexOf("bridge"));
-        fixture.select(bridge, bridge);
-        fixture.key(Qt::Key_Backspace);
+        select(fixture, bridge, bridge);
+        key(fixture, Qt::Key_Backspace);
         const auto joined = QString(launched).replace(">>>>>>> theirs\nbridge", ">>>>>>> theirsbridge");
         CHECK(fixture.text() == joined && fixture.file().current().draft.text == joined.toStdString());
         // The edited end marker is still recognized, but no longer maps to a choice.
@@ -236,61 +248,59 @@ void comparison_scene::addFoldingCases(Groups groups)
         const MarkerLook joinedFold{hidden, numbers(1, 16, hidden), {2, 9}, {2, 9}, 0};
         expectLook(fixture, "after joining a line to the end marker", joinedFold);
         CHECK(fixture.file().markers().blocks.size() == 2 && fixture.file().markerSections().size() == 1);
-        fixture.checkRecovered(fixture.file().current().draft);
-        const auto afterJoin = captureWork(fixture);
+        checkRecovered(*controller.store(), *controller.files(), fixture.file().current().draft);
+        const auto afterJoin = captureWork(fixture, *controller.selectedFile());
         auto *toggle = fixture.object("showConflictMarkers");
         CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
         settle([&] { return foldedLines(fixture).isEmpty(); });
-        fixture.select(bridge - 1, bridge - 1);
+        select(fixture, bridge - 1, bridge - 1);
         expectCursor(fixture, "on the shown edited marker", bridge - 1);
-        checkUnchanged(fixture, afterJoin);
+        checkUnchanged(fixture, *controller.selectedFile(), afterJoin);
         CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
         expectLook(fixture, "after folding the edited marker again", joinedFold);
-        checkUnchanged(fixture, afterJoin);
+        checkUnchanged(fixture, *controller.selectedFile(), afterJoin);
         // Undo and redo restore the bytes and their recognized folds.
-        CHECK(commandResult(
-            fixture.controller,
-            fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
+        CHECK(commandResult(controller,
+                            controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.text() == launched);
         expectLook(fixture, "after undo", folded);
-        CHECK(commandResult(
-            fixture.controller,
-            fixture.controller.commands()->redo("choices", QString::number(fixture.file().current().id))));
+        CHECK(commandResult(controller,
+                            controller.commands()->redo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.text() == joined);
         expectLook(fixture, "after redo", joinedFold);
-        fixture.checkRecovered(fixture.file().current().draft);
+        checkRecovered(*controller.store(), *controller.files(), fixture.file().current().draft);
     });
     scenes.run("finding text on a folded line or going to a blocking marker shows the markers", [] {
-        Fixture fixture(test_support::markedFile());
-        fixture.click("openPassageSearch");
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::markedFile());
+        click(fixture, "openPassageSearch");
         settlePanes(fixture);
         CHECK(foldedLines(fixture) == markedFolded().hidden);
         // Find in the result selects a match on a folded end marker and shows the markers.
         auto *toggle = fixture.object("showConflictMarkers");
         CHECK(fixture.item("searchScope")->setProperty("currentIndex", 1));
         CHECK(fixture.item("searchQuery")->setProperty("text", QStringLiteral("theirs")));
-        fixture.click("findPassage");
+        click(fixture, "findPassage");
         const auto theirs = static_cast<int>(fixture.text().indexOf("theirs"));
         expectCursor(fixture, "after finding theirs", theirs + 6);
         CHECK(fixture.item("resultText")->property("selectionStart").toInt() == theirs);
         CHECK(toggle->property("checked").toBool() && foldedLines(fixture).isEmpty());
         CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
         settle([&] { return foldedLines(fixture) == markedFolded().hidden; });
-        CHECK(!fixture.controller.commands()->markResolved("choices", QString::number(fixture.file().current().id),
-                                                           true));
-        CHECK(fixture.controller.feedback()->markerBlocker().value("line").toInt() == 2);
-        const auto before = captureWork(fixture);
+        CHECK(!controller.commands()->markResolved("choices", QString::number(fixture.file().current().id), true));
+        CHECK(controller.feedback()->markerBlocker().value("line").toInt() == 2);
+        const auto before = captureWork(fixture, *controller.selectedFile());
         CHECK(QMetaObject::invokeMethod(fixture.object("showFirstMarker"), "trigger"));
         // The cursor stays on the marker it went to, the row's line, which the view now shows.
         expectCursor(fixture, "after going to the first marker",
                      static_cast<int>(fixture.text().indexOf("<<<<<<< ours")));
         CHECK(toggle->property("checked").toBool() && foldedLines(fixture).isEmpty());
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
     });
     scenes.run("deciding a section removes its fold and markersRemain, and Save writes the buffer either way", [] {
-        const auto remaining = [](Fixture &fixture) {
+        const auto remaining = [](const SelectedFile &selected) {
             QStringList found;
-            for (const auto &entry : fixture.controller.selectedFile()->regions()) {
+            for (const auto &entry : selected.regions()) {
                 const auto region = entry.toMap();
                 found << region.value("side").toString() + ":" + region.value("section").toString() + "="
                         + (region.value("markersRemain").toBool() ? "remain" : "gone");
@@ -301,18 +311,19 @@ void comparison_scene::addFoldingCases(Groups groups)
         // Save with the markers folded and with them shown writes the same bytes, the buffer's.
         std::optional<std::string> savedBytes;
         for (const bool shown : {false, true}) {
-            Fixture fixture(test_support::markedFile());
+            Application controller(test_support::windowConfig());
+            Fixture fixture(controller, test_support::markedFile());
             settlePanes(fixture);
             if (shown) CHECK(QMetaObject::invokeMethod(fixture.object("showConflictMarkers"), "trigger"));
             expectLook(fixture, shown ? "shown before Save" : "folded before Save",
                        shown ? MarkerLook{{}, numbers(1, 17), numbers(2, 9) + numbers(10, 15), {}, 8} : markedFolded());
             const auto header = static_cast<int>(fixture.text().indexOf("header"));
-            fixture.select(header, header);
-            fixture.key(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
-            settle([&] { return fixture.controller.selectedFile()->unsaved(); });
-            fixture.click("saveDraft");
+            select(fixture, header, header);
+            key(fixture, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+            settle([&] { return controller.selectedFile()->unsaved(); });
+            click(fixture, "saveDraft");
             CHECK(fixture.file().publication().checkpoint());
-            const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.store()->recoveryDirectory()));
+            const auto replay = replayRecovery(storage::RecoveryStore(controller.store()->recoveryDirectory()));
             CHECK(replay.succeeded && replay.files.size() == 1 && replay.files.front().publication().checkpoint());
             const auto bytes =
                 replay.files.front().revision(*replay.files.front().publication().checkpoint())->draft.text;
@@ -322,49 +333,48 @@ void comparison_scene::addFoldingCases(Groups groups)
             if (savedBytes) CHECK(bytes == *savedBytes);
             savedBytes = bytes;
         }
-        Fixture fixture(test_support::markedFile());
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::markedFile());
         settlePanes(fixture);
-        const auto atLaunch = remaining(fixture);
+        const auto atLaunch = remaining(*controller.selectedFile());
         CHECK(atLaunch.size() >= 4 && atLaunch.filter("=gone").isEmpty());
-        CHECK(fixture.controller.selectedFile()->markerBlocks().size() == 2);
+        CHECK(controller.selectedFile()->markerBlocks().size() == 2);
         // Resolving the first section with the left side removes its markers, so only the
         // second block stays folded and only its regions still have markers.
         const auto &first = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
         const auto section = QString::fromStdString(first.section);
-        CHECK(fixture.controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
-                                                          QString::fromStdString(first.source.contributionId),
-                                                          ChoicePreviewFlow::Action::ResolveUsingSide));
-        CHECK(commandResult(fixture.controller, fixture.controller.choices()->applyChoice(true)));
+        CHECK(controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
+                                                  QString::fromStdString(first.source.contributionId),
+                                                  ChoicePreviewFlow::Action::ResolveUsingSide));
+        CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
         CHECK(!fixture.text().contains(QStringLiteral(">>>>>>> theirs\nbridge")));
-        CHECK(fixture.controller.selectedFile()->markerBlocks().size() == 1);
-        for (const auto &entry : remaining(fixture))
+        CHECK(controller.selectedFile()->markerBlocks().size() == 1);
+        for (const auto &entry : remaining(*controller.selectedFile()))
             CHECK(entry.endsWith(entry.contains(":" + section + "=") ? "=gone" : "=remain"));
         // The second block, now lines 5-9, folds into its row on line 5.
         expectLook(fixture, "after resolving the first section",
                    {{6, 7, 8, 9}, numbers(1, 12, {6, 7, 8, 9}), {5}, {5}, 3});
-        CHECK(commandResult(
-            fixture.controller,
-            fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
-        CHECK(remaining(fixture) == atLaunch);
+        CHECK(commandResult(controller,
+                            controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
+        CHECK(remaining(*controller.selectedFile()) == atLaunch);
         expectLook(fixture, "after undoing the choice", markedFolded());
     });
     scenes.run("settling every choice shows the ready notice and row until undo reopens one", [] {
-        Fixture fixture(test_support::markedFile());
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::markedFile());
         settlePanes(fixture);
         auto *notice = fixture.item("settledNotice");
         const auto rowLine = [&] {
-            const auto row = fixture.controller.files()->rowOf("choices");
-            return fixture.controller.files()
-                ->data(fixture.controller.files()->index(row), SessionModel::StatusLineRole)
-                .toString();
+            const auto row = controller.files()->rowOf("choices");
+            return controller.files()->data(controller.files()->index(row), SessionModel::StatusLineRole).toString();
         };
         CHECK(!notice->isVisible() && rowLine() != QStringLiteral("Ready to mark resolved"));
         const auto resolve = [&](SourceSide side, std::size_t section) {
             const auto &target = test_support::choiceTarget(fixture.file(), side, ChoiceScope::Section, section);
-            CHECK(fixture.controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
-                                                              QString::fromStdString(target.source.contributionId),
-                                                              ChoicePreviewFlow::Action::ResolveUsingSide));
-            CHECK(commandResult(fixture.controller, fixture.controller.choices()->applyChoice(true)));
+            CHECK(controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
+                                                      QString::fromStdString(target.source.contributionId),
+                                                      ChoicePreviewFlow::Action::ResolveUsingSide));
+            CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
         };
         resolve(SourceSide::Stage2, 0);
         CHECK(!notice->isVisible());
@@ -373,32 +383,31 @@ void comparison_scene::addFoldingCases(Groups groups)
         CHECK(notice->isVisible() && rowLine() == QStringLiteral("Ready to mark resolved"));
         // Nothing was written or resolved.
         CHECK(!fixture.file().facts().resolved && !fixture.file().publication().written());
-        CHECK(commandResult(
-            fixture.controller,
-            fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
+        CHECK(commandResult(controller,
+                            controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
         settle([&] { return !notice->isVisible(); });
         CHECK(!notice->isVisible() && rowLine() != QStringLiteral("Ready to mark resolved"));
-        CHECK(commandResult(
-            fixture.controller,
-            fixture.controller.commands()->redo("choices", QString::number(fixture.file().current().id))));
+        CHECK(commandResult(controller,
+                            controller.commands()->redo("choices", QString::number(fixture.file().current().id))));
         settle([&] { return notice->isVisible(); });
         CHECK(notice->isVisible());
     });
     scenes.run("a block around two sections split by a shared line folds until both are decided", [] {
         // splitFile writes one block, lines 2-10, around two sections split by "shared";
         // its marker lines are 2, 6 and 10, and it folds into its row on line 2.
-        Fixture fixture(test_support::splitFile());
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::splitFile());
         settlePanes(fixture);
         CHECK(linesStarting(fixture, {"<<<<<<<", "=======", ">>>>>>>"}) == QList<int>({2, 6, 10}));
         // Whether each region still has markers, in the controller's order.
         const auto remain = [&] {
             QList<bool> found;
-            for (const auto &entry : fixture.controller.selectedFile()->regions())
+            for (const auto &entry : controller.selectedFile()->regions())
                 found.push_back(entry.toMap().value("markersRemain").toBool());
             return found;
         };
         const auto folded = [&] {
-            const auto blocks = fixture.controller.selectedFile()->markerBlocks();
+            const auto blocks = controller.selectedFile()->markerBlocks();
             return blocks.size() == 1 && blocks.front().toMap().value("folded").toBool();
         };
         const auto atLaunch = remain();
@@ -406,10 +415,10 @@ void comparison_scene::addFoldingCases(Groups groups)
         settle([&] { return foldedLines(fixture) == numbers(3, 11); });
         const auto resolve = [&](SourceSide side, std::size_t at) {
             const auto &target = test_support::choiceTarget(fixture.file(), side, ChoiceScope::Section, at);
-            CHECK(fixture.controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
-                                                              QString::fromStdString(target.source.contributionId),
-                                                              ChoicePreviewFlow::Action::ResolveUsingSide));
-            CHECK(commandResult(fixture.controller, fixture.controller.choices()->applyChoice(true)));
+            CHECK(controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
+                                                      QString::fromStdString(target.source.contributionId),
+                                                      ChoicePreviewFlow::Action::ResolveUsingSide));
+            CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
         };
         // Deciding the first section keeps the block, its fold and every region's markers.
         resolve(SourceSide::Stage2, 0);
@@ -418,24 +427,24 @@ void comparison_scene::addFoldingCases(Groups groups)
         // Deciding the second removes the block, so nothing folds and no region has markers.
         resolve(SourceSide::Stage3, 1);
         CHECK(fixture.text() == QStringLiteral("header\nleft one\nshared\nright two\ntail\n"));
-        CHECK(fixture.controller.selectedFile()->markerBlocks().isEmpty());
+        CHECK(controller.selectedFile()->markerBlocks().isEmpty());
         CHECK(remain().size() == atLaunch.size() && !remain().contains(true));
         settle([&] { return foldedLines(fixture).isEmpty(); });
         // One undo brings back the block and its fold.
-        CHECK(commandResult(
-            fixture.controller,
-            fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
+        CHECK(commandResult(controller,
+                            controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.text() == QString::fromStdString(test_support::splitText()) && remain() == atLaunch && folded());
         settle([&] { return foldedLines(fixture) == numbers(3, 11); });
     });
     scenes.run("Take both on a folded row previews either order, and the result gutter has none", [] {
-        Fixture fixture(test_support::markedFile());
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::markedFile());
         settlePanes(fixture);
         expectLook(fixture, "at launch", markedFolded());
         // The row carries Take both, so the result gutter's decision column offers none.
         for (auto *child : fixture.item("resultGutter")->findChildren<QObject *>())
             CHECK(!child->objectName().startsWith(QStringLiteral("resultTakeBoth")));
-        const auto before = captureWork(fixture);
+        const auto before = captureWork(fixture, *controller.selectedFile());
         const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
         const auto id = target.source.contributionId;
         const auto button = "resultTakeBoth-" + id;
@@ -443,31 +452,32 @@ void comparison_scene::addFoldingCases(Groups groups)
             const auto entry = std::string(leftFirst ? "resultTakeBothLeftFirst-" : "resultTakeBothRightFirst-") + id;
             // Closing the preview can move this row while its modal overlay fades out.
             test_support::waitForLayout(fixture.window, QString::fromStdString(button), 60);
-            fixture.clickMenuEntry(button.c_str(), entry.c_str());
+            clickMenuEntry(fixture, button.c_str(), entry.c_str());
             // The order goes through the same replacement preview as the source gutters' menus.
             auto *dialog = fixture.object("replacementDialog");
             settle([&] { return dialog->property("visible").toBool(); });
-            const auto replacement = fixture.controller.choices()->choicePreview().value("replacement").toString();
+            const auto replacement = controller.choices()->choicePreview().value("replacement").toString();
             const auto left = replacement.indexOf("left first");
             const auto right = replacement.indexOf("right first");
             if (left < 0 || right < 0 || (left < right) != leftFirst)
                 throw std::runtime_error("the " + entry + " preview replaces with " + replacement.toStdString());
             CHECK(QMetaObject::invokeMethod(dialog, "reject"));
-            CHECK(fixture.controller.choices()->choicePreview().isEmpty());
+            CHECK(controller.choices()->choicePreview().isEmpty());
             // Rejection clears the preview immediately; the modal closes asynchronously.
             settle([&] { return !dialog->property("visible").toBool(); });
-            checkUnchanged(fixture, before);
+            checkUnchanged(fixture, *controller.selectedFile(), before);
         }
         // Hiding the source choices hides Take both too; the row stays.
-        fixture.click("showSourceChoices");
+        click(fixture, "showSourceChoices");
         settle(
             [&] { return !test_support::visualItem(fixture.window->contentItem(), QString::fromStdString(button)); });
         expectLook(fixture, "with the choices hidden", markedFolded());
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
     });
     scenes.run("markerless drafts retain decisions without conflict navigation", [] {
         const std::string result = "same\nAAA\nmid\nBBB\n";
-        Fixture fixture(test_support::choiceFile("same\nleftA\nmid\nleftB\n", result, result));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile("same\nleftA\nmid\nleftB\n", result, result));
         CHECK(fixture.file().facts().undecided == 4);
         const auto noConflicts = [&] {
             settle([&] {
@@ -476,26 +486,26 @@ void comparison_scene::addFoldingCases(Groups groups)
             });
             for (const auto *name : {"previousUndecided", "undecidedCounter", "nextUndecided"})
                 CHECK(!fixture.item(name)->isEnabled());
-            CHECK(fixture.controller.selectedFile()->progress().value("conflicts").toInt() == 0);
+            CHECK(controller.selectedFile()->progress().value("conflicts").toInt() == 0);
         };
         noConflicts();
         const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
-        CHECK(fixture.controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
-                                                          QString::fromStdString(target.source.contributionId),
-                                                          ChoicePreviewFlow::Action::Ignore));
-        CHECK(commandResult(fixture.controller, fixture.controller.choices()->applyChoice(true)));
+        CHECK(controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
+                                                  QString::fromStdString(target.source.contributionId),
+                                                  ChoicePreviewFlow::Action::Ignore));
+        CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
         CHECK(fixture.file().facts().undecided == 3);
         CHECK(fixture.text().toStdString() == result);
         noConflicts();
-        CHECK(commandResult(
-            fixture.controller,
-            fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
+        CHECK(commandResult(controller,
+                            controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.file().facts().undecided == 4);
         CHECK(fixture.text().toStdString() == result);
         noConflicts();
     });
     scenes.run("conflict controls navigate whole marker regions independently of decisions", [] {
-        Fixture fixture(test_support::splitFile());
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::splitFile());
         const auto before = fixture.file().current();
         const auto marked = test_support::splitText();
         const auto begin = static_cast<int>(marked.find("<<<<<<<"));
@@ -503,11 +513,12 @@ void comparison_scene::addFoldingCases(Groups groups)
         CHECK(fixture.file().facts().undecided > 1);
         CHECK(fixture.file().conflictRegions().size() == 1);
         settle([&] { return fixture.item("undecidedCounter")->property("text").toString() == "1 conflict left"; });
-        fixture.select(0, 0);
+        select(fixture, 0, 0);
         for (const auto *name : {"nextUndecided", "undecidedCounter", "previousUndecided"}) {
             CHECK(fixture.item(name)->isEnabled());
-            fixture.click(name);
-            expectNavigation(fixture, "conflict", "choices", "result", 0, 1, begin, end,
+            click(fixture, name);
+            expectNavigation(fixture, *controller.navigator(), *controller.selection(), "conflict", "choices", "result",
+                             0, 1, begin, end,
                              QStringLiteral("Conflict 1 of 1 · result bytes %1-%2").arg(begin).arg(end));
             CHECK(fixture.item("resultText")->hasActiveFocus());
         }

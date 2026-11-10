@@ -3,6 +3,8 @@
 #include "acceptance/JourneySteps.h"
 #include "acceptance/JourneySuite.h"
 #include "fixtures/QuickScene.h"
+#include "fixtures/TextRendering.h"
+#include "fixtures/UiEvidence.h"
 
 #include <QAccessible>
 #include <QClipboard>

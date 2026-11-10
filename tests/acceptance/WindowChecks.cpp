@@ -1,5 +1,6 @@
 // Checks of the window's geometry.
 #include "acceptance/WindowChecks.h"
+#include "fixtures/FileToolbar.h"
 
 #include "acceptance/JourneySteps.h"
 #include "fixtures/QuickScene.h"
@@ -197,7 +198,7 @@ bool checkWheelScroll(Scene &scene, const char *over)
     } else {
         // A scroll the wheel started, smooth or not, has moved the page by the second frame drawn
         // after it.
-        untilFramesDrawn(scene.window());
+        test_support::waitForFrames(scene.window(), "the journey scene");
         if (moved.count() > 0 || page->property("contentY").toReal() != 0)
             throw std::runtime_error("the wheel scrolled a page that fits the window: " + pageExtent(page));
     }

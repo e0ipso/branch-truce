@@ -1,5 +1,15 @@
 // How the panes show text: search, wrapping, line numbers, tab stops, fonts and whitespace markers.
-#include "ComparisonScene.h"
+#include "ComparisonCases.h"
+#include "ComparisonEditor.h"
+#include "ComparisonGeometry.h"
+#include "ComparisonSessionChecks.h"
+#include "ComparisonTextProbes.h"
+#include "fixtures/AppSession.h"
+#include "fixtures/TextRendering.h"
+
+using test_support::markerKind;
+using test_support::paintedMarkers;
+using test_support::visualLines;
 
 using namespace comparison_scene;
 
@@ -7,9 +17,10 @@ void comparison_scene::addTextCases(Groups groups)
 {
     auto &scenes = groups.scenes;
     scenes.run("search scope switches the pane Find selects", [] {
-        Fixture fixture;
-        fixture.click("openPassageSearch");
-        const auto before = captureWork(fixture);
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller);
+        click(fixture, "openPassageSearch");
+        const auto before = captureWork(fixture, *controller.selectedFile());
         auto *scope = fixture.item("searchScope");
         auto *query = fixture.item("searchQuery");
         CHECK(scope->property("count").toInt() == 3);
@@ -17,58 +28,59 @@ void comparison_scene::addTextCases(Groups groups)
         CHECK(scope->property("currentText").toString() == "Left source");
         CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Search scope: Left source."));
         CHECK(query->setProperty("text", "left only"));
-        fixture.click("findPassage");
+        click(fixture, "findPassage");
         auto *left = fixture.item("stage2Text");
         CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Passage in Left source."));
         CHECK(left->property("selectedText").toString() == "left only");
         CHECK(left->property("selectionStart").toInt() == left->property("text").toString().indexOf("left only"));
         CHECK(fixture.item("resultText")->property("selectedText").toString().isEmpty());
         CHECK(fixture.item("stage3Text")->property("selectedText").toString().isEmpty());
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
 
         CHECK(scope->setProperty("currentIndex", 2));
         CHECK(scope->property("currentText").toString() == "Right source");
         CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Search scope: Right source."));
-        fixture.click("findPassage");
+        click(fixture, "findPassage");
         CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("No passage in Right source."));
         CHECK(fixture.item("stage3Text")->property("selectedText").toString().isEmpty());
         CHECK(query->setProperty("text", "right only"));
-        fixture.click("findPassage");
+        click(fixture, "findPassage");
         auto *right = fixture.item("stage3Text");
         CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Passage in Right source."));
         CHECK(right->property("selectedText").toString() == "right only");
         CHECK(right->property("selectionStart").toInt() == right->property("text").toString().indexOf("right only"));
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
 
         CHECK(scope->setProperty("currentIndex", 1));
         CHECK(scope->property("currentText").toString() == "Editable result");
         CHECK(query->setProperty("text", "base conflict"));
-        fixture.click("findPassage");
+        click(fixture, "findPassage");
         auto *result = fixture.item("resultText");
         CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Passage in Editable result."));
         CHECK(result->property("selectedText").toString() == "base conflict");
         CHECK(result->property("selectionStart").toInt()
               == result->property("text").toString().indexOf("base conflict"));
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
 
         CHECK(fixture.item("showEarlier")->setProperty("checked", true));
         settle([&] { return fixture.item("earlierText")->isVisible() && scope->property("count").toInt() == 4; });
         CHECK(scope->property("currentText").toString() == "Editable result");
         CHECK(scope->setProperty("currentIndex", 3));
         CHECK(scope->property("currentText").toString() == "Earlier version");
-        fixture.click("findPassage");
+        click(fixture, "findPassage");
         auto *earlier = fixture.item("earlierText");
         CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Passage in Earlier version."));
         CHECK(earlier->property("selectedText").toString() == "base conflict");
         CHECK(earlier->property("selectionStart").toInt()
               == earlier->property("text").toString().indexOf("base conflict"));
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
     });
     scenes.run("Find selects a passage and wraps to the earlier match", [] {
         const std::string result = "prefix REPEAT middle REPEAT suffix\n";
-        Fixture fixture(test_support::choiceFile("left\n", "right\n", result));
-        fixture.click("openPassageSearch");
-        const auto before = captureWork(fixture);
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile("left\n", "right\n", result));
+        click(fixture, "openPassageSearch");
+        const auto before = captureWork(fixture, *controller.selectedFile());
         auto *scope = fixture.item("searchScope");
         CHECK(scope->setProperty("currentIndex", 1));
         CHECK(scope->property("currentText").toString() == "Editable result");
@@ -78,25 +90,26 @@ void comparison_scene::addTextCases(Groups groups)
         const auto first = text.indexOf("REPEAT");
         const auto second = text.indexOf("REPEAT", first + 6);
         CHECK(first >= 0 && second > first);
-        fixture.click("findPassage");
+        click(fixture, "findPassage");
         CHECK(editor->property("selectedText").toString() == "REPEAT");
         CHECK(editor->property("selectionStart").toInt() == first);
         CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Passage in Editable result."));
-        checkUnchanged(fixture, before);
-        fixture.click("findPassage");
+        checkUnchanged(fixture, *controller.selectedFile(), before);
+        click(fixture, "findPassage");
         CHECK(editor->property("selectionStart").toInt() == second);
         CHECK(editor->property("selectedText").toString() == "REPEAT");
-        checkUnchanged(fixture, before);
-        fixture.click("findPassage");
+        checkUnchanged(fixture, *controller.selectedFile(), before);
+        click(fixture, "findPassage");
         CHECK(editor->property("selectionStart").toInt() == first);
         CHECK(editor->property("selectedText").toString() == "REPEAT");
         CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Passage in Editable result."));
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
     });
     scenes.run("wrapping a long line changes its visual line count", [] {
         const std::string result(480, 'M');
-        Fixture fixture(test_support::choiceFile("left\n", "right\n", result + "\n"));
-        const auto before = captureWork(fixture);
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile("left\n", "right\n", result + "\n"));
+        const auto before = captureWork(fixture, *controller.selectedFile());
         auto *editor = fixture.item("resultText");
         auto *wrap = fixture.item("wrapLines");
         CHECK(!wrap->property("checked").toBool());
@@ -108,18 +121,19 @@ void comparison_scene::addTextCases(Groups groups)
         settle([&] { return visualLines(editor, 0) > 1; });
         CHECK(editor->property("wrapMode").toInt() != unwrappedMode);
         CHECK(editor->property("contentHeight").toReal() > unwrappedHeight);
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
         CHECK(wrap->setProperty("checked", false));
         settle([&] { return visualLines(editor, 0) == 1; });
         CHECK(editor->property("wrapMode").toInt() == unwrappedMode);
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
     });
     scenes.run("each line number stays on the first row of its line while wrapped and scrolled", [] {
         // Every seventh line is long enough to wrap onto several rows.
         std::string result;
         for (int line = 1; line <= 300; ++line)
             result += line % 7 == 0 ? std::string(400, 'w') + "\n" : "line " + std::to_string(line) + "\n";
-        Fixture fixture(test_support::choiceFile("left\n", result, result));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile("left\n", result, result));
         auto *editor = fixture.item("resultText");
         auto *viewport = fixture.item("resultViewport");
         settle([&] { return editor->property("lineCount").toInt() >= 300; });
@@ -154,7 +168,9 @@ void comparison_scene::addTextCases(Groups groups)
     });
     scenes.run("tabs stop every four characters at the same column in every pane", [] {
         const std::string shared = "abcde\n\tone\nabc\ttwo\nabcde\tthree\n\t\tfour\n";
-        Fixture fixture(test_support::choiceFile(shared + "left\n", shared + "right\n", shared + "right\n"));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller,
+                        test_support::choiceFile(shared + "left\n", shared + "right\n", shared + "right\n"));
         settlePanes(fixture);
         // The text after the tabs, its column in the line, and the tab stops it sits on.
         const std::array<std::tuple<QString, int, int>, 4> lines{
@@ -199,9 +215,11 @@ void comparison_scene::addTextCases(Groups groups)
                                          earlier,          test_support::choiceText(earlier),
                                          "earlier-commit", "Common earlier version"};
         const auto launch = sources.launchResult.text.utf8;
+        Application controller(test_support::windowConfig());
         Fixture fixture(
+            controller,
             FileSession("choices", sources.path, {launch, {}, 0}, {.snapshots = sources, .initializeChoices = true}));
-        fixture.click("showEarlier");
+        click(fixture, "showEarlier");
         settle([&] { return fixture.item("earlierText")->isVisible(); });
         settlePanes(fixture);
         for (const std::string pane : {"stage2", "result", "stage3", "earlier"}) {
@@ -222,8 +240,9 @@ void comparison_scene::addTextCases(Groups groups)
     });
     scenes.run("whitespace markers paint spaces and tabs", [] {
         const std::string result = "aa bb\tcc\n";
-        Fixture fixture(test_support::choiceFile("left\n", "right\n", result));
-        const auto before = captureWork(fixture);
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile("left\n", "right\n", result));
+        const auto before = captureWork(fixture, *controller.selectedFile());
         auto *markers = fixture.item("resultWhitespace");
         auto *toggle = fixture.item("showWhitespace");
         CHECK(!toggle->property("checked").toBool());
@@ -235,10 +254,10 @@ void comparison_scene::addTextCases(Groups groups)
         CHECK(paintedMarkers(fixture.item("stage2Whitespace")) == 0);
         CHECK(paintedMarkers(fixture.item("stage3Whitespace")) == 0);
         CHECK(fixture.item("resultText")->property("text").toString().toStdString() == result);
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
         CHECK(toggle->setProperty("checked", false));
         settle([&] { return paintedMarkers(markers) == 0; });
         CHECK(fixture.item("resultText")->property("text").toString().toStdString() == result);
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
     });
 }

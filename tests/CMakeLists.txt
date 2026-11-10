@@ -22,6 +22,12 @@ add_test(NAME core.native-version
         -P "${CMAKE_CURRENT_SOURCE_DIR}/core/NativeVersionTests.cmake")
 # Skipped, not passed, on a host with none of dpkg, rpm and vercmp to check the order.
 set_tests_properties(core.native-version PROPERTIES TIMEOUT 60 LABELS unit SKIP_REGULAR_EXPRESSION "SKIPPED: ")
+# Fixture supervision stays Qt-free, independently of the engine's cases.
+add_executable(branch_truce_fixture_process_tests fixtures/FixtureProcessTests.cpp)
+target_include_directories(branch_truce_fixture_process_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(branch_truce_fixture_process_tests PRIVATE branch_truce_build_options)
+add_test(NAME fixtures.process COMMAND branch_truce_fixture_process_tests)
+set_tests_properties(fixtures.process PROPERTIES TIMEOUT 60 LABELS unit)
 # Engine unit tests: one executable per source file, Qt-free and without a display.
 function(branch_truce_add_core_test name source)
     string(REPLACE "." "_" target "branch_truce_${name}_tests")

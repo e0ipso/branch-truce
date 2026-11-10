@@ -1,23 +1,92 @@
 // Layout of the comparison window: pane widths, headers, tooltips, the footer, the toolbar and its
 // overflow, and the earlier version.
-#include "ComparisonScene.h"
+#include "ComparisonCases.h"
+#include "ComparisonEditor.h"
+#include "ComparisonFolds.h"
+#include "ComparisonGeometry.h"
+#include "ComparisonRecovery.h"
+#include "ComparisonSessionChecks.h"
+#include "ComparisonTextProbes.h"
 #include "fixtures/AppSession.h"
 #include "fixtures/Await.h"
+#include "fixtures/FileToolbar.h"
+#include "fixtures/SyncFaults.h"
+#include "fixtures/TextRendering.h"
+#include "fixtures/WarningCapture.h"
+#include "ui/TextBlocks.h"
+#include <QQmlComponent>
+#include <QScopeGuard>
 
 using test_support::commandResult;
+using test_support::markerKind;
+using test_support::paintedMarkers;
+using test_support::visualLines;
 
 using namespace comparison_scene;
 
 void comparison_scene::addLayoutCases(Groups groups)
 {
     auto &scenes = groups.scenes;
+    scenes.run("accessibility evidence rejects missing controls and visible text without a name", [] {
+        const bool wasActive = QAccessible::isActive();
+        QAccessible::setActive(true);
+        const auto restore = qScopeGuard([&] { QAccessible::setActive(wasActive); });
+        QQmlEngine engine;
+        QQmlComponent component(&engine);
+        component.setData(R"(
+            import QtQuick
+            import QtQuick.Controls
+            Item {
+                Button { objectName: "unnamed"; text: "Visible only"; Accessible.name: "" }
+                Button { objectName: "named"; text: "Visible"; Accessible.name: "Accessible control" }
+            }
+        )",
+                          QUrl("accessibility-contract.qml"));
+        std::unique_ptr<QObject> root(component.create());
+        CHECK(root);
+        auto *unnamed = root->findChild<QQuickItem *>("unnamed");
+        CHECK(unnamed && unnamed->isVisible() && unnamed->property("text").toString() == "Visible only");
+        CHECK(test_support::locatorName(unnamed) == "Visible only");
+        CHECK(test_support::accessibleName(unnamed).isEmpty());
+        for (auto *control : {static_cast<QQuickItem *>(nullptr), unnamed}) {
+            bool rejected = false;
+            try {
+                test_support::requireAccessible(control, "expected button");
+            } catch (const test_support::Failure &) {
+                rejected = true;
+            }
+            CHECK(rejected);
+        }
+        CHECK(test_support::requireAccessible(root->findChild<QQuickItem *>("named"), "named"));
+    });
+    scenes.run("QML runtime warnings fail scene readiness without unwinding through a callback", [] {
+        QQmlEngine engine;
+        QQuickWindow window;
+        test_support::failOnQmlWarnings(engine);
+        QQmlError warning;
+        warning.setUrl(QUrl("intentional-warning-contract.qml"));
+        warning.setLine(7);
+        warning.setDescription("ReferenceError: intentional contract failure");
+        // This intentional diagnostic belongs only to this isolated engine, never the Main scene.
+        QTimer::singleShot(0, &engine, [&] { engine.warnings({warning}); });
+        bool rejected = false;
+        try {
+            test_support::waitForStable(&window, "intentional missing geometry",
+                                        [] { return static_cast<QQuickItem *>(nullptr); });
+        } catch (const test_support::Failure &failure) {
+            rejected = std::string(failure.what()).find("intentional-warning-contract.qml:7") != std::string::npos;
+        }
+        CHECK(rejected && !test_support::failurePending());
+    });
     scenes.run("native reading widths, path weights and row insets remain balanced", [] {
         auto sources = *test_support::batchFile().snapshots();
         sources.path = "src/net/retry.cpp";
         const auto launch = sources.launchResult.text.utf8;
+        Application controller(test_support::windowConfig());
         Fixture fixture(
+            controller,
             FileSession("choices", sources.path, {launch, {}, 0}, {.snapshots = sources, .initializeChoices = true}));
-        const auto before = captureWork(fixture);
+        const auto before = captureWork(fixture, *controller.selectedFile());
         for (const auto height : {720, 800}) {
             fixture.window->resize(1280, height);
             settlePanes(fixture);
@@ -41,12 +110,13 @@ void comparison_scene::addLayoutCases(Groups groups)
         CHECK(leading > 0 && trailing > 0 && std::abs(leading - trailing) < 0.5);
         row->forceActiveFocus(Qt::TabFocusReason);
         CHECK(row->hasActiveFocus() && test_support::reachable(fixture.window, row));
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
     });
     scenes.run("native identity tooltips render literal text through style wrappers", [] {
-        Fixture fixture;
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller);
         settlePanes(fixture);
-        const auto before = captureWork(fixture);
+        const auto before = captureWork(fixture, *controller.selectedFile());
         const auto literal = QStringLiteral("<b>literal identity & source</b>");
         for (const auto *side : {"stage2", "stage3"}) {
             const auto identityName = QString::fromLatin1(side) + QStringLiteral("Identity");
@@ -70,12 +140,13 @@ void comparison_scene::addLayoutCases(Groups groups)
             CHECK(QMetaObject::invokeMethod(tooltip, "close"));
             settleFor("identity tooltip closed", [&] { return !tooltip->property("visible").toBool(); });
         }
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
     });
     scenes.run("source choices overlay full-width panes only on hover or focus", [] {
-        Fixture fixture;
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller);
         settlePanes(fixture);
-        const auto before = captureWork(fixture);
+        const auto before = captureWork(fixture, *controller.selectedFile());
         auto *comparison = fixture.item("comparisonView");
         for (const auto *side : {"stage2", "stage3"}) {
             const auto prefix = std::string(side);
@@ -126,7 +197,7 @@ void comparison_scene::addLayoutCases(Groups groups)
         const auto point = button->mapToScene(center).toPoint();
         QTest::touchEvent(fixture.window, touch).press(0, point, fixture.window);
         QTest::touchEvent(fixture.window, touch).release(0, point, fixture.window);
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
         CHECK(!menu->property("visible").toBool());
         // Hover the code away from the buttons. The same source observer
         // must reveal the overlay and retain source/counterpart highlighting.
@@ -160,12 +231,13 @@ void comparison_scene::addLayoutCases(Groups groups)
         waitOverlay("source overlay keyboard menu opened", [&] { return menu->property("visible").toBool(); });
         CHECK(test_support::painted(button));
         QTest::keyClick(fixture.window, Qt::Key_Escape);
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
     });
     scenes.run("pane headers do not rearrange recursively", [] {
         const test_support::WarningCapture rearranges(
             [](const QString &message) { return message.contains(QStringLiteral("Detected recursive rearrange")); });
-        Fixture fixture;
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller);
         fixture.window->resize(960, 540);
         settle([&] { return fixture.item("stage2Label")->width() > 0; });
         fixture.window->resize(1500, 1100);
@@ -173,7 +245,8 @@ void comparison_scene::addLayoutCases(Groups groups)
         CHECK_EQ(rearranges.count(), 0);
     });
     scenes.run("source headers resolve the current conflict from their side", [] {
-        Fixture fixture(test_support::markedFile());
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::markedFile());
         settlePanes(fixture);
         const auto header = [&](const char *label) {
             auto *item = fixture.item(label);
@@ -216,18 +289,18 @@ void comparison_scene::addLayoutCases(Groups groups)
         const auto cursorAt = [&](const char *text) {
             const auto at = static_cast<int>(fixture.text().indexOf(QString::fromLatin1(text)));
             CHECK(at >= 0);
-            fixture.select(at, at);
+            select(fixture, at, at);
         };
         // The two sections in result order, and each side's decision on one.
         QStringList sections;
-        for (const auto &entry : fixture.controller.selectedFile()->regions()) {
+        for (const auto &entry : controller.selectedFile()->regions()) {
             const auto region = entry.toMap();
             const auto id = region.value("section").toString();
             if (region.value("scope").toString() == "section" && !sections.contains(id)) sections.push_back(id);
         }
         CHECK(sections.size() == 2);
         const auto state = [&](const QString &section, const char *side) {
-            for (const auto &entry : fixture.controller.selectedFile()->regions()) {
+            for (const auto &entry : controller.selectedFile()->regions()) {
                 const auto region = entry.toMap();
                 if (region.value("section").toString() == section && region.value("scope").toString() == "section"
                     && region.value("side").toString() == QLatin1String(side))
@@ -253,14 +326,13 @@ void comparison_scene::addLayoutCases(Groups groups)
               == QStringLiteral("Resolve the current conflict using Right"));
         clickItem(fixture, button("stage3"));
         settleFor("the first conflict resolved using Right", [&] { return decided(sections[0], "stage3", "stage2"); });
-        CHECK(fixture.controller.selectedFile()->markerBlocks().isEmpty());
+        CHECK(controller.selectedFile()->markerBlocks().isEmpty());
         CHECK(fixture.text() == QStringLiteral("header\nright first\nright second\nbridge\nleft later\ntail\n"));
         // With no undecided conflict left, neither header can resolve one.
         settleFor("nothing left to resolve", [&] { return enabled(false, false); });
         for (int i = 0; i < 2; ++i)
-            CHECK(commandResult(
-                fixture.controller,
-                fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
+            CHECK(commandResult(controller,
+                                controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.file().current().draft == launch.draft);
         // In a narrow header the complete identity outranks the title: the title elides
         // and the button stays inside the header.
@@ -280,7 +352,8 @@ void comparison_scene::addLayoutCases(Groups groups)
         checkLayout("stage3");
     });
     scenes.run("pane budget uses the laid-out editor row", [] {
-        Fixture fixture(test_support::choiceFile("left\n", "right\n", "result\n"));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile("left\n", "right\n", "result\n"));
         auto *editor = fixture.item("resultText");
         auto *document = editor->property("textDocument").value<QQuickTextDocument *>();
         CHECK(document && document->textDocument());
@@ -296,15 +369,16 @@ void comparison_scene::addLayoutCases(Groups groups)
         CHECK(row > 0 && std::abs(budgetRow - std::ceil(row)) < 0.01);
         const auto *blocks = fixture.item("resultGutter")->property("blocks").value<branch_truce::TextBlocks *>();
         CHECK(blocks && std::abs(budgetRow - std::ceil(blocks->rowHeight())) < 0.01);
-        CHECK(!fixture.controller.selectedFile()->mimeIcon().isEmpty());
+        CHECK(!controller.selectedFile()->mimeIcon().isEmpty());
         CHECK(!fixture.item("selectedTypeIcon")->property("source").toString().isEmpty());
     });
     scenes.run("spaced rows preserve work through wrapping, typing and history", [] {
         const std::string longLine(600, 'x');
         const std::string original = longLine + "\nsecond\n";
-        Fixture fixture(test_support::diff3File(original, original, original, original));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::diff3File(original, original, original, original));
         settlePanes(fixture);
-        const auto before = captureWork(fixture);
+        const auto before = captureWork(fixture, *controller.selectedFile());
         CHECK(fixture.item("showEarlier")->setProperty("checked", true));
         CHECK(fixture.item("wrapLines")->setProperty("checked", true));
         const auto expected = fixture.item("comparisonView")->property("rowHeight").toReal();
@@ -326,29 +400,25 @@ void comparison_scene::addLayoutCases(Groups groups)
             CHECK(expected > last.height());
             CHECK(!doc->isUndoRedoEnabled() && doc->availableUndoSteps() == 0);
         }
-        checkUnchanged(fixture, before);
-        fixture.checkRecovered(before.draft);
-        fixture.select(0, 0);
-        fixture.key(Qt::Key_A, Qt::NoModifier, QStringLiteral("a"));
-        fixture.key(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
-        const auto edited = captureWork(fixture);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
+        checkRecovered(*controller.store(), *controller.files(), before.draft);
+        select(fixture, 0, 0);
+        key(fixture, Qt::Key_A, Qt::NoModifier, QStringLiteral("a"));
+        key(fixture, Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+        const auto edited = captureWork(fixture, *controller.selectedFile());
         CHECK(edited.draft.text == "a\n" + original);
         CHECK(edited.draft.decisions == before.draft.decisions);
-        fixture.checkRecovered(edited.draft);
-        CHECK(commandResult(
-            fixture.controller,
-            fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
+        checkRecovered(*controller.store(), *controller.files(), edited.draft);
+        CHECK(commandResult(controller,
+                            controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.file().current().draft.text == "a" + original);
-        CHECK(commandResult(
-            fixture.controller,
-            fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
+        CHECK(commandResult(controller,
+                            controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.file().current().draft == before.draft);
-        CHECK(commandResult(
-            fixture.controller,
-            fixture.controller.commands()->redo("choices", QString::number(fixture.file().current().id))));
-        CHECK(commandResult(
-            fixture.controller,
-            fixture.controller.commands()->redo("choices", QString::number(fixture.file().current().id))));
+        CHECK(commandResult(controller,
+                            controller.commands()->redo("choices", QString::number(fixture.file().current().id))));
+        CHECK(commandResult(controller,
+                            controller.commands()->redo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.file().current().draft == edited.draft);
         settle([&] { return visualLines(fixture.item("resultText"), 1) > 1; });
         auto &document = resultDocument(fixture);
@@ -360,21 +430,25 @@ void comparison_scene::addLayoutCases(Groups groups)
         for (auto block = document.begin(); block.isValid(); block = block.next())
             CHECK(block.blockFormat().lineHeightType() == QTextBlockFormat::LineDistanceHeight);
         CHECK(document.availableUndoSteps() == 0);
-        fixture.checkRecovered(edited.draft);
+        checkRecovered(*controller.store(), *controller.files(), edited.draft);
     });
     scenes.run("recovery failures stay visible on unselected file rows", [] {
-        Fixture fixture;
-        CHECK(fixture.controller.store()->appendFile(namedChoiceFile("other")));
+        const auto faults = std::make_shared<test_support::SyncFaults>();
+        auto config = test_support::windowConfig();
+        config.files = faults;
+        Application controller(std::move(config));
+        Fixture fixture(controller);
+        CHECK(controller.store()->appendFile(namedChoiceFile("other")));
         const auto original = fixture.text();
-        fixture.select(0, 0);
+        select(fixture, 0, 0);
         {
-            const test_support::ArmedFault fault(*fixture.faults, test_support::SyncFaults::Point::JournalSync);
-            fixture.key(Qt::Key_A, Qt::NoModifier, "a");
+            const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
+            key(fixture, Qt::Key_A, Qt::NoModifier, "a");
             // Typing is recorded behind the editor, once the burst ends.
-            settle([&] { return fixture.controller.files()->hasPendingRecovery(); });
-            CHECK_EQ(fixture.faults->failures.load(), 1);
+            settle([&] { return controller.files()->hasPendingRecovery(); });
+            CHECK_EQ(faults->failures.load(), 1);
         }
-        settle([&] { return fixture.controller.files()->hasPendingRecovery(); });
+        settle([&] { return controller.files()->hasPendingRecovery(); });
         const std::function<QQuickItem *(QQuickItem *)> rowFor = [&](QQuickItem *item) -> QQuickItem * {
             if (item->property("fileId").toString() == QStringLiteral("choices")
                 && item->property("subtitle").isValid())
@@ -385,19 +459,19 @@ void comparison_scene::addLayoutCases(Groups groups)
         };
         auto *row = rowFor(fixture.item("fileList"));
         CHECK(row);
-        const auto failure = fixture.controller.selectedFile()->status();
+        const auto failure = controller.selectedFile()->status();
         CHECK(failure.contains(QStringLiteral("Recovery failed")));
         settle([&] { return row->property("subtitle").toString() == failure; });
-        CHECK(fixture.controller.selection()->select("other"));
+        CHECK(controller.selection()->select("other"));
         CHECK(row->property("subtitle").toString() == failure);
-        CHECK(!fixture.controller.editor()->editable());
-        CHECK(fixture.controller.selection()->select("choices"));
+        CHECK(!controller.editor()->editable());
+        CHECK(controller.selection()->select("choices"));
         test_support::waitForLayout(fixture.window, QStringLiteral("retryRecovery"), 60);
-        fixture.clickLaidOut("retryRecovery");
-        settle([&] { return !fixture.controller.files()->hasPendingRecovery(); });
+        click(fixture, "retryRecovery");
+        settle([&] { return !controller.files()->hasPendingRecovery(); });
         CHECK(row->property("subtitle").toString() != failure);
         CHECK(fixture.text() == QStringLiteral("a") + original);
-        fixture.checkRecovered(fixture.file().current().draft, 2);
+        checkRecovered(*controller.store(), *controller.files(), fixture.file().current().draft, 2);
     });
     scenes.run("the footer projects captured text format without editing the buffer", [] {
         auto sources = *test_support::choiceFile().snapshots();
@@ -410,32 +484,36 @@ void comparison_scene::addLayoutCases(Groups groups)
         CHECK(encoded.document);
         sources.launchResult.text.bytes = encoded.document->originalBytes.toStdString();
         sources.launchResult.identity.size = encoded.document->originalBytes.size();
-        Fixture fixture(FileSession("choices", "choices.txt", {sources.launchResult.text.utf8, {}, 0},
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller,
+                        FileSession("choices", "choices.txt", {sources.launchResult.text.utf8, {}, 0},
                                     {.snapshots = sources, .initializeChoices = true}));
-        const auto before = captureWork(fixture);
-        CHECK(fixture.controller.selectedFile()->formatDescription() == QStringLiteral("UTF-16 LE with BOM · CRLF"));
+        const auto before = captureWork(fixture, *controller.selectedFile());
+        CHECK(controller.selectedFile()->formatDescription() == QStringLiteral("UTF-16 LE with BOM · CRLF"));
         CHECK(fixture.item("fileFacts")
                   ->property("text")
                   .toString()
                   .contains(QStringLiteral("UTF-16 LE with BOM · CRLF")));
-        checkUnchanged(fixture, before);
+        checkUnchanged(fixture, *controller.selectedFile(), before);
     });
     scenes.run("header operation and footer progress stay separate", [] {
-        Fixture fixture;
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller);
         auto *subtitle = fixture.item("repositorySubtitle");
-        CHECK(subtitle->property("text").toString() == fixture.controller.loader()->operationDescription());
+        CHECK(subtitle->property("text").toString() == controller.loader()->operationDescription());
         CHECK(fixture.item("workflowStatus")->property("text").toString() == QStringLiteral("0 of 1 file resolved"));
-        CHECK(fixture.controller.store()->appendFile(FileSession(
+        CHECK(controller.store()->appendFile(FileSession(
             "outside", "diagram.png", {}, {.support = Support::OutsideApp, .supportDetail = "image content"})));
         settle([&] {
             return fixture.item("workflowStatus")->property("text").toString()
                 == QStringLiteral("0 of 2 files resolved");
         });
-        CHECK(subtitle->property("text").toString() == fixture.controller.loader()->operationDescription());
+        CHECK(subtitle->property("text").toString() == controller.loader()->operationDescription());
     });
     scenes.run("actual comparison keeps verified sources around the editable launch result", [] {
         const std::string launch = "manual launch UTF-8 \xc3\xa9 \xf0\x9f\x98\x80\n";
-        Fixture fixture(test_support::choiceFile("left capture\n", "right capture\n", launch));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile("left capture\n", "right capture\n", launch));
         const auto before = fixture.file().current();
         CHECK(fixture.text().toStdString() == launch);
         for (const auto side : {SourceSide::Stage2, SourceSide::Stage3}) {
@@ -449,7 +527,7 @@ void comparison_scene::addLayoutCases(Groups groups)
             CHECK(label.contains(QString::fromStdString(source->label)));
             const auto identity = fixture.item((std::string(prefix) + "Identity").c_str())->property("text").toString();
             CHECK(identity == QString::fromStdString(*source->commitId).left(10));
-            const auto projected = fixture.controller.selectedFile()->property(prefix).toMap();
+            const auto projected = controller.selectedFile()->property(prefix).toMap();
             CHECK(projected.value("commitId").toString().toStdString() == *source->commitId);
         }
         CHECK(!fixture.item("resultText")->property("readOnly").toBool());
@@ -457,10 +535,11 @@ void comparison_scene::addLayoutCases(Groups groups)
         const auto x = [&](const char *name) { return fixture.item(name)->mapToScene({0, 0}).x(); };
         CHECK(x("stage2Text") < x("resultText") && x("resultText") < x("stage3Text"));
         CHECK(fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
-        fixture.checkRecovered(before.draft);
+        checkRecovered(*controller.store(), *controller.files(), before.draft);
     });
     scenes.run("toolbar commands report a button role and only the toggles are checkable", [] {
-        Fixture fixture;
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller);
         // One line per control, so a failure names every control that reports the wrong role.
         const auto describe = [&](const char *name) {
             auto *item = fixture.item(name);
@@ -512,17 +591,18 @@ void comparison_scene::addLayoutCases(Groups groups)
         CHECK(discardFace && discardFace->role() == QAccessible::MenuItem);
         QTest::keyClick(fixture.window, Qt::Key_Escape);
         settle([&] { return !test_support::namedButton(fixture.window->contentItem(), QStringLiteral("copyResult")); });
-        fixture.click("navigateMenu");
+        click(fixture, "navigateMenu");
         auto *difference = test_support::waitForLayout(fixture.window, QStringLiteral("previousDifference"), 60);
         auto *differenceFace = QAccessible::queryAccessibleInterface(difference);
         CHECK(differenceFace && differenceFace->role() == QAccessible::MenuItem);
         QTest::keyClick(fixture.window, Qt::Key_Escape);
     });
     scenes.run("a named command overflows as a menu item and closes after one activation", [] {
-        Fixture fixture(test_support::choiceFile("left\n", "right\n", "original\n"));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile("left\n", "right\n", "original\n"));
         // Both keys are one burst of typing, which one undo takes back.
         const auto beforeTyping = fixture.file().current();
-        fixture.type("ab");
+        type(fixture, "ab");
         auto *actions = fixture.object("resultEditActions");
         auto *undo = actions->property("undo").value<QObject *>();
         CHECK(undo);
@@ -554,9 +634,9 @@ void comparison_scene::addLayoutCases(Groups groups)
         CHECK(fixture.file().current().draft == beforeTyping.draft);
     });
     scenes.run("resizing earlier context and collapsed choices preserve current sources and manual work", [] {
-        Fixture fixture;
-        CHECK(commandResult(fixture.controller,
-                            fixture.controller.commands()->editResult("choices", "1", 0, 0, "manual prefix\n")));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller);
+        CHECK(commandResult(controller, controller.commands()->editResult("choices", "1", 0, 0, "manual prefix\n")));
         const auto before = fixture.file().current();
         const auto left = fixture.item("stage2Text")->property("text");
         const auto right = fixture.item("stage3Text")->property("text");
@@ -569,7 +649,7 @@ void comparison_scene::addLayoutCases(Groups groups)
               == fixture.file().snapshots()->earlier->worktree.utf8);
         // The source choices start shown in the gutters; collapse them for the resize below.
         CHECK(fixture.item("scopedChoices")->isVisible());
-        fixture.click("showSourceChoices");
+        click(fixture, "showSourceChoices");
         settle([&] { return !fixture.item("scopedChoices")->isVisible(); });
         CHECK(fixture.item("showEarlier")->setProperty("checked", false));
         auto *pane = fixture.item("stage2Viewport")->parentItem()->parentItem();
@@ -585,10 +665,11 @@ void comparison_scene::addLayoutCases(Groups groups)
         CHECK(!fixture.item("earlierText")->isVisible() && !fixture.item("scopedChoices")->isVisible());
         CHECK(fixture.text().toStdString() == before.draft.text);
         CHECK(fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
-        fixture.checkRecovered(before.draft);
+        checkRecovered(*controller.store(), *controller.files(), before.draft);
     });
     scenes.run("unavailable earlier context stays optional and leaves both current sources visible", [] {
-        Fixture fixture(test_support::choiceFile());
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile());
         const auto before = fixture.file().current();
         CHECK(!fixture.item("showEarlier")->property("enabled").toBool());
         CHECK(fixture.item("showEarlier")->property("text").toString().contains("unavailable"));

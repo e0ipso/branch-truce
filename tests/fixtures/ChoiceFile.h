@@ -145,6 +145,7 @@ inline std::string gitDiff3(const std::string &left, const std::string &earlier,
         environment.push_back(name + '=' + value);
     const auto merged = written ? readProcess(std::move(arguments), environment) : ProcessOutput{};
     std::filesystem::remove_all(directory);
+    if (!merged.diagnostic.empty()) throw std::runtime_error(merged.diagnostic);
     if (!written) throw std::runtime_error("cannot write the versions for git merge-file");
     if (merged.status == -1 || !WIFEXITED(merged.status) || WEXITSTATUS(merged.status) > 127)
         throw std::runtime_error("git merge-file failed");

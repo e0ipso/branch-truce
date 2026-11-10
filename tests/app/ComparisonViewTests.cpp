@@ -1,6 +1,9 @@
 // The comparison view in the real Main scene, offscreen. The cases live in one file per feature,
 // linked into this executable; this file selects the groups a run executes.
-#include "ComparisonScene.h"
+#include "ComparisonCases.h"
+#include "app/Translations.h"
+#include "fixtures/GuiState.h"
+#include <QApplication>
 
 using namespace comparison_scene;
 
