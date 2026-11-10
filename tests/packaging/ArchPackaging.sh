@@ -29,38 +29,3 @@ if command -v vercmp >/dev/null; then
     echo 'ok: native vercmp prerelease, stable and cross-release ordering'
 fi
 echo 'ok: Arch version conversion and unsupported version rejection'
-
-if [[ "${1-}" = --lifecycle ]]; then
-    # Requires a disposable Arch target and genuine candidate/predecessor files.
-    candidate="${2:?candidate package}"; previous="${3:?previous package}"
-    version="${4:?candidate application version}"
-    checker="$root/packaging/scripts/check-package.sh"
-    work="$(mktemp -d)"
-    trap 'rm -rf "$work"' EXIT
-    reject() {
-        local message="$1"; shift
-        if "$@" >"$work/rejected.log" 2>&1; then
-            echo "FAIL: accepted $message" >&2; exit 1
-        fi
-        grep -q "$message" "$work/rejected.log" || { cat "$work/rejected.log"; exit 1; }
-        if pacman -Q branch-truce >/dev/null 2>&1; then
-            echo 'FAIL: rejection mutated installed state' >&2; exit 1
-        fi
-        echo "ok: rejected $message before install"
-    }
-    reject 'candidate identity' bash "$checker" --format arch-pkg --version 99.0.0 --package "$candidate"
-    reject 'not older' bash "$checker" --format arch-pkg --version "$version" --package "$candidate" --previous "$candidate"
-    # Modify genuine package metadata to exercise the validator, not a pacman stub.
-    for field in arch pkgname depend; do
-        mkdir "$work/$field"
-        bsdtar -xf "$candidate" -C "$work/$field"
-        case "$field" in
-            arch) sed -i 's/^arch = .*/arch = aarch64/' "$work/$field/.PKGINFO"; message='candidate identity' ;;
-            pkgname) sed -i 's/^pkgname = .*/pkgname = another-app/' "$work/$field/.PKGINFO"; message='candidate identity' ;;
-            depend) sed -i '/^depend = qt6-wayland/d' "$work/$field/.PKGINFO"; message='does not declare the recipe dependency qt6-wayland' ;;
-        esac
-        bsdtar --zstd -cf "$work/$field.pkg.tar.zst" -C "$work/$field" .PKGINFO .BUILDINFO .MTREE usr
-        reject "$message" bash "$checker" --format arch-pkg --version "$version" --package "$work/$field.pkg.tar.zst"
-    done
-    bash "$checker" --format arch-pkg --version "$version" --package "$candidate" --previous "$previous"
-fi

@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Disposable application homes, merge-conflict repositories and installed-file
 # checks, shared by the packaging checkers and the tools under tools/.
 #
@@ -95,27 +96,24 @@ fixture_merge_repo() {
     (($# > 0)) || { echo 'usage: fixture_merge_repo HOME REPO FILE...' >&2; return 2; }
     fixture_safe_path "$home" && fixture_safe_path "$repo" || return 2
     [[ -f "$home/gitconfig" ]] || fixture_gitconfig "$home" || return 1
-    local -a _fixture_git_env
-    mapfile -d '' _fixture_git_env < <(fixture_env "$home")
-    _fixture_git_env+=("GIT_AUTHOR_DATE=2000-01-01T00:00:00+0000" "GIT_COMMITTER_DATE=2000-01-01T00:00:00+0000")
     rm -rf -- "$repo" && mkdir -p -- "$repo" || return 1
-    _fixture_git init --quiet || return 1
+    _fixture_git "$home" "$repo" init --quiet || return 1
     for label in base side main; do
         if [[ "$label" == side ]]; then
-            _fixture_git checkout --quiet -b side || return 1
+            _fixture_git "$home" "$repo" checkout --quiet -b side || return 1
         elif [[ "$label" == main ]]; then
-            _fixture_git checkout --quiet main || return 1
+            _fixture_git "$home" "$repo" checkout --quiet main || return 1
         fi
         for file in "$@"; do
             fixture_content "$file" "$label" > "$repo/$file" || return 1
         done
-        _fixture_git add -- "$@" && _fixture_git commit --quiet -m "$label" || return 1
+        _fixture_git "$home" "$repo" add -- "$@" && _fixture_git "$home" "$repo" commit --quiet -m "$label" || return 1
     done
-    if _fixture_git merge --no-edit side >/dev/null 2>&1; then
+    if _fixture_git "$home" "$repo" merge --no-edit side >/dev/null 2>&1; then
         echo "error: the fixture merge in $repo did not conflict" >&2
         return 1
     fi
-    conflicted=$(_fixture_git diff --name-only --diff-filter=U | LC_ALL=C sort)
+    conflicted=$(_fixture_git "$home" "$repo" diff --name-only --diff-filter=U | LC_ALL=C sort)
     expected=$(printf '%s\n' "$@" | LC_ALL=C sort)
     [[ "$conflicted" == "$expected" ]] || {
         echo "error: the fixture merge in $repo left '${conflicted//$'\n'/ }' unmerged, not '${expected//$'\n'/ }'" >&2
@@ -123,8 +121,16 @@ fixture_merge_repo() {
     }
 }
 
-# _fixture_git ARGS...: Git in $repo with fixture_merge_repo's environment.
-_fixture_git() { (cd -- "$repo" && env -i "${_fixture_git_env[@]}" git "$@"); }
+# _fixture_git HOME REPO ARGS...: Git in REPO with only HOME's private
+# environment and fixed commit dates, so commit ids repeat from run to run.
+_fixture_git() {
+    local home=$1 repo=$2
+    shift 2
+    local -a environment
+    mapfile -d '' environment < <(fixture_env "$home")
+    (cd -- "$repo" && env -i "${environment[@]}" GIT_AUTHOR_DATE=2000-01-01T00:00:00+0000 \
+        GIT_COMMITTER_DATE=2000-01-01T00:00:00+0000 git "$@")
+}
 
 smoke_record_ready() {
     local record

@@ -55,7 +55,22 @@ cmake --build build/sanitize --parallel 2
 ctest --test-dir build/sanitize --output-on-failure
 
 /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /bin/bash tools/check-shell-syntax.sh
+tools/check-shell-lint.sh
+tools/check-format.sh
+tools/check-tidy.sh build/desktop
 ```
+
+`tools/check-shell-lint.sh` runs the ShellCheck that `tools/shellcheck.txt` pins
+over the packaging and tooling scripts, at warning severity. In the scripts
+under `tools/` and `packaging/`, a `fail` function records a failed check and
+the run goes on; `die` stops it.
+`tools/check-format.sh` and `tools/check-tidy.sh` need the pinned clang tools of
+`tools/clang-tools.txt` (`python3 -m pip install --require-hashes -r
+tools/clang-tools.txt`). `check-format.sh --fix` rewrites the sources;
+`check-tidy.sh` reads `compile_commands.json` from a configured and built tree
+and takes the number of parallel jobs as an optional second argument. CI runs
+the shell syntax, shell lint and format checks; run clang-tidy before asking
+for review.
 
 The QML lint target fails on any qmllint warning, because
 `src/ui/.qmllint.ini` sets `MaxWarnings=0`. The desktop CTest run includes it
@@ -124,23 +139,6 @@ records its transport, lifecycle and the behaviours tested with a real parent.
 Build directories are disposable. The default root `build/` directory is ignored
 by Git. An optional second absolute argument to `prepare-worktree.sh` places
 generated files outside the checkout.
-
-For evidence collection, `./tools/verification-context.sh source` prints the path
-of an environment file under `/tmp/branch-truce-verification.*`. Source that
-file in the calling shell before executing or validating a check. Capture again
-before each validation. Use `desktop`, `core` or `sanitize` instead of `source`
-after configuring that build to include its generated test membership and
-available binaries. Retain the adjacent manifests with the check receipts.
-CTest output logs are excluded from artifact identity.
-
-The stamps record tool contents and versions, installed package versions,
-selected environment variables with set/unset state, platform, committed HEAD
-and selected build artifacts. Package versions do not establish the contents
-of compiler headers, QML plugins or user configuration. These observations alone
-cannot justify a complete build/runtime dependency declaration. The normalized
-shell syntax command above has a separate stamp covering env, Bash and their
-linked libraries. That stamp is empty when exported loader overrides are present,
-so the evidence helper must treat its declaration as incomplete in that case.
 
 ## Native CI and release packages
 
@@ -412,19 +410,8 @@ After this scaffold lands, run from the newly prepared checkout:
 ./tools/prepare-worktree.sh desktop
 ```
 
-After committing the scaffold, verify clean preparation with:
-
-```sh
-./tools/verify-clean-worktree.sh
-```
-
-This creates a disposable detached worktree of HEAD, builds and runs only the
-core/startup canaries in desktop, core and sanitizer configurations, checks QML,
-confirms the checkout stayed clean after each default preparation and after the
-checks, and removes the fixture. Build output uses the default `build/<mode>`
-directories inside the fixture checkout, including the setup hook's
-`./tools/prepare-worktree.sh desktop` command. Failure logs must be retained by
-the caller.
+CI checks that a fresh checkout stays clean after the core and sanitizer
+preparation, build and CTest, the same commands as above.
 
 The desktop preparation above is the per-worktree setup command to register with Sift. It configures;
 checks remain separate `cmake --build` and `ctest` commands above. Hook registration

@@ -53,6 +53,12 @@ jobs:
           "$RUNNER_TEMP/clang-tools/bin/pip" install --require-hashes -r tools/clang-tools.txt
           echo "$RUNNER_TEMP/clang-tools/bin" >> "$GITHUB_PATH"
       - run: tools/check-format.sh
+      - name: Install the pinned shell linter
+        run: |
+          python3 -m venv "$RUNNER_TEMP/shellcheck"
+          "$RUNNER_TEMP/shellcheck/bin/pip" install --require-hashes -r tools/shellcheck.txt
+          echo "$RUNNER_TEMP/shellcheck/bin" >> "$GITHUB_PATH"
+      - run: tools/check-shell-lint.sh
 
       - name: Core and sanitizer CTest
         run: |
@@ -62,6 +68,11 @@ jobs:
           ./tools/prepare-worktree.sh sanitize
           cmake --build build/sanitize --parallel 2
           ctest --test-dir build/sanitize --output-on-failure -V
+      # Preparation, builds and tests write only ignored paths.
+      - name: The checkout stays clean
+        run: |
+          git status --porcelain
+          test -z "$(git status --porcelain)"
 
   # Only main analysis receives write access for semantic-release's push
   # preflight. A failed analysis fails selection, never becoming no-release.
