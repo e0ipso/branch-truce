@@ -7,7 +7,10 @@
 #include "app/AppPaths.h"
 #include "app/Application.h"
 #include "app/Translations.h"
+#include "fixtures/ConflictRepository.h"
+#include "fixtures/Files.h"
 #include "fixtures/GitOnPath.h"
+#include "fixtures/GitRepository.h"
 #include "fixtures/QuickScene.h"
 #include "mergetool/MergetoolLauncher.h"
 #include "mergetool/MergetoolProtocol.h"
@@ -41,6 +44,7 @@
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextLayout>
+#include <QUuid>
 #include <QWheelEvent>
 #include <algorithm>
 #include <cstdio>
@@ -54,159 +58,70 @@ using namespace branch_truce;
 using test_support::settleFor;
 
 namespace {
-// Shared by every journey: private HOME, XDG and runtime directories, plus an
-// offline guard in front of /usr/bin/git. Created by main() before QApplication.
-struct Sandbox {
-    QTemporaryDir root;
-    // The private XDG_RUNTIME_DIR. Under a long TMPDIR a QTemporaryDir would push
-    // the socket path past its length limit, and the session would fall back to
-    // the shared /tmp/branch-truce-<uid>. A short base under /tmp keeps it private.
-    QTemporaryDir runtime{QStringLiteral("/tmp/bt-run-XXXXXX")};
-    QString bin;
-    QString argvLog;
-    QString networkMarker;
-};
-Sandbox *sandbox = nullptr;
-
-void writeFile(const QString &path, const QByteArray &bytes)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(bytes) == bytes.size());
-}
-
-QByteArray readFile(const QString &path)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::ReadOnly));
-    const auto bytes = file.readAll();
-    CHECK(file.error() == QFileDevice::NoError);
-    return bytes;
-}
-
-QByteArray quoteShell(QByteArray value)
-{
-    value.replace("'", "'\\''");
-    return '\'' + value + '\'';
-}
+using test_support::GitOperation;
+using test_support::readFile;
+using test_support::writeFile;
+using PathSpec = test_support::OperationPath;
+using Repository = test_support::ConflictRepository;
 
 QString fileId(const char *path) { return QString::fromLatin1(QByteArray(path).toHex()); }
 
-// One path in the disposable operation. A missing side deletes the path on that branch.
-struct PathSpec {
-    QString path;
-    std::optional<QByteArray> base;
-    std::optional<QByteArray> left;
-    std::optional<QByteArray> right;
-    // Written over Git's conflict output after the operation stops, as a user would before launch.
-    std::optional<QByteArray> manual;
-};
-
-class Repository {
+// What one journey owns, so no journey sees another's state: an offline Git guard that logs the
+// app's Git calls, a recovery root that holds the journey's sessions, and an owner-only runtime
+// directory for the mergetool socket. Every Scene of the journey shares it, as successive windows
+// on one machine share the data directory.
+class Sandbox {
 public:
-    Repository(const QString &operation, const std::vector<PathSpec> &paths)
+    Sandbox()
     {
-        CHECK(directory.isValid());
-        root = QFileInfo(directory.path()).canonicalFilePath();
-        // The fixture uses /usr/bin/git directly so the guard log records only app commands.
-        environment = QProcessEnvironment::systemEnvironment();
-        git({"init", "--quiet", "--initial-branch=main"});
-        git({"config", "user.name", "Branch Truce Acceptance"});
-        git({"config", "user.email", "acceptance@example.invalid"});
-        git({"config", "core.autocrlf", "false"});
-        // A remote that cannot be reached: startup and use must not contact it.
-        git({"config", "remote.origin.url", "https://offline.invalid/never-contact"});
-        git({"config", "branch.main.remote", "origin"});
-        writeFile(path("README"), "acceptance fixture\n");
-        QStringList tracked{"README"};
-        for (const auto &spec : paths) {
-            if (!spec.base) continue;
-            QDir().mkpath(QFileInfo(path(spec.path)).path());
-            writeFile(path(spec.path), *spec.base);
-            tracked << spec.path;
-        }
-        git(QStringList{"add", "--"} + tracked);
-        git({"commit", "--quiet", "-m", "base"});
-        commitSide("side", paths, false);
-        git({"checkout", "--quiet", "main"});
-        commitSide("main", paths, true);
-        if (operation == "rebase") {
-            git({"checkout", "--quiet", "side"});
-            git({"rebase", "--merge", "main"}, 1);
-        } else {
-            git({"merge", "--no-edit", "side"}, 1);
-        }
-        for (const auto &spec : paths)
-            if (spec.manual) writeFile(path(spec.path), *spec.manual);
+        CHECK(recovery_.isValid() && runtime_.isValid());
+        CHECK(QFile::setPermissions(runtime_.path(),
+                                    QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
     }
-    QString path(const QString &relative) const { return root + '/' + relative; }
-    QByteArray git(const QStringList &arguments, int expected = 0) const
+    // A window's services for `repository`: the guard as its Git, a new session under this
+    // journey's recovery root, the repository's Git configuration and the private socket directory.
+    Application::Config config(const Repository &repository) const
     {
-        QProcess process;
-        process.setProcessEnvironment(environment);
-        process.setWorkingDirectory(root);
-        process.start("/usr/bin/git", QStringList{"--no-pager", "--literal-pathspecs"} + arguments);
-        CHECK(process.waitForStarted(5000) && process.waitForFinished(15000));
-        if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != expected)
-            throw std::runtime_error("fixture git " + arguments.join(' ').toStdString() + ": "
-                                     + process.readAllStandardError().toStdString());
-        return process.readAllStandardOutput();
+        Application::Config config;
+        config.gitExecutable = git_.executable();
+        config.recoveryDirectory =
+            recovery_.path() + QLatin1Char('/') + QUuid::createUuid().toString(QUuid::WithoutBraces);
+        config.gitEnvironment = git::GitEnvironment::from(repository.environment());
+        config.mergetoolDirectory = socketDirectory();
+        return config;
     }
-    QByteArray stageObject(int stage, const QString &relative) const
+    // The private XDG_RUNTIME_DIR. Under a long TMPDIR a QTemporaryDir would push the socket path
+    // past its length limit, and the session would fall back to the shared /tmp/branch-truce-<uid>.
+    // A short base under /tmp keeps it private.
+    QString runtimeDirectory() const { return runtime_.path(); }
+    QString socketDirectory() const { return mergetoolSocketDirectory(QFile::encodeName(runtime_.path())); }
+    const test_support::OfflineGit &git() const { return git_; }
+    // The environment `git mergetool` runs in: the repository's, so the launcher reads the same Git
+    // configuration as the window, with the guard first on PATH and this journey's runtime
+    // directory, where the launcher finds the window's socket.
+    QProcessEnvironment mergetoolEnvironment(const Repository &repository) const
     {
-        return git({"rev-parse", QStringLiteral(":%1:%2").arg(stage).arg(relative)}).trimmed();
+        auto environment = repository.environment();
+        environment.insert("PATH", git_.directory() + QStringLiteral(":/usr/bin:/bin"));
+        environment.insert("XDG_RUNTIME_DIR", runtime_.path());
+        // The session in this process must already listen; a launcher never starts another GUI.
+        environment.insert("BRANCH_TRUCE_MERGETOOL_NO_SPAWN", "1");
+        return environment;
     }
-    QByteArray stageText(int stage, const QString &relative) const
-    {
-        return git({"cat-file", "blob", QString::fromLatin1(stageObject(stage, relative))});
-    }
-    // Unmerged index entries for one path; empty once Git records a resolution.
-    QByteArray unmerged(const QString &relative) const { return git({"ls-files", "-u", "--", relative}); }
-    QMap<QString, QByteArray> snapshot() const
-    {
-        QMap<QString, QByteArray> result;
-        // Includes the index, operation metadata, refs, objects and untracked files.
-        QDirIterator files(root, QDir::Files | QDir::Hidden, QDirIterator::Subdirectories);
-        while (files.hasNext()) {
-            const auto selected = files.next();
-            result.insert(QDir(root).relativeFilePath(selected), readFile(selected));
-        }
-        return result;
-    }
-    QTemporaryDir directory;
-    QString root;
-    QProcessEnvironment environment;
-    QByteArray leftCommit;
-    QByteArray rightCommit;
 
 private:
-    void commitSide(const char *branch, const std::vector<PathSpec> &paths, bool left)
-    {
-        if (!left) git({"checkout", "--quiet", "-b", branch});
-        QStringList changed;
-        QStringList removed;
-        for (const auto &spec : paths) {
-            const auto &content = left ? spec.left : spec.right;
-            if (content) {
-                QDir().mkpath(QFileInfo(path(spec.path)).path());
-                writeFile(path(spec.path), *content);
-                changed << spec.path;
-            } else if (spec.base) {
-                removed << spec.path;
-            }
-        }
-        if (!changed.isEmpty()) git(QStringList{"add", "--"} + changed);
-        if (!removed.isEmpty()) git(QStringList{"rm", "--quiet", "--"} + removed);
-        git({"commit", "--quiet", "-m", branch});
-        (left ? leftCommit : rightCommit) = git({"rev-parse", "HEAD"}).trimmed();
-    }
+    test_support::OfflineGit git_;
+    QTemporaryDir recovery_;
+    QTemporaryDir runtime_{QStringLiteral("/tmp/bt-run-XXXXXX")};
 };
 
 // The real Main scene over a controller that opened the repository itself.
 class Scene {
 public:
-    explicit Scene(const Repository &repository) : repo(repository)
+    Scene(Sandbox &journey, const Repository &repository)
+        : sandbox(journey), repo(repository), gitCallsBefore(journey.git().calls().size())
     {
-        controller = std::make_unique<Application>(Application::Config{gitOnPath(), newRecoveryDirectory(), {}});
+        controller = std::make_unique<Application>(sandbox.config(repo));
         engine = std::make_unique<QQmlApplicationEngine>();
         engine->setInitialProperties(controller->windowProperties());
         engine->loadFromModule("BranchTruce", "Main");
@@ -216,7 +131,7 @@ public:
         window->resize(1600, 1200);
         window->show();
         const auto before = repo.snapshot();
-        CHECK(controller->loader()->openRepository(repo.root));
+        CHECK(controller->loader()->openRepository(repo.root()));
         QElapsedTimer deadline;
         deadline.start();
         while (controller->loader()->opening() && deadline.elapsed() < 20000)
@@ -226,9 +141,9 @@ public:
                                      + controller->loader()->detail().toStdString());
         // Opening a session inspects Git and never mutates the repository.
         CHECK(repo.snapshot() == before);
-        // The session listens in the sandbox's private runtime directory, not a fallback.
-        const auto socket = mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"));
-        if (socket != sandbox->runtime.path() + QStringLiteral("/branch-truce"))
+        // The session listens in the journey's private runtime directory, not a fallback.
+        const auto socket = sandbox.socketDirectory();
+        if (socket != sandbox.runtimeDirectory() + QStringLiteral("/branch-truce"))
             throw std::runtime_error("socket directory outside the private runtime directory: " + socket.toStdString());
         CHECK(controller->mergetoolSession()->listening() && QFileInfo(socket).isDir());
     }
@@ -292,7 +207,12 @@ public:
     static constexpr int settleMs = 60;
     QVariantMap progress() const { return controller->selectedFile()->progress(); }
 
+    // The Git calls this window ran: the journey's log after what it held when the window opened.
+    QByteArray gitCalls() const { return sandbox.git().calls().mid(gitCallsBefore); }
+
+    Sandbox &sandbox;
     const Repository &repo;
+    const qsizetype gitCallsBefore;
     std::unique_ptr<Application> controller;
     std::unique_ptr<QQmlApplicationEngine> engine;
     QQuickWindow *window = nullptr;
@@ -639,11 +559,12 @@ void collectTexts(QQuickItem *root, QStringList &texts)
     for (auto *child : root->childItems()) collectTexts(child, texts);
 }
 
-// Offline and account-free: no Git network command ran and nothing asks for an account.
+// Offline and account-free: no Git network command ran, this window ran local Git itself, and
+// nothing asks for an account.
 void checkOffline(Scene &scene)
 {
-    CHECK(!QFile::exists(sandbox->networkMarker));
-    const auto trace = readFile(sandbox->argvLog);
+    CHECK(!scene.sandbox.git().networkAttempted());
+    const auto trace = scene.gitCalls();
     CHECK(trace.contains("rev-parse\n") && trace.contains("cat-file\n"));
     QStringList texts;
     collectTexts(scene.window->contentItem(), texts);
@@ -730,22 +651,19 @@ std::string loaderState(const SessionLoader &loader)
 
 // Real `git mergetool` over the given paths. This test binary is the launcher: main()
 // runs the real launcher code when Git starts it with --mergetool.
-std::unique_ptr<QProcess> startMergetool(const Repository &repo, const QStringList &paths)
+std::unique_ptr<QProcess> startMergetool(const Sandbox &sandbox, const Repository &repo, const QStringList &paths)
 {
-    const auto binary = QFile::encodeName(QCoreApplication::applicationFilePath());
     repo.git({"config", "mergetool.truce-launcher.cmd",
-              QString::fromLocal8Bit("MERGED=\"$MERGED\" BASE=\"$BASE\" LOCAL=\"$LOCAL\" REMOTE=\"$REMOTE\" "
-                                     + quoteShell(binary) + " --mergetool")});
+              QStringLiteral("MERGED=\"$MERGED\" BASE=\"$BASE\" LOCAL=\"$LOCAL\" REMOTE=\"$REMOTE\" ")
+                  + test_support::shellQuote(QCoreApplication::applicationFilePath())
+                  + QStringLiteral(" --mergetool")});
     repo.git({"config", "mergetool.truce-launcher.trustExitCode", "true"});
     repo.git({"config", "mergetool.keepBackup", "false"});
-    auto environment = repo.environment;
-    // The session in this process must already listen; a launcher never starts another GUI.
-    environment.insert("BRANCH_TRUCE_MERGETOOL_NO_SPAWN", "1");
     auto process = std::make_unique<QProcess>();
-    process->setProcessEnvironment(environment);
-    process->setWorkingDirectory(repo.root);
+    process->setProcessEnvironment(sandbox.mergetoolEnvironment(repo));
+    process->setWorkingDirectory(repo.root());
     process->start(
-        "/usr/bin/git",
+        test_support::gitExecutable(),
         QStringList{"--no-pager", "--literal-pathspecs", "mergetool", "--no-prompt", "--tool=truce-launcher", "--"}
             + paths);
     CHECK(process->waitForStarted(5000));
@@ -1007,9 +925,9 @@ void expectSourcesAround(Scene &scene, const Repository &repo, const char *path,
     CHECK(scene.controller->loader()->stage3Name() == QStringLiteral("side"));
     expectText(scene.text("stage2Label"), "main", "left version name");
     expectText(scene.text("stage3Label"), "side", "right version name");
-    expectText(scene.text("stage2Identity"), leftLabel.section(": ", 0, 0) + " · " + utf8(repo.leftCommit).left(10),
+    expectText(scene.text("stage2Identity"), leftLabel.section(": ", 0, 0) + " · " + utf8(repo.leftCommit()).left(10),
                "left role and commit");
-    expectText(scene.text("stage3Identity"), rightLabel.section(": ", 0, 0) + " · " + utf8(repo.rightCommit).left(10),
+    expectText(scene.text("stage3Identity"), rightLabel.section(": ", 0, 0) + " · " + utf8(repo.rightCommit()).left(10),
                "right role and commit");
     // The full commit and blob ids stay reachable as accessible text.
     const auto described = [&](const char *name) {
@@ -1017,11 +935,11 @@ void expectSourcesAround(Scene &scene, const Repository &repo, const char *path,
         return face ? face->text(QAccessible::Description) : QString();
     };
     for (const auto *name : {"stage2Label", "stage2Identity"}) {
-        expectContains(described(name), utf8(repo.leftCommit), "left commit description");
+        expectContains(described(name), utf8(repo.leftCommit()), "left commit description");
         expectContains(described(name), utf8(repo.stageObject(2, path)), "left blob description");
     }
     for (const auto *name : {"stage3Label", "stage3Identity"}) {
-        expectContains(described(name), utf8(repo.rightCommit), "right commit description");
+        expectContains(described(name), utf8(repo.rightCommit()), "right commit description");
         expectContains(described(name), utf8(repo.stageObject(3, path)), "right blob description");
     }
     expectText(scene.text("stage2Text"), utf8(repo.stageText(2, path)), "left source text");
@@ -1173,13 +1091,17 @@ std::string firstUndecidedInView(Scene &scene, bool snapshot = false)
 // registers each group as its own entry with a timeout sized for it.
 enum class JourneySet { All, Review, Handoff, Window };
 
-// Forwards a journey to the suite only when its group is selected.
+// Forwards a journey to the suite only when its group is selected, with a sandbox of its own.
 class Group {
 public:
     Group(test_support::Suite &suite, bool selected) : suite_(suite), selected_(selected) {}
     template <typename Test> void run(const std::string &name, Test test)
     {
-        if (selected_) suite_.run(name, std::move(test));
+        if (!selected_) return;
+        suite_.run(name, [&test] {
+            Sandbox sandbox;
+            test(sandbox);
+        });
     }
 
 private:
@@ -1199,10 +1121,10 @@ public:
         review.run(
             "PRD.md:127 PRD.md:139 PRD.md:157 the full inventory keeps truthful sources around the preserved editable "
             "result",
-            [] {
-                Repository repo("merge", journeyPaths());
+            [](Sandbox &sandbox) {
+                Repository repo(GitOperation::Merge, journeyPaths());
                 const auto launched = repo.snapshot();
-                Scene scene(repo);
+                Scene scene(sandbox, repo);
                 CHECK(scene.controller->loader()->operation() == QStringLiteral("Merge"));
                 expectText(scene.text("repositorySubtitle"), "Merging side into main", "merge operation with branches");
                 CHECK(scene.controller->files()->totalFiles() == 4
@@ -1212,8 +1134,8 @@ public:
                 for (const auto *path : {"story.txt", "notes.txt", "reading.txt", "removed.txt"})
                     expectContains(rowText(scene, path), QString::fromLatin1(path), "file row");
                 expectContains(rowText(scene, "removed.txt"), "Handle outside the app", "outside-app row");
-                const auto left = "Current checkout: " + utf8(repo.leftCommit).left(10);
-                const auto right = "Merged commit: " + utf8(repo.rightCommit).left(10);
+                const auto left = "Current checkout: " + utf8(repo.leftCommit()).left(10);
+                const auto right = "Merged commit: " + utf8(repo.rightCommit()).left(10);
                 for (const auto *path : {"story.txt", "notes.txt", "reading.txt"})
                     expectSourcesAround(scene, repo, path, left, right);
                 // A file edited before launch keeps that content exactly.
@@ -1304,21 +1226,21 @@ public:
             });
         review.run(
             "PRD.md:139 rebasing keeps the arrangement with replay identities and explains missing earlier context",
-            [] {
-                Repository repo("rebase",
+            [](Sandbox &sandbox) {
+                Repository repo(GitOperation::Rebase,
                                 {
                                     {"story.txt", storyBase, storyLeft, storyRight, std::nullopt},
                                     {"added.txt", std::nullopt, QByteArray("added on the left\n"),
                                      QByteArray("added on the right\n"), std::nullopt},
                                 });
-                Scene scene(repo);
+                Scene scene(sandbox, repo);
                 CHECK(scene.controller->loader()->operation() == QStringLiteral("Rebase"));
                 expectText(scene.text("repositorySubtitle"), "Rebasing side onto main",
                            "rebase operation with branches");
                 CHECK(scene.controller->files()->totalFiles() == 2
                       && scene.controller->files()->outsideAppFiles() == 0);
-                const auto left = "Current rebased state: " + utf8(repo.leftCommit).left(10);
-                const auto right = "Commit being replayed: " + utf8(repo.rightCommit).left(10);
+                const auto left = "Current rebased state: " + utf8(repo.leftCommit()).left(10);
+                const auto right = "Commit being replayed: " + utf8(repo.rightCommit()).left(10);
                 expectSourcesAround(scene, repo, "story.txt", left, right);
                 CHECK(scene.item("showEarlier")->isEnabled());
                 expectSourcesAround(scene, repo, "added.txt", left, right);
@@ -1333,9 +1255,9 @@ public:
         review.run(
             "PRD.md:157 scoped choices and ordered combinations over pre-launch edits share one undo history with "
             "typing",
-            [] {
-                Repository repo("merge", journeyPaths());
-                Scene scene(repo);
+            [](Sandbox &sandbox) {
+                Repository repo(GitOperation::Merge, journeyPaths());
+                Scene scene(sandbox, repo);
                 clickFile(scene, "notes.txt");
                 const auto notes = scene.file("notes.txt").current();
                 clickFile(scene, "story.txt");
@@ -1490,9 +1412,10 @@ public:
                 checkOffline(scene);
             });
         review.run(
-            "PRD.md:41 PRD.md:49 typing in an accepted line marks its region manual until a choice replaces it", [] {
-                Repository repo("merge", journeyPaths());
-                Scene scene(repo);
+            "PRD.md:41 PRD.md:49 typing in an accepted line marks its region manual until a choice replaces it",
+            [](Sandbox &sandbox) {
+                Repository repo(GitOperation::Merge, journeyPaths());
+                Scene scene(sandbox, repo);
                 clickFile(scene, "story.txt");
                 CHECK(scene.controller->selectedFile()->fileName() == QStringLiteral("story.txt"));
                 const auto region = [&](const char *label) { return regionFor(scene, QString::fromUtf8(label)); };
@@ -1554,10 +1477,10 @@ public:
         review.run(
             "PRD.md:135 PRD.md:153 Save keeps an app-only draft and Mark resolved without a prior Save confirms, "
             "writes and resolves",
-            [] {
-                Repository repo("merge", journeyPaths());
+            [](Sandbox &sandbox) {
+                Repository repo(GitOperation::Merge, journeyPaths());
                 const auto launched = repo.snapshot();
-                Scene scene(repo);
+                Scene scene(sandbox, repo);
                 const auto status = [&] { return scene.controller->feedback()->message(); };
 
                 // Save checkpoints an unfinished draft in the app only.
@@ -1618,10 +1541,10 @@ public:
         review.run(
             "PRD.md:137 PRD.md:141 scoped search, wrapping, whitespace, mouse inspection and clipboard shortcuts keep "
             "the work",
-            [] {
-                Repository repo("merge", journeyPaths());
+            [](Sandbox &sandbox) {
+                Repository repo(GitOperation::Merge, journeyPaths());
                 const auto launched = repo.snapshot();
-                Scene scene(repo);
+                Scene scene(sandbox, repo);
                 clickFile(scene, "story.txt");
                 const auto story = scene.file("story.txt").current();
                 clickFile(scene, "reading.txt");
@@ -1774,9 +1697,9 @@ public:
         handoff.run(
             "PRD.md:143 PRD.md:145 the handoff separates resolved, saved, unsaved, newer, failed and outside-app work "
             "and leaving keeps it outstanding",
-            [] {
-                Repository repo("merge", handoffPaths());
-                Scene scene(repo);
+            [](Sandbox &sandbox) {
+                Repository repo(GitOperation::Merge, handoffPaths());
+                Scene scene(sandbox, repo);
                 CHECK(scene.controller->files()->totalFiles() == 7);
                 clickFile(scene, "done.txt");
                 markResolvedByMouse(scene);
@@ -1879,7 +1802,7 @@ public:
                                      clean = value;
                                  });
                 const auto beforeLeave = repo.snapshot();
-                const auto traced = readFile(sandbox->argvLog);
+                const auto traced = scene.gitCalls();
                 scene.click("openHandoff");
                 settleFor("handoff opened for leave", opened);
                 CHECK(scene.item("handoffLeave")->isEnabled() && !scene.item("handoffLeaveBlocker")->isVisible());
@@ -1894,7 +1817,7 @@ public:
                 CHECK(ended == 1 && !clean);
                 expectContains(scene.controller->completion()->outcome(), "Left with 6 of 7 files outstanding.",
                                "leave outcome");
-                CHECK(repo.snapshot() == beforeLeave && readFile(sandbox->argvLog) == traced);
+                CHECK(repo.snapshot() == beforeLeave && scene.gitCalls() == traced);
                 for (const auto *path : {"saved.txt", "typed.txt", "written.txt", "locked/failing.txt", "removed.txt"})
                     CHECK(!repo.unmerged(path).isEmpty());
                 CHECK(repo.unmerged("done.txt").isEmpty() && repo.unmerged("newer.txt").isEmpty());
@@ -1903,281 +1826,299 @@ public:
                                "session scope");
                 checkOffline(scene);
             });
-        handoff.run("a newer draft goes back to the staged result from the file toolbar and the handoff", [] {
-            Repository repo("merge",
-                            {{"newer.txt", QByteArray("newer base\n"), QByteArray("newer left\n"),
-                              QByteArray("newer right\n"), QByteArray("newer chosen by hand\n")}});
-            Scene scene(repo);
-            const auto id = fileId("newer.txt");
-            clickFile(scene, "newer.txt");
-            markResolvedByMouse(scene);
-            CHECK(scene.progress().value("resolved").toBool());
-            const auto staged = scene.text("resultText");
-            const auto published = repo.snapshot();
-            CHECK(repo.unmerged("newer.txt").isEmpty());
-            auto *prompt = scene.object("discardStagedDialog");
-            auto *handoff = scene.object("handoffDialog");
-            const auto newerDraft = [&] {
-                appendToResult(scene, "again");
-                settleFor("newer draft", [&] { return scene.progress().value("earlierResolved").toBool(); });
-                CHECK(scene.text("resultText").endsWith(QStringLiteral("again")));
-            };
-            newerDraft();
-            const auto draft = scene.text("resultText");
-
-            // The overflow entry asks first. The prompt names the file, says the draft is lost and
-            // confirms with the destructive Discard button, labelled with what it does.
-            clickOverflowAction(scene, "discardToStaged");
-            settleFor("discard prompt opened", [&] { return prompt->property("opened").toBool(); });
-            expectContains(prompt->property("subtitle").toString(), "The draft of newer.txt is lost", "discard prompt");
-            CHECK(prompt->property("standardButtons").toInt() & QDialogButtonBox::Discard);
-            expectText(dialogButton(scene, "discardStagedDialog", "confirmDiscardStaged")->property("text").toString(),
-                       "Discard draft", "destructive button");
-            CHECK(!scene.item("discardStagedError")->isVisible());
-            // Cancelling changes nothing.
-            clickDialogButton(scene, "discardStagedDialog", "Cancel");
-            expectText(scene.text("resultText"), draft, "draft after cancel");
-            CHECK(scene.progress().value("earlierResolved").toBool() && !scene.progress().value("resolved").toBool());
-            CHECK(repo.snapshot() == published);
-
-            // The handoff entry that says to discard back to the staged result offers it.
-            scene.click("openHandoff");
-            settleFor("handoff opened", [&] { return handoff->property("opened").toBool(); });
-            auto entry = handoffEntries(scene).value(id);
-            expectText(entry.value("category").toString(), "newer-draft", "handoff category");
-            expectText(entry.value("actionLabel").toString(), "Mark resolved or discard back to the staged result",
-                       "route");
-            const auto discardName = ("handoffDiscardStaged-" + id).toLatin1();
-            expectText(scene.text(discardName.constData()), "Discard draft and use staged result", "handoff discard");
-            scene.click(discardName.constData());
-            settleFor("handoff closed for discard", [&] { return !handoff->property("visible").toBool(); });
-            clickDialogButton(scene, "discardStagedDialog", "confirmDiscardStaged");
-            settleFor("staged result restored", [&] { return scene.progress().value("resolved").toBool(); });
-            expectText(scene.text("resultText"), staged, "staged result");
-            CHECK(!scene.progress().value("earlierResolved").toBool());
-            expectText(
-                scene.controller->feedback()->message(),
-                "Discarded the draft. The result staged in Git is current again; the repository file is unchanged.",
-                "discard message");
-            expectText(handoffEntries(scene).value(id).value("category").toString(), "published",
-                       "handoff after discard");
-            CHECK(scene.controller->completion()->handoffData().value("clean").toBool());
-            CHECK(repo.snapshot() == published);
-
-            // A discard the recovery journal cannot record keeps the draft and shows an error.
-            newerDraft();
-            {
-                QLockFile busy(scene.controller->store()->recoveryDirectory() + QStringLiteral("/journal.lock"));
-                CHECK(busy.tryLock(0));
-                clickOverflowAction(scene, "discardToStaged");
-                test_support::clickItem(scene.window,
-                                        dialogButton(scene, "discardStagedDialog", "confirmDiscardStaged"));
-                settleFor("discard failure shown", [&] { return scene.item("discardStagedError")->isVisible(); });
-                CHECK(prompt->property("opened").toBool());
-                expectText(scene.item("discardStagedError")->property("text").toString(),
-                           "Discard was not completed. The draft is kept until retry finishes the discard.",
-                           "discard error");
-                CHECK(scene.item("discardStagedError")->property("type").toInt() == 3); // Kirigami.MessageType.Error
-                CHECK(scene.controller->files()->hasPendingRecovery());
-                expectText(QString::fromStdString(scene.file("newer.txt").current().draft.text), draft, "kept draft");
-                clickDialogButton(scene, "discardStagedDialog", "Cancel");
-                CHECK(scene.item("recoveryProblem")->isVisible());
-            }
-            // Retry finishes that same discard.
-            scene.click("retryRecovery");
-            settleFor("retried discard", [&] { return !scene.controller->files()->hasPendingRecovery(); });
-            settleFor("staged result after retry", [&] { return scene.progress().value("resolved").toBool(); });
-            expectText(QString::fromStdString(scene.file("newer.txt").current().draft.text), staged,
-                       "staged after retry");
-            CHECK(repo.snapshot() == published);
-            checkOffline(scene);
-        });
-        handoff.run("PRD.md:149 offline startup without an account resumes saved and unsaved drafts after closing", [] {
-            Repository repo("merge",
-                            {
-                                {"saved.txt", QByteArray("saved base\n"), QByteArray("saved left\n"),
-                                 QByteArray("saved right\n"), QByteArray("saved by hand\n")},
-                                {"typed.txt", QByteArray("typed base\n"), QByteArray("typed left\n"),
-                                 QByteArray("typed right\n"), QByteArray("typed by hand\n")},
-                            });
-            const auto launched = repo.snapshot();
-            QString savedText;
-            QString typedText;
-            {
-                Scene scene(repo);
-                checkOffline(scene);
-                clickFile(scene, "saved.txt");
-                appendToResult(scene, "kept");
-                scene.click("saveDraft");
-                settleFor("saved draft", [&] { return scene.progress().value("saved").toBool(); });
-                savedText = scene.text("resultText");
-                clickFile(scene, "typed.txt");
-                appendToResult(scene, "typed");
-                typedText = scene.text("resultText");
-                // Closing with work outstanding opens the handoff; leave is deliberate.
-                auto *dialog = scene.object("handoffDialog");
-                scene.window->close();
-                settleFor("handoff opened by close", [&] { return dialog->property("opened").toBool(); });
-                CHECK(scene.window->isVisible());
-                scene.click("handoffLeave");
-                CHECK(!scene.controller->completion()->outcome().isEmpty());
-                checkOffline(scene);
-            }
-            CHECK(repo.snapshot() == launched);
-            Scene reopened(repo);
-            expectContains(reopened.controller->loader()->detail(), "Recovered app drafts", "recovery detail");
-            clickFile(reopened, "saved.txt");
-            expectText(reopened.text("resultText"), savedText, "restored saved draft");
-            CHECK(reopened.progress().value("saved").toBool() && !reopened.progress().value("resolved").toBool());
-            clickFile(reopened, "typed.txt");
-            expectText(reopened.text("resultText"), typedText, "restored unsaved draft");
-            CHECK(!reopened.progress().value("saved").toBool() && !reopened.progress().value("resolved").toBool());
-            // Restored work stays editable offline.
-            appendToResult(reopened, "!");
-            expectText(reopened.text("resultText"), typedText + "!", "edit after resume");
-            CHECK(!repo.unmerged("saved.txt").isEmpty() && !repo.unmerged("typed.txt").isEmpty());
-            checkOffline(reopened);
-        });
-        handoff.run("a blocked startup lists each recovery session and restores the chosen one in the window", [] {
-            Repository repo("merge",
-                            {{"shared.txt", QByteArray("shared base\n"), QByteArray("shared left\n"),
-                              QByteArray("shared right\n"), QByteArray("shared chosen by hand\n")}});
-            const auto id = fileId("shared.txt").toStdString();
-            const auto edit = [&](Application &controller, const std::string &text) {
-                const auto *file = controller.store()->file(id);
-                CHECK(file
-                      && controller.store()->editResult(id, file->current().id, {{0, 0}, text}) == Transition::Applied);
-            };
-            QString first;
-            QString second;
-            {
-                // Two windows on one merge each keep their own edits.
-                Scene one(repo);
-                Application two{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
-                CHECK(two.loader()->openRepository(repo.root));
-                // The load runs Git and the recovery restore off the GUI thread, so it gets the
-                // deadline of a process, not the layout deadline of settleFor.
-                waitFor(
-                    "second window", [&] { return !two.loader()->opening(); },
-                    [&] { return loaderState(*two.loader()); });
-                CHECK(two.loader()->startupState() == QStringLiteral("ready"));
-                edit(*one.controller, "first window\n");
-                edit(two, "second window\n");
-                first = one.controller->store()->recoveryDirectory();
-                second = two.store()->recoveryDirectory();
-            }
-            const auto firstName = QFileInfo(first).fileName();
-            const auto secondName = QFileInfo(second).fileName();
-            Scene scene(repo);
-            expectContains(scene.controller->loader()->detail(), "restoration is blocked rather than guessing",
-                           "blocked detail");
-            CHECK(scene.text("resultText").startsWith(QStringLiteral("shared chosen by hand")));
-            for (const auto &name : {firstName, secondName}) {
-                auto *row = test_support::waitForLayout(scene.window, "recoveryChoiceText-" + name);
-                const auto shown = row->property("text").toString();
-                expectContains(shown, name, "choice session");
-                expectContains(shown, "last changed", "choice time");
-                expectContains(shown, "Edited files: shared.txt", "choice files");
-            }
-            const auto repository = repo.snapshot();
-            scene.click(("recoveryChoice-" + firstName).toLatin1().constData());
-            waitFor(
-                "chosen session restored",
-                [&] {
-                    return !scene.controller->loader()->opening()
-                        && scene.controller->loader()->recoveryChoices().isEmpty();
-                },
-                [&] { return loaderState(*scene.controller->loader()); });
-            CHECK(scene.controller->loader()->startupState() == QStringLiteral("ready"));
-            CHECK(scene.controller->store()->recoveryDirectory() == first);
-            expectContains(scene.controller->loader()->detail(), secondName + " was set aside, not deleted",
-                           "set aside");
-            settleFor("restored text",
-                      [&] { return scene.text("resultText").startsWith(QStringLiteral("first window\n")); });
-            CHECK(!scene.item("recoveryChoices")->isVisible());
-            CHECK(QFileInfo::exists(second + "/set-aside") && QFileInfo::exists(second + "/journal"));
-            // Choosing touched only app-owned recovery files.
-            CHECK(repo.snapshot() == repository && !repo.unmerged("shared.txt").isEmpty());
-            checkOffline(scene);
-        });
-        handoff.run("a resolved mergetool handoff drops the waiting text and a path Git has not launched keeps it", [] {
-            Repository repo("merge",
-                            {
-                                {"launched.txt", QByteArray("launched base\n"), QByteArray("launched left\n"),
-                                 QByteArray("launched right\n"), QByteArray("launched chosen by hand\n")},
-                                {"later.txt", QByteArray("later base\n"), QByteArray("later left\n"),
-                                 QByteArray("later right\n"), QByteArray("later chosen by hand\n")},
-                            });
-            Scene scene(repo);
-            const QString waitText = QStringLiteral("Waiting for Git to launch this path. It is not resolved.");
-            const auto shownTexts = [&] {
-                QStringList texts;
-                collectTexts(scene.window->contentItem(), texts);
-                return texts.join('\n');
-            };
-            const auto state = [&] {
-                return "waiting=" + scene.controller->mergetoolSession()->waitingPath().toStdString()
-                    + " staging=" + scene.controller->mergetool()->parentStagingPath().toStdString()
-                    + " message=" + scene.controller->feedback()->message().toStdString();
-            };
-            auto parent = startMergetool(repo, {"launched.txt"});
-            waitFor(
-                "Git to launch launched.txt",
-                [&] { return scene.controller->mergetoolSession()->waitingPath() == QByteArray("launched.txt"); },
-                state);
-            CHECK(scene.controller->mergetool()->parentSessionActive());
-
-            // A path Git has not launched yet says so while Git is still running.
-            clickFile(scene, "later.txt");
-            settleFor("waiting text on the unlaunched path", [&] { return scene.item("mergetoolWait")->isVisible(); });
-            expectText(scene.text("mergetoolWait"), waitText, "unlaunched path");
-            clickFile(scene, "launched.txt");
-            settleFor("holding text on the launched path", [&] { return scene.item("mergetoolHolding")->isVisible(); });
-            CHECK(!scene.item("mergetoolWait")->isVisible());
-
-            markResolvedByMouse(scene);
-            waitFor("git mergetool to exit", [&] { return parent->state() == QProcess::NotRunning; }, state);
-            CHECK(parent->exitStatus() == QProcess::NormalExit && parent->exitCode() == 0);
-            CHECK(repo.unmerged("launched.txt").isEmpty() && !repo.unmerged("later.txt").isEmpty());
-            waitFor(
-                "the staged resolution",
-                [&] {
-                    return scene.progress().value("resolved").toBool()
-                        && scene.controller->mergetool()->parentStagingPath().isEmpty();
-                },
-                state);
-            CHECK(scene.controller->files()->resolvedFiles() == 1);
-
-            // Git has exited and the parent session stays open until the user ends it.
-            CHECK(scene.controller->mergetool()->parentSessionActive() && !scene.controller->mergetool()->waiting());
-            CHECK(!scene.item("mergetoolWait")->isVisible());
-            const auto resolvedTexts = shownTexts();
-            if (resolvedTexts.contains(QStringLiteral("It is not resolved"))
-                || resolvedTexts.contains(QStringLiteral("Waiting for Git to launch")))
-                throw std::runtime_error("resolved file still says it waits: " + resolvedTexts.toStdString());
-            expectContains(rowText(scene, "launched.txt"), "Resolved", "resolved file status");
-            // Editing after the handoff leaves an earlier result staged, and Git will not launch the path again.
-            appendToResult(scene, "x");
-            settleFor("earlier staged result", [&] { return scene.progress().value("earlierResolved").toBool(); });
-            CHECK(!scene.item("mergetoolWait")->isVisible());
-
-            // The file Git never launched keeps the waiting text after the handoff.
-            clickFile(scene, "later.txt");
-            settleFor("waiting text after the handoff", [&] { return scene.item("mergetoolWait")->isVisible(); });
-            expectText(scene.text("mergetoolWait"), waitText, "unlaunched path after the handoff");
-            CHECK(scene.item("endParentSession")->isVisible());
-            checkOffline(scene);
-        });
         handoff.run(
-            "clicking the launched path again after Git attached shows the waiting state and Leave unresolved", [] {
-                Repository repo("merge",
+            "a newer draft goes back to the staged result from the file toolbar and the handoff", [](Sandbox &sandbox) {
+                Repository repo(GitOperation::Merge,
+                                {{"newer.txt", QByteArray("newer base\n"), QByteArray("newer left\n"),
+                                  QByteArray("newer right\n"), QByteArray("newer chosen by hand\n")}});
+                Scene scene(sandbox, repo);
+                const auto id = fileId("newer.txt");
+                clickFile(scene, "newer.txt");
+                markResolvedByMouse(scene);
+                CHECK(scene.progress().value("resolved").toBool());
+                const auto staged = scene.text("resultText");
+                const auto published = repo.snapshot();
+                CHECK(repo.unmerged("newer.txt").isEmpty());
+                auto *prompt = scene.object("discardStagedDialog");
+                auto *handoff = scene.object("handoffDialog");
+                const auto newerDraft = [&] {
+                    appendToResult(scene, "again");
+                    settleFor("newer draft", [&] { return scene.progress().value("earlierResolved").toBool(); });
+                    CHECK(scene.text("resultText").endsWith(QStringLiteral("again")));
+                };
+                newerDraft();
+                const auto draft = scene.text("resultText");
+
+                // The overflow entry asks first. The prompt names the file, says the draft is lost and
+                // confirms with the destructive Discard button, labelled with what it does.
+                clickOverflowAction(scene, "discardToStaged");
+                settleFor("discard prompt opened", [&] { return prompt->property("opened").toBool(); });
+                expectContains(prompt->property("subtitle").toString(), "The draft of newer.txt is lost",
+                               "discard prompt");
+                CHECK(prompt->property("standardButtons").toInt() & QDialogButtonBox::Discard);
+                expectText(
+                    dialogButton(scene, "discardStagedDialog", "confirmDiscardStaged")->property("text").toString(),
+                    "Discard draft", "destructive button");
+                CHECK(!scene.item("discardStagedError")->isVisible());
+                // Cancelling changes nothing.
+                clickDialogButton(scene, "discardStagedDialog", "Cancel");
+                expectText(scene.text("resultText"), draft, "draft after cancel");
+                CHECK(scene.progress().value("earlierResolved").toBool()
+                      && !scene.progress().value("resolved").toBool());
+                CHECK(repo.snapshot() == published);
+
+                // The handoff entry that says to discard back to the staged result offers it.
+                scene.click("openHandoff");
+                settleFor("handoff opened", [&] { return handoff->property("opened").toBool(); });
+                auto entry = handoffEntries(scene).value(id);
+                expectText(entry.value("category").toString(), "newer-draft", "handoff category");
+                expectText(entry.value("actionLabel").toString(), "Mark resolved or discard back to the staged result",
+                           "route");
+                const auto discardName = ("handoffDiscardStaged-" + id).toLatin1();
+                expectText(scene.text(discardName.constData()), "Discard draft and use staged result",
+                           "handoff discard");
+                scene.click(discardName.constData());
+                settleFor("handoff closed for discard", [&] { return !handoff->property("visible").toBool(); });
+                clickDialogButton(scene, "discardStagedDialog", "confirmDiscardStaged");
+                settleFor("staged result restored", [&] { return scene.progress().value("resolved").toBool(); });
+                expectText(scene.text("resultText"), staged, "staged result");
+                CHECK(!scene.progress().value("earlierResolved").toBool());
+                expectText(
+                    scene.controller->feedback()->message(),
+                    "Discarded the draft. The result staged in Git is current again; the repository file is unchanged.",
+                    "discard message");
+                expectText(handoffEntries(scene).value(id).value("category").toString(), "published",
+                           "handoff after discard");
+                CHECK(scene.controller->completion()->handoffData().value("clean").toBool());
+                CHECK(repo.snapshot() == published);
+
+                // A discard the recovery journal cannot record keeps the draft and shows an error.
+                newerDraft();
+                {
+                    QLockFile busy(scene.controller->store()->recoveryDirectory() + QStringLiteral("/journal.lock"));
+                    CHECK(busy.tryLock(0));
+                    clickOverflowAction(scene, "discardToStaged");
+                    test_support::clickItem(scene.window,
+                                            dialogButton(scene, "discardStagedDialog", "confirmDiscardStaged"));
+                    settleFor("discard failure shown", [&] { return scene.item("discardStagedError")->isVisible(); });
+                    CHECK(prompt->property("opened").toBool());
+                    expectText(scene.item("discardStagedError")->property("text").toString(),
+                               "Discard was not completed. The draft is kept until retry finishes the discard.",
+                               "discard error");
+                    CHECK(scene.item("discardStagedError")->property("type").toInt()
+                          == 3); // Kirigami.MessageType.Error
+                    CHECK(scene.controller->files()->hasPendingRecovery());
+                    expectText(QString::fromStdString(scene.file("newer.txt").current().draft.text), draft,
+                               "kept draft");
+                    clickDialogButton(scene, "discardStagedDialog", "Cancel");
+                    CHECK(scene.item("recoveryProblem")->isVisible());
+                }
+                // Retry finishes that same discard.
+                scene.click("retryRecovery");
+                settleFor("retried discard", [&] { return !scene.controller->files()->hasPendingRecovery(); });
+                settleFor("staged result after retry", [&] { return scene.progress().value("resolved").toBool(); });
+                expectText(QString::fromStdString(scene.file("newer.txt").current().draft.text), staged,
+                           "staged after retry");
+                CHECK(repo.snapshot() == published);
+                checkOffline(scene);
+            });
+        handoff.run(
+            "PRD.md:149 offline startup without an account resumes saved and unsaved drafts after closing",
+            [](Sandbox &sandbox) {
+                Repository repo(GitOperation::Merge,
+                                {
+                                    {"saved.txt", QByteArray("saved base\n"), QByteArray("saved left\n"),
+                                     QByteArray("saved right\n"), QByteArray("saved by hand\n")},
+                                    {"typed.txt", QByteArray("typed base\n"), QByteArray("typed left\n"),
+                                     QByteArray("typed right\n"), QByteArray("typed by hand\n")},
+                                });
+                const auto launched = repo.snapshot();
+                QString savedText;
+                QString typedText;
+                {
+                    Scene scene(sandbox, repo);
+                    checkOffline(scene);
+                    clickFile(scene, "saved.txt");
+                    appendToResult(scene, "kept");
+                    scene.click("saveDraft");
+                    settleFor("saved draft", [&] { return scene.progress().value("saved").toBool(); });
+                    savedText = scene.text("resultText");
+                    clickFile(scene, "typed.txt");
+                    appendToResult(scene, "typed");
+                    typedText = scene.text("resultText");
+                    // Closing with work outstanding opens the handoff; leave is deliberate.
+                    auto *dialog = scene.object("handoffDialog");
+                    scene.window->close();
+                    settleFor("handoff opened by close", [&] { return dialog->property("opened").toBool(); });
+                    CHECK(scene.window->isVisible());
+                    scene.click("handoffLeave");
+                    CHECK(!scene.controller->completion()->outcome().isEmpty());
+                    checkOffline(scene);
+                }
+                CHECK(repo.snapshot() == launched);
+                Scene reopened(sandbox, repo);
+                expectContains(reopened.controller->loader()->detail(), "Recovered app drafts", "recovery detail");
+                clickFile(reopened, "saved.txt");
+                expectText(reopened.text("resultText"), savedText, "restored saved draft");
+                CHECK(reopened.progress().value("saved").toBool() && !reopened.progress().value("resolved").toBool());
+                clickFile(reopened, "typed.txt");
+                expectText(reopened.text("resultText"), typedText, "restored unsaved draft");
+                CHECK(!reopened.progress().value("saved").toBool() && !reopened.progress().value("resolved").toBool());
+                // Restored work stays editable offline.
+                appendToResult(reopened, "!");
+                expectText(reopened.text("resultText"), typedText + "!", "edit after resume");
+                CHECK(!repo.unmerged("saved.txt").isEmpty() && !repo.unmerged("typed.txt").isEmpty());
+                checkOffline(reopened);
+            });
+        handoff.run("a blocked startup lists each recovery session and restores the chosen one in the window",
+                    [](Sandbox &sandbox) {
+                        Repository repo(GitOperation::Merge,
+                                        {{"shared.txt", QByteArray("shared base\n"), QByteArray("shared left\n"),
+                                          QByteArray("shared right\n"), QByteArray("shared chosen by hand\n")}});
+                        const auto id = fileId("shared.txt").toStdString();
+                        const auto edit = [&](Application &controller, const std::string &text) {
+                            const auto *file = controller.store()->file(id);
+                            CHECK(file
+                                  && controller.store()->editResult(id, file->current().id, {{0, 0}, text})
+                                      == Transition::Applied);
+                        };
+                        QString first;
+                        QString second;
+                        {
+                            // Two windows on one merge each keep their own edits.
+                            Scene one(sandbox, repo);
+                            Application two{sandbox.config(repo)};
+                            CHECK(two.loader()->openRepository(repo.root()));
+                            // The load runs Git and the recovery restore off the GUI thread, so it gets the
+                            // deadline of a process, not the layout deadline of settleFor.
+                            waitFor(
+                                "second window", [&] { return !two.loader()->opening(); },
+                                [&] { return loaderState(*two.loader()); });
+                            CHECK(two.loader()->startupState() == QStringLiteral("ready"));
+                            edit(*one.controller, "first window\n");
+                            edit(two, "second window\n");
+                            first = one.controller->store()->recoveryDirectory();
+                            second = two.store()->recoveryDirectory();
+                        }
+                        const auto firstName = QFileInfo(first).fileName();
+                        const auto secondName = QFileInfo(second).fileName();
+                        Scene scene(sandbox, repo);
+                        expectContains(scene.controller->loader()->detail(),
+                                       "restoration is blocked rather than guessing", "blocked detail");
+                        CHECK(scene.text("resultText").startsWith(QStringLiteral("shared chosen by hand")));
+                        for (const auto &name : {firstName, secondName}) {
+                            auto *row = test_support::waitForLayout(scene.window, "recoveryChoiceText-" + name);
+                            const auto shown = row->property("text").toString();
+                            expectContains(shown, name, "choice session");
+                            expectContains(shown, "last changed", "choice time");
+                            expectContains(shown, "Edited files: shared.txt", "choice files");
+                        }
+                        const auto repository = repo.snapshot();
+                        scene.click(("recoveryChoice-" + firstName).toLatin1().constData());
+                        waitFor(
+                            "chosen session restored",
+                            [&] {
+                                return !scene.controller->loader()->opening()
+                                    && scene.controller->loader()->recoveryChoices().isEmpty();
+                            },
+                            [&] { return loaderState(*scene.controller->loader()); });
+                        CHECK(scene.controller->loader()->startupState() == QStringLiteral("ready"));
+                        CHECK(scene.controller->store()->recoveryDirectory() == first);
+                        expectContains(scene.controller->loader()->detail(), secondName + " was set aside, not deleted",
+                                       "set aside");
+                        settleFor("restored text", [&] {
+                            return scene.text("resultText").startsWith(QStringLiteral("first window\n"));
+                        });
+                        CHECK(!scene.item("recoveryChoices")->isVisible());
+                        CHECK(QFileInfo::exists(second + "/set-aside") && QFileInfo::exists(second + "/journal"));
+                        // Choosing touched only app-owned recovery files.
+                        CHECK(repo.snapshot() == repository && !repo.unmerged("shared.txt").isEmpty());
+                        checkOffline(scene);
+                    });
+        handoff.run(
+            "a resolved mergetool handoff drops the waiting text and a path Git has not launched keeps it",
+            [](Sandbox &sandbox) {
+                Repository repo(GitOperation::Merge,
+                                {
+                                    {"launched.txt", QByteArray("launched base\n"), QByteArray("launched left\n"),
+                                     QByteArray("launched right\n"), QByteArray("launched chosen by hand\n")},
+                                    {"later.txt", QByteArray("later base\n"), QByteArray("later left\n"),
+                                     QByteArray("later right\n"), QByteArray("later chosen by hand\n")},
+                                });
+                Scene scene(sandbox, repo);
+                const QString waitText = QStringLiteral("Waiting for Git to launch this path. It is not resolved.");
+                const auto shownTexts = [&] {
+                    QStringList texts;
+                    collectTexts(scene.window->contentItem(), texts);
+                    return texts.join('\n');
+                };
+                const auto state = [&] {
+                    return "waiting=" + scene.controller->mergetoolSession()->waitingPath().toStdString()
+                        + " staging=" + scene.controller->mergetool()->parentStagingPath().toStdString()
+                        + " message=" + scene.controller->feedback()->message().toStdString();
+                };
+                auto parent = startMergetool(sandbox, repo, {"launched.txt"});
+                waitFor(
+                    "Git to launch launched.txt",
+                    [&] { return scene.controller->mergetoolSession()->waitingPath() == QByteArray("launched.txt"); },
+                    state);
+                CHECK(scene.controller->mergetool()->parentSessionActive());
+
+                // A path Git has not launched yet says so while Git is still running.
+                clickFile(scene, "later.txt");
+                settleFor("waiting text on the unlaunched path",
+                          [&] { return scene.item("mergetoolWait")->isVisible(); });
+                expectText(scene.text("mergetoolWait"), waitText, "unlaunched path");
+                clickFile(scene, "launched.txt");
+                settleFor("holding text on the launched path",
+                          [&] { return scene.item("mergetoolHolding")->isVisible(); });
+                CHECK(!scene.item("mergetoolWait")->isVisible());
+
+                markResolvedByMouse(scene);
+                waitFor("git mergetool to exit", [&] { return parent->state() == QProcess::NotRunning; }, state);
+                CHECK(parent->exitStatus() == QProcess::NormalExit && parent->exitCode() == 0);
+                CHECK(repo.unmerged("launched.txt").isEmpty() && !repo.unmerged("later.txt").isEmpty());
+                waitFor(
+                    "the staged resolution",
+                    [&] {
+                        return scene.progress().value("resolved").toBool()
+                            && scene.controller->mergetool()->parentStagingPath().isEmpty();
+                    },
+                    state);
+                CHECK(scene.controller->files()->resolvedFiles() == 1);
+
+                // Git has exited and the parent session stays open until the user ends it.
+                CHECK(scene.controller->mergetool()->parentSessionActive()
+                      && !scene.controller->mergetool()->waiting());
+                CHECK(!scene.item("mergetoolWait")->isVisible());
+                const auto resolvedTexts = shownTexts();
+                if (resolvedTexts.contains(QStringLiteral("It is not resolved"))
+                    || resolvedTexts.contains(QStringLiteral("Waiting for Git to launch")))
+                    throw std::runtime_error("resolved file still says it waits: " + resolvedTexts.toStdString());
+                expectContains(rowText(scene, "launched.txt"), "Resolved", "resolved file status");
+                // Editing after the handoff leaves an earlier result staged, and Git will not launch the path again.
+                appendToResult(scene, "x");
+                settleFor("earlier staged result", [&] { return scene.progress().value("earlierResolved").toBool(); });
+                CHECK(!scene.item("mergetoolWait")->isVisible());
+
+                // The file Git never launched keeps the waiting text after the handoff.
+                clickFile(scene, "later.txt");
+                settleFor("waiting text after the handoff", [&] { return scene.item("mergetoolWait")->isVisible(); });
+                expectText(scene.text("mergetoolWait"), waitText, "unlaunched path after the handoff");
+                CHECK(scene.item("endParentSession")->isVisible());
+                checkOffline(scene);
+            });
+        handoff.run(
+            "clicking the launched path again after Git attached shows the waiting state and Leave unresolved",
+            [](Sandbox &sandbox) {
+                Repository repo(GitOperation::Merge,
                                 {
                                     {"launched.txt", QByteArray("launched base\n"), QByteArray("launched left\n"),
                                      QByteArray("launched right\n"), QByteArray("launched chosen by hand\n")},
                                     {"other.txt", QByteArray("other base\n"), QByteArray("other left\n"),
                                      QByteArray("other right\n"), QByteArray("other chosen by hand\n")},
                                 });
-                Scene scene(repo);
+                Scene scene(sandbox, repo);
                 const auto state = [&] {
                     return "waiting=" + scene.controller->mergetoolSession()->waitingPath().toStdString()
                         + " selected=" + scene.controller->selection()->fileId().toStdString()
@@ -2189,7 +2130,7 @@ public:
                 };
                 clickFile(scene, "launched.txt");
                 const auto launchBytes = readFile(repo.path("launched.txt"));
-                auto parent = startMergetool(repo, {"launched.txt"});
+                auto parent = startMergetool(sandbox, repo, {"launched.txt"});
                 waitFor(
                     "Git to launch launched.txt",
                     [&] { return scene.controller->mergetoolSession()->waitingPath() == QByteArray("launched.txt"); },
@@ -2221,126 +2162,130 @@ public:
                           [&] { return !scene.item("leaveMergetool")->isVisible(); });
                 checkOffline(scene);
             });
-        window.run("outside-app placeholders retain literal stress text and reachable diagnostics", [] {
-            const auto longPath = QStringLiteral("long printable directory/") + QString(90, QLatin1Char('p'))
-                + QStringLiteral("/literal <b>report&review</b> ") + QString(70, QLatin1Char('n'))
-                + QStringLiteral(".bin");
-            const auto pathBytes = longPath.toUtf8();
-            const QByteArray binaryBase("b\0ase", 5), binaryLeft("l\0eft", 5), binaryRight("r\0ght", 5);
-            Repository repo("merge",
-                            {{"story.txt", storyBase, storyLeft, storyRight, storyBase},
-                             {"image.bin", binaryBase, binaryLeft, binaryRight, std::nullopt},
-                             {longPath, binaryBase, binaryLeft, binaryRight, std::nullopt}});
-            const auto repository = repo.snapshot();
-            Scene scene(repo);
-            clickFile(scene, "story.txt");
-            const auto before = work(scene, "story.txt");
-            const auto revision = scene.file("story.txt").current().id;
-            const bool undo = scene.file("story.txt").canUndo(), redo = scene.file("story.txt").canRedo();
-            clickFile(scene, "image.bin");
-            for (const int height : {720, 800}) {
-                scene.window->resize(1280, height);
-                auto *message =
-                    test_support::waitForLayout(scene.window, QStringLiteral("selectedProblem"), Scene::settleMs);
-                CHECK(test_support::reachable(scene.window, message));
-                CHECK(message->width() <= message->parentItem()->property("maximumReadingWidth").toReal());
-                test_support::retainUiEvidence(scene.window, QStringLiteral("placeholder-compact-%1").arg(height),
-                                               {{"stage", "binary placeholder"}, {"synthetic_stress", false}});
-            }
-            clickFile(scene, pathBytes.constData());
-            auto *message = scene.item("selectedProblem");
-            auto *placeholder = message->parentItem();
-            // Deliberate input stress on the real component, not a shipped translation.
-            const auto heading = QString::fromUtf8("Synthetischer lokalisierter Hinweis <b>bleibt wörtlich</b>: ")
-                + QStringLiteral("Resolve this unusually long printable file name outside Branch Truce");
-            const auto prose =
-                QString::fromUtf8("Dies ist synthetischer lokalisierter Testtext, keine ausgelieferte Übersetzung. ")
-                + QStringLiteral("The literal path is ") + longPath + QStringLiteral(". ")
-                + QStringLiteral(
-                      "Keep this file outstanding until another tool resolves it and Git confirms the exact path. ")
-                      .repeated(5)
-                + QStringLiteral("<i>No markup is interpreted & no history changes.</i>");
-            CHECK(placeholder->setProperty("text", heading));
-            CHECK(placeholder->setProperty("explanation", prose));
-            for (const auto size : {QSize(1280, 720), QSize(1280, 800), QSize(960, 540)}) {
-                scene.window->resize(size);
-                scene.object("pageScroll")->setProperty("contentY", 0);
-                test_support::waitForLayout(scene.window, QStringLiteral("selectedProblem"), Scene::settleMs);
-                const auto expectedWidth =
-                    std::min(placeholder->property("maximumReadingWidth").toReal(),
-                             placeholder->width() - 2 * placeholder->property("contentMargin").toReal());
-                CHECK(std::abs(message->width() - expectedWidth) < 0.5);
-                CHECK(std::abs(placeholder->width() - placeholder->parentItem()->width()) < 0.5);
-                auto *title = descendant(message, [&](QQuickItem *item) {
-                    return item->inherits("QQuickText") && item->property("text").toString() == heading;
-                });
-                auto *body = descendant(message, [&](QQuickItem *item) {
-                    // Kirigami's selectable explanation uses TextEdit inside
-                    // a Control wrapper; inspect the actual rendering item.
-                    return item->inherits("QQuickTextEdit") && item->property("text").toString() == prose;
-                });
-                CHECK(title && body);
-                CHECK(title->property("textFormat").toInt() == 0 && body->property("textFormat").toInt() == 0);
-                CHECK(!title->property("truncated").toBool() && !body->property("truncated").toBool());
-                CHECK(body->property("lineCount").toInt() > 1);
-                CHECK(title->property("contentWidth").toReal() <= title->width() + 1);
-                CHECK(body->property("contentWidth").toReal() <= body->width() + 1);
-                CHECK(body->property("contentHeight").toReal() <= body->height() + 0.5);
-                CHECK(title->mapRectToScene(title->boundingRect()).bottom()
-                      <= body->mapRectToScene(body->boundingRect()).top());
-                auto *details = test_support::waitForStable(
-                    scene.window, "stress placeholder technical details",
-                    [&] {
-                        auto *button = test_support::namedButton(message, QStringLiteral("Technical details"));
-                        if (button) Scene::reveal(button);
-                        return test_support::reachable(scene.window, button) ? button : nullptr;
-                    },
-                    Scene::settleMs);
-                CHECK(details->isEnabled());
-                CHECK(body->mapRectToScene(body->boundingRect()).bottom()
-                      <= details->mapRectToScene(details->boundingRect()).top());
-                if (size.height() == 540) {
-                    CHECK(scene.object("pageScroll")->property("overflowing").toBool());
-                    CHECK(scene.object("pageScroll")->property("contentY").toReal() > 0);
+        window.run(
+            "outside-app placeholders retain literal stress text and reachable diagnostics", [](Sandbox &sandbox) {
+                const auto longPath = QStringLiteral("long printable directory/") + QString(90, QLatin1Char('p'))
+                    + QStringLiteral("/literal <b>report&review</b> ") + QString(70, QLatin1Char('n'))
+                    + QStringLiteral(".bin");
+                const auto pathBytes = longPath.toUtf8();
+                const QByteArray binaryBase("b\0ase", 5), binaryLeft("l\0eft", 5), binaryRight("r\0ght", 5);
+                Repository repo(GitOperation::Merge,
+                                {{"story.txt", storyBase, storyLeft, storyRight, storyBase},
+                                 {"image.bin", binaryBase, binaryLeft, binaryRight, std::nullopt},
+                                 {longPath, binaryBase, binaryLeft, binaryRight, std::nullopt}});
+                const auto repository = repo.snapshot();
+                Scene scene(sandbox, repo);
+                clickFile(scene, "story.txt");
+                const auto before = work(scene, "story.txt");
+                const auto revision = scene.file("story.txt").current().id;
+                const bool undo = scene.file("story.txt").canUndo(), redo = scene.file("story.txt").canRedo();
+                clickFile(scene, "image.bin");
+                for (const int height : {720, 800}) {
+                    scene.window->resize(1280, height);
+                    auto *message =
+                        test_support::waitForLayout(scene.window, QStringLiteral("selectedProblem"), Scene::settleMs);
+                    CHECK(test_support::reachable(scene.window, message));
+                    CHECK(message->width() <= message->parentItem()->property("maximumReadingWidth").toReal());
+                    test_support::retainUiEvidence(scene.window, QStringLiteral("placeholder-compact-%1").arg(height),
+                                                   {{"stage", "binary placeholder"}, {"synthetic_stress", false}});
                 }
-                QJsonObject evidence{{"stage", "long-path localized-prose stress"},
-                                     {"synthetic_stress", true},
-                                     {"stress_description", "synthetic localized text, not a shipped translation"},
-                                     {"literal_path", longPath},
-                                     {"heading", heading},
-                                     {"explanation", prose},
-                                     {"reading_width", message->width()},
-                                     {"page_content_y", scene.object("pageScroll")->property("contentY").toReal()}};
-                test_support::retainUiEvidence(scene.window, QStringLiteral("placeholder-stress-%1").arg(size.height()),
-                                               evidence);
-                test_support::clickItem(scene.window, details);
-                auto *dialog = scene.object("selectedProblemDetails");
-                settleFor("stress technical details opened", [&] { return dialog->property("opened").toBool(); });
-                CHECK(scene.text("selectedProblemDiagnosticPath") == longPath);
-                CHECK(scene.item("selectedProblemDiagnosticPath")->property("textFormat").toInt() == 0);
-                CHECK(scene.item("selectedProblemDiagnostic")->property("readOnly").toBool());
-                test_support::retainUiEvidence(scene.window,
-                                               QStringLiteral("placeholder-details-%1").arg(size.height()), evidence);
-                keyClick(scene, Qt::Key_Escape);
-                settleFor("stress technical details closed", [&] { return !dialog->property("visible").toBool(); });
+                clickFile(scene, pathBytes.constData());
+                auto *message = scene.item("selectedProblem");
+                auto *placeholder = message->parentItem();
+                // Deliberate input stress on the real component, not a shipped translation.
+                const auto heading = QString::fromUtf8("Synthetischer lokalisierter Hinweis <b>bleibt wörtlich</b>: ")
+                    + QStringLiteral("Resolve this unusually long printable file name outside Branch Truce");
+                const auto prose =
+                    QString::fromUtf8(
+                        "Dies ist synthetischer lokalisierter Testtext, keine ausgelieferte Übersetzung. ")
+                    + QStringLiteral("The literal path is ") + longPath + QStringLiteral(". ")
+                    + QStringLiteral(
+                          "Keep this file outstanding until another tool resolves it and Git confirms the exact path. ")
+                          .repeated(5)
+                    + QStringLiteral("<i>No markup is interpreted & no history changes.</i>");
+                CHECK(placeholder->setProperty("text", heading));
+                CHECK(placeholder->setProperty("explanation", prose));
+                for (const auto size : {QSize(1280, 720), QSize(1280, 800), QSize(960, 540)}) {
+                    scene.window->resize(size);
+                    scene.object("pageScroll")->setProperty("contentY", 0);
+                    test_support::waitForLayout(scene.window, QStringLiteral("selectedProblem"), Scene::settleMs);
+                    const auto expectedWidth =
+                        std::min(placeholder->property("maximumReadingWidth").toReal(),
+                                 placeholder->width() - 2 * placeholder->property("contentMargin").toReal());
+                    CHECK(std::abs(message->width() - expectedWidth) < 0.5);
+                    CHECK(std::abs(placeholder->width() - placeholder->parentItem()->width()) < 0.5);
+                    auto *title = descendant(message, [&](QQuickItem *item) {
+                        return item->inherits("QQuickText") && item->property("text").toString() == heading;
+                    });
+                    auto *body = descendant(message, [&](QQuickItem *item) {
+                        // Kirigami's selectable explanation uses TextEdit inside
+                        // a Control wrapper; inspect the actual rendering item.
+                        return item->inherits("QQuickTextEdit") && item->property("text").toString() == prose;
+                    });
+                    CHECK(title && body);
+                    CHECK(title->property("textFormat").toInt() == 0 && body->property("textFormat").toInt() == 0);
+                    CHECK(!title->property("truncated").toBool() && !body->property("truncated").toBool());
+                    CHECK(body->property("lineCount").toInt() > 1);
+                    CHECK(title->property("contentWidth").toReal() <= title->width() + 1);
+                    CHECK(body->property("contentWidth").toReal() <= body->width() + 1);
+                    CHECK(body->property("contentHeight").toReal() <= body->height() + 0.5);
+                    CHECK(title->mapRectToScene(title->boundingRect()).bottom()
+                          <= body->mapRectToScene(body->boundingRect()).top());
+                    auto *details = test_support::waitForStable(
+                        scene.window, "stress placeholder technical details",
+                        [&] {
+                            auto *button = test_support::namedButton(message, QStringLiteral("Technical details"));
+                            if (button) Scene::reveal(button);
+                            return test_support::reachable(scene.window, button) ? button : nullptr;
+                        },
+                        Scene::settleMs);
+                    CHECK(details->isEnabled());
+                    CHECK(body->mapRectToScene(body->boundingRect()).bottom()
+                          <= details->mapRectToScene(details->boundingRect()).top());
+                    if (size.height() == 540) {
+                        CHECK(scene.object("pageScroll")->property("overflowing").toBool());
+                        CHECK(scene.object("pageScroll")->property("contentY").toReal() > 0);
+                    }
+                    QJsonObject evidence{{"stage", "long-path localized-prose stress"},
+                                         {"synthetic_stress", true},
+                                         {"stress_description", "synthetic localized text, not a shipped translation"},
+                                         {"literal_path", longPath},
+                                         {"heading", heading},
+                                         {"explanation", prose},
+                                         {"reading_width", message->width()},
+                                         {"page_content_y", scene.object("pageScroll")->property("contentY").toReal()}};
+                    test_support::retainUiEvidence(
+                        scene.window, QStringLiteral("placeholder-stress-%1").arg(size.height()), evidence);
+                    test_support::clickItem(scene.window, details);
+                    auto *dialog = scene.object("selectedProblemDetails");
+                    settleFor("stress technical details opened", [&] { return dialog->property("opened").toBool(); });
+                    CHECK(scene.text("selectedProblemDiagnosticPath") == longPath);
+                    CHECK(scene.item("selectedProblemDiagnosticPath")->property("textFormat").toInt() == 0);
+                    CHECK(scene.item("selectedProblemDiagnostic")->property("readOnly").toBool());
+                    test_support::retainUiEvidence(
+                        scene.window, QStringLiteral("placeholder-details-%1").arg(size.height()), evidence);
+                    keyClick(scene, Qt::Key_Escape);
+                    settleFor("stress technical details closed", [&] { return !dialog->property("visible").toBool(); });
+                    CHECK(repo.snapshot() == repository);
+                }
+                clickFile(scene, "story.txt");
+                CHECK(work(scene, "story.txt") == before && scene.file("story.txt").current().id == revision);
+                CHECK(scene.file("story.txt").canUndo() == undo && scene.file("story.txt").canRedo() == redo);
                 CHECK(repo.snapshot() == repository);
-            }
-            clickFile(scene, "story.txt");
-            CHECK(work(scene, "story.txt") == before && scene.file("story.txt").current().id == revision);
-            CHECK(scene.file("story.txt").canUndo() == undo && scene.file("story.txt").canRedo() == redo);
-            CHECK(repo.snapshot() == repository);
-            checkOffline(scene);
-        });
-        window.run("a 1280x720 logical screen fits the window with every control and text pane reachable", [] {
-            auto paths = journeyPaths();
-            paths.push_back(
-                {"image.bin", QByteArray("base\0", 5), QByteArray("left\0", 5), QByteArray("side\0", 5), std::nullopt});
-            Repository repo("merge", paths);
-            Scene scene(repo);
-            // Theme font requests can leave attributes unresolved. Compare
-            // against independent native Labels that resolve the same roles.
-            QQmlComponent fonts(scene.engine.get());
-            fonts.setData(R"(
+                checkOffline(scene);
+            });
+        window.run(
+            "a 1280x720 logical screen fits the window with every control and text pane reachable",
+            [](Sandbox &sandbox) {
+                auto paths = journeyPaths();
+                paths.push_back({"image.bin", QByteArray("base\0", 5), QByteArray("left\0", 5), QByteArray("side\0", 5),
+                                 std::nullopt});
+                Repository repo(GitOperation::Merge, paths);
+                Scene scene(sandbox, repo);
+                // Theme font requests can leave attributes unresolved. Compare
+                // against independent native Labels that resolve the same roles.
+                QQmlComponent fonts(scene.engine.get());
+                fonts.setData(R"(
 import QtQuick
 import QtQuick.Controls
 import org.kde.kirigami as K
@@ -2352,217 +2297,223 @@ Item {
     Label { id: fixed; font: K.Theme.fixedWidthFont }
 }
 )",
-                          QUrl(QStringLiteral("native-font-reference.qml")));
-            std::unique_ptr<QQuickItem> fontReference(qobject_cast<QQuickItem *>(fonts.create()));
-            if (!fontReference) throw std::runtime_error(fonts.errorString().toStdString());
-            fontReference->setParentItem(scene.window->contentItem());
-            CHECK(!scene.item("inventoryWarning")->isVisible() && scene.item("outsideAppCount")->isVisible());
-            clickFile(scene, "image.bin");
-            CHECK(scene.file("image.bin").support() == Support::OutsideApp);
-            expectContains(scene.text("fileFacts"), "5 bytes", "captured binary size");
-            clickFile(scene, "story.txt");
-            expectContains(scene.text("fileFacts"), "UTF-8 · LF", "captured text format");
-            for (const auto *name : mainControls) {
-                auto *control = test_support::fileOverflowControl(name)
-                    ? test_support::fileToolbarControl(scene.window, name, Scene::settleMs)
-                    : scene.item(name);
-                if (test_support::accessibleName(control).isEmpty())
-                    throw std::runtime_error(std::string("no accessible name: ") + name);
-                CHECK(!test_support::accessibleName(control).isEmpty());
-                if (test_support::fileOverflowControl(name)) test_support::closeFileToolbarMenu(scene.window);
-            }
-            // Moving between files and the file-wide choices sit in toolbar menus. Once a menu
-            // opens, each entry is a visible item with an accessible name.
-            const std::pair<const char *, std::vector<const char *>> menus[] = {
-                {"navigateMenu",
-                 {"previousDifference", "nextDifference", "previousSavedOrReviewed", "nextSavedOrReviewed"}},
-                {"sourceChoicesMenu",
-                 {"nonConflictingLeft", "nonConflictingRight", "nonConflictingBoth", "wholeFileLeft",
-                  "wholeFileRight"}},
-            };
-            const auto checkMenus = [&] {
-                for (const auto &[menu, entries] : menus) {
-                    scene.click(menu);
-                    for (const auto *entry : entries) {
-                        auto *item =
-                            test_support::waitForLayout(scene.window, QString::fromLatin1(entry), Scene::settleMs);
-                        if (test_support::accessibleName(item).isEmpty())
-                            throw std::runtime_error(std::string("no accessible name: ") + entry);
-                        const auto rect = item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
-                        CHECK(QRectF(0, 0, scene.window->width(), scene.window->height()).contains(rect));
+                              QUrl(QStringLiteral("native-font-reference.qml")));
+                std::unique_ptr<QQuickItem> fontReference(qobject_cast<QQuickItem *>(fonts.create()));
+                if (!fontReference) throw std::runtime_error(fonts.errorString().toStdString());
+                fontReference->setParentItem(scene.window->contentItem());
+                CHECK(!scene.item("inventoryWarning")->isVisible() && scene.item("outsideAppCount")->isVisible());
+                clickFile(scene, "image.bin");
+                CHECK(scene.file("image.bin").support() == Support::OutsideApp);
+                expectContains(scene.text("fileFacts"), "5 bytes", "captured binary size");
+                clickFile(scene, "story.txt");
+                expectContains(scene.text("fileFacts"), "UTF-8 · LF", "captured text format");
+                for (const auto *name : mainControls) {
+                    auto *control = test_support::fileOverflowControl(name)
+                        ? test_support::fileToolbarControl(scene.window, name, Scene::settleMs)
+                        : scene.item(name);
+                    if (test_support::accessibleName(control).isEmpty())
+                        throw std::runtime_error(std::string("no accessible name: ") + name);
+                    CHECK(!test_support::accessibleName(control).isEmpty());
+                    if (test_support::fileOverflowControl(name)) test_support::closeFileToolbarMenu(scene.window);
+                }
+                // Moving between files and the file-wide choices sit in toolbar menus. Once a menu
+                // opens, each entry is a visible item with an accessible name.
+                const std::pair<const char *, std::vector<const char *>> menus[] = {
+                    {"navigateMenu",
+                     {"previousDifference", "nextDifference", "previousSavedOrReviewed", "nextSavedOrReviewed"}},
+                    {"sourceChoicesMenu",
+                     {"nonConflictingLeft", "nonConflictingRight", "nonConflictingBoth", "wholeFileLeft",
+                      "wholeFileRight"}},
+                };
+                const auto checkMenus = [&] {
+                    for (const auto &[menu, entries] : menus) {
+                        scene.click(menu);
+                        for (const auto *entry : entries) {
+                            auto *item =
+                                test_support::waitForLayout(scene.window, QString::fromLatin1(entry), Scene::settleMs);
+                            if (test_support::accessibleName(item).isEmpty())
+                                throw std::runtime_error(std::string("no accessible name: ") + entry);
+                            const auto rect = item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
+                            CHECK(QRectF(0, 0, scene.window->width(), scene.window->height()).contains(rect));
+                        }
+                        keyClick(scene, Qt::Key_Escape);
+                        settleFor(std::string(menu) + " closed", [&] {
+                            auto *first = test_support::visualItem(scene.window->contentItem(),
+                                                                   QString::fromLatin1(entries.front()));
+                            return !first || !first->isVisible();
+                        });
+                        if (test_support::fileOverflowControl(menu)) test_support::closeFileToolbarMenu(scene.window);
                     }
-                    keyClick(scene, Qt::Key_Escape);
-                    settleFor(std::string(menu) + " closed", [&] {
-                        auto *first =
-                            test_support::visualItem(scene.window->contentItem(), QString::fromLatin1(entries.front()));
-                        return !first || !first->isVisible();
-                    });
-                    if (test_support::fileOverflowControl(menu)) test_support::closeFileToolbarMenu(scene.window);
-                }
-            };
-            checkMenus();
-            // A roomy window lays out as before, without scrolling the page.
-            CHECK(!scene.object("pageScroll")->property("overflowing").toBool());
-            const auto lineHeight = scene.item("comparisonView")->property("rowHeight").toReal();
-            CHECK(lineHeight > 0);
-            // 1920x1080 at 150% scaling. The strict 960x540 fit requirement is
-            // temporarily deferred by the owner.
-            for (const auto &screen : {QSize(1280, 720), QSize(1280, 800)}) {
-                const auto pane = checkFits(scene, screen.width(), screen.height());
-                if (pane < 8 * lineHeight)
-                    throw std::runtime_error("text panes " + std::to_string(pane) + " px high at "
-                                             + std::to_string(screen.width()) + "x" + std::to_string(screen.height())
-                                             + ", less than eight " + std::to_string(lineHeight) + " px lines");
-                for (const auto *name : {"saveDraft", "markResolved"}) {
-                    auto *toolbar = test_support::visibleItem(scene.window->contentItem(), "fileToolBar");
-                    CHECK(test_support::reachableButton(scene.window, toolbar, QString::fromLatin1(name)));
-                }
-                for (const auto *identity : {"stage2Identity", "stage3Identity"}) {
-                    auto *label = scene.item(identity);
-                    const auto text = label->property("text").toString();
-                    CHECK(test_support::accessibleName(label) == text);
-                    CHECK(!text.isEmpty());
-                    auto *role = scene.item((std::string(identity) + "Role").c_str());
-                    auto *hash = scene.item((std::string(identity) + "Hash").c_str());
-                    QQmlExpression smallFont(qmlContext(role), role, "Kirigami.Theme.smallFont");
-                    QQmlExpression fixedFont(qmlContext(hash), hash, "Kirigami.Theme.fixedWidthFont");
-                    const auto rawRole = smallFont.evaluate();
-                    const auto rawHash = fixedFont.evaluate();
-                    const auto expectedRole = fontReference->property("smallFont").value<QFont>();
-                    const auto expectedHash = fontReference->property("fixedFont").value<QFont>();
-                    const auto inspectFont = [&](QQuickItem *item, const QFont &expected) {
-                        const auto actual = item->property("font").value<QFont>();
-                        if (actual == expected) return;
-                        const auto fields = [](const QFont &font) {
-                            return QJsonObject{
-                                {"key", font.key()},
-                                {"family", font.family()},
-                                {"styleName", font.styleName()},
-                                {"pointSize", font.pointSizeF()},
-                                {"pixelSize", font.pixelSize()},
-                                {"weight", font.weight()},
-                                {"style", font.style()},
-                                {"styleHint", font.styleHint()},
-                                {"styleStrategy", int(font.styleStrategy())},
-                                {"stretch", font.stretch()},
-                                {"kerning", font.kerning()},
-                                {"fixedPitch", font.fixedPitch()},
-                                {"hinting", font.hintingPreference()},
-                                {"capitalization", font.capitalization()},
-                                {"letterSpacing", font.letterSpacing()},
-                                {"wordSpacing", font.wordSpacing()},
-                                {"underline", font.underline()},
-                                {"overline", font.overline()},
-                                {"strikeOut", font.strikeOut()},
-                                {"resolveMask", QString::number(static_cast<qulonglong>(font.resolveMask()))}};
-                        };
-                        const auto diagnostic =
-                            QJsonDocument(
-                                QJsonObject{{"control", item->objectName()},
-                                            {"actual", fields(actual)},
-                                            {"expected", fields(expected)},
-                                            {"rawRoleType", QString::fromLatin1(rawRole.metaType().name())},
-                                            {"rawHashType", QString::fromLatin1(rawHash.metaType().name())},
-                                            {"rawRoleValid", rawRole.isValid()},
-                                            {"rawHashValid", rawHash.isValid()},
-                                            {"rawRoleConvertible", rawRole.canConvert<QFont>()},
-                                            {"rawHashConvertible", rawHash.canConvert<QFont>()},
-                                            {"expressionError", smallFont.hasError() || fixedFont.hasError()}})
-                                .toJson(QJsonDocument::Compact);
-                        std::fprintf(stderr, "IDENTITY_FONT_DIAGNOSTIC=%s\n", diagnostic.constData());
-                    };
-                    inspectFont(role, expectedRole);
-                    inspectFont(hash, expectedHash);
-                    CHECK(role->property("font").value<QFont>() == expectedRole);
-                    CHECK(hash->property("font").value<QFont>() == expectedHash);
-                    CHECK(text.contains(role->property("text").toString()));
-                    CHECK(text.contains(hash->property("text").toString()));
-                    CHECK(!hash->property("text").toString().isEmpty());
-                    CHECK(std::abs(role->mapToScene(QPointF(0, role->baselineOffset())).y()
-                                   - hash->mapToScene(QPointF(0, hash->baselineOffset())).y())
-                          < 0.5);
-                    if (label->property("truncated").toBool()) {
-                        const auto bounds = label->mapRectToScene(label->boundingRect());
-                        throw std::runtime_error(
-                            std::string(identity) + " truncated at " + std::to_string(screen.width()) + "x"
-                            + std::to_string(screen.height()) + ": " + text.toStdString()
-                            + " bounds=" + std::to_string(bounds.x()) + "," + std::to_string(bounds.y()) + ","
-                            + std::to_string(bounds.width()) + "," + std::to_string(bounds.height())
-                            + " role=" + role->property("text").toString().toStdString() + " roleWidth="
-                            + std::to_string(role->width()) + " roleImplicit=" + std::to_string(role->implicitWidth())
-                            + " roleTruncated=" + std::to_string(role->property("truncated").toBool())
-                            + " hash=" + hash->property("text").toString().toStdString() + " hashWidth="
-                            + std::to_string(hash->width()) + " hashImplicit=" + std::to_string(hash->implicitWidth())
-                            + " hashTruncated=" + std::to_string(hash->property("truncated").toBool()));
-                    }
-                    CHECK(!label->property("truncated").toBool());
-                }
+                };
                 checkMenus();
-            }
-            // Whether this page is taller than a 960x540 window depends on the fonts. It fits with
-            // DejaVu Sans 9 pt, as in the CI images. Either way the wheel moves it only when it does not fit.
-            scene.window->resize(960, 540);
-            settleFor("window at 960x540",
-                      [&] { return scene.window->width() == 960 && scene.window->height() == 540; });
-            checkWheelScroll(scene, "selectedPath");
+                // A roomy window lays out as before, without scrolling the page.
+                CHECK(!scene.object("pageScroll")->property("overflowing").toBool());
+                const auto lineHeight = scene.item("comparisonView")->property("rowHeight").toReal();
+                CHECK(lineHeight > 0);
+                // 1920x1080 at 150% scaling. The strict 960x540 fit requirement is
+                // temporarily deferred by the owner.
+                for (const auto &screen : {QSize(1280, 720), QSize(1280, 800)}) {
+                    const auto pane = checkFits(scene, screen.width(), screen.height());
+                    if (pane < 8 * lineHeight)
+                        throw std::runtime_error("text panes " + std::to_string(pane) + " px high at "
+                                                 + std::to_string(screen.width()) + "x"
+                                                 + std::to_string(screen.height()) + ", less than eight "
+                                                 + std::to_string(lineHeight) + " px lines");
+                    for (const auto *name : {"saveDraft", "markResolved"}) {
+                        auto *toolbar = test_support::visibleItem(scene.window->contentItem(), "fileToolBar");
+                        CHECK(test_support::reachableButton(scene.window, toolbar, QString::fromLatin1(name)));
+                    }
+                    for (const auto *identity : {"stage2Identity", "stage3Identity"}) {
+                        auto *label = scene.item(identity);
+                        const auto text = label->property("text").toString();
+                        CHECK(test_support::accessibleName(label) == text);
+                        CHECK(!text.isEmpty());
+                        auto *role = scene.item((std::string(identity) + "Role").c_str());
+                        auto *hash = scene.item((std::string(identity) + "Hash").c_str());
+                        QQmlExpression smallFont(qmlContext(role), role, "Kirigami.Theme.smallFont");
+                        QQmlExpression fixedFont(qmlContext(hash), hash, "Kirigami.Theme.fixedWidthFont");
+                        const auto rawRole = smallFont.evaluate();
+                        const auto rawHash = fixedFont.evaluate();
+                        const auto expectedRole = fontReference->property("smallFont").value<QFont>();
+                        const auto expectedHash = fontReference->property("fixedFont").value<QFont>();
+                        const auto inspectFont = [&](QQuickItem *item, const QFont &expected) {
+                            const auto actual = item->property("font").value<QFont>();
+                            if (actual == expected) return;
+                            const auto fields = [](const QFont &font) {
+                                return QJsonObject{
+                                    {"key", font.key()},
+                                    {"family", font.family()},
+                                    {"styleName", font.styleName()},
+                                    {"pointSize", font.pointSizeF()},
+                                    {"pixelSize", font.pixelSize()},
+                                    {"weight", font.weight()},
+                                    {"style", font.style()},
+                                    {"styleHint", font.styleHint()},
+                                    {"styleStrategy", int(font.styleStrategy())},
+                                    {"stretch", font.stretch()},
+                                    {"kerning", font.kerning()},
+                                    {"fixedPitch", font.fixedPitch()},
+                                    {"hinting", font.hintingPreference()},
+                                    {"capitalization", font.capitalization()},
+                                    {"letterSpacing", font.letterSpacing()},
+                                    {"wordSpacing", font.wordSpacing()},
+                                    {"underline", font.underline()},
+                                    {"overline", font.overline()},
+                                    {"strikeOut", font.strikeOut()},
+                                    {"resolveMask", QString::number(static_cast<qulonglong>(font.resolveMask()))}};
+                            };
+                            const auto diagnostic =
+                                QJsonDocument(
+                                    QJsonObject{{"control", item->objectName()},
+                                                {"actual", fields(actual)},
+                                                {"expected", fields(expected)},
+                                                {"rawRoleType", QString::fromLatin1(rawRole.metaType().name())},
+                                                {"rawHashType", QString::fromLatin1(rawHash.metaType().name())},
+                                                {"rawRoleValid", rawRole.isValid()},
+                                                {"rawHashValid", rawHash.isValid()},
+                                                {"rawRoleConvertible", rawRole.canConvert<QFont>()},
+                                                {"rawHashConvertible", rawHash.canConvert<QFont>()},
+                                                {"expressionError", smallFont.hasError() || fixedFont.hasError()}})
+                                    .toJson(QJsonDocument::Compact);
+                            std::fprintf(stderr, "IDENTITY_FONT_DIAGNOSTIC=%s\n", diagnostic.constData());
+                        };
+                        inspectFont(role, expectedRole);
+                        inspectFont(hash, expectedHash);
+                        CHECK(role->property("font").value<QFont>() == expectedRole);
+                        CHECK(hash->property("font").value<QFont>() == expectedHash);
+                        CHECK(text.contains(role->property("text").toString()));
+                        CHECK(text.contains(hash->property("text").toString()));
+                        CHECK(!hash->property("text").toString().isEmpty());
+                        CHECK(std::abs(role->mapToScene(QPointF(0, role->baselineOffset())).y()
+                                       - hash->mapToScene(QPointF(0, hash->baselineOffset())).y())
+                              < 0.5);
+                        if (label->property("truncated").toBool()) {
+                            const auto bounds = label->mapRectToScene(label->boundingRect());
+                            throw std::runtime_error(
+                                std::string(identity) + " truncated at " + std::to_string(screen.width()) + "x"
+                                + std::to_string(screen.height()) + ": " + text.toStdString()
+                                + " bounds=" + std::to_string(bounds.x()) + "," + std::to_string(bounds.y()) + ","
+                                + std::to_string(bounds.width()) + "," + std::to_string(bounds.height())
+                                + " role=" + role->property("text").toString().toStdString()
+                                + " roleWidth=" + std::to_string(role->width())
+                                + " roleImplicit=" + std::to_string(role->implicitWidth())
+                                + " roleTruncated=" + std::to_string(role->property("truncated").toBool())
+                                + " hash=" + hash->property("text").toString().toStdString()
+                                + " hashWidth=" + std::to_string(hash->width())
+                                + " hashImplicit=" + std::to_string(hash->implicitWidth())
+                                + " hashTruncated=" + std::to_string(hash->property("truncated").toBool()));
+                        }
+                        CHECK(!label->property("truncated").toBool());
+                    }
+                    checkMenus();
+                }
+                // Whether this page is taller than a 960x540 window depends on the fonts. It fits with
+                // DejaVu Sans 9 pt, as in the CI images. Either way the wheel moves it only when it does not fit.
+                scene.window->resize(960, 540);
+                settleFor("window at 960x540",
+                          [&] { return scene.window->width() == 960 && scene.window->height() == 540; });
+                checkWheelScroll(scene, "selectedPath");
 
-            // at 1280x800 the handoff dialog wraps between words. File rows elide one
-            // line each instead of wrapping, so nothing in the file list wraps at all.
-            scene.window->resize(1280, 800);
-            settleFor("window at 1280x800",
-                      [&] { return scene.window->width() == 1280 && scene.window->height() == 800; });
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-            CHECK(expectWholeWords(scene.item("fileList"), "the file list at 1280x800") == 0);
-            auto *dialog = scene.object("handoffDialog");
-            scene.click("openHandoff");
-            settleFor("handoff opened", [&] { return dialog->property("opened").toBool(); });
-            test_support::waitForLayout(scene.window, QStringLiteral("handoffLeave"), Scene::settleMs);
-            // Each blocker has a line of its own, so a row may not need to wrap at all.
-            expectWholeWords(dialog->property("contentItem").value<QQuickItem *>(), "the handoff dialog at 1280x800");
-            QMetaObject::invokeMethod(dialog, "close");
-            settleFor("handoff closed", [&] { return !dialog->property("visible").toBool(); });
+                // at 1280x800 the handoff dialog wraps between words. File rows elide one
+                // line each instead of wrapping, so nothing in the file list wraps at all.
+                scene.window->resize(1280, 800);
+                settleFor("window at 1280x800",
+                          [&] { return scene.window->width() == 1280 && scene.window->height() == 800; });
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+                CHECK(expectWholeWords(scene.item("fileList"), "the file list at 1280x800") == 0);
+                auto *dialog = scene.object("handoffDialog");
+                scene.click("openHandoff");
+                settleFor("handoff opened", [&] { return dialog->property("opened").toBool(); });
+                test_support::waitForLayout(scene.window, QStringLiteral("handoffLeave"), Scene::settleMs);
+                // Each blocker has a line of its own, so a row may not need to wrap at all.
+                expectWholeWords(dialog->property("contentItem").value<QQuickItem *>(),
+                                 "the handoff dialog at 1280x800");
+                QMetaObject::invokeMethod(dialog, "close");
+                settleFor("handoff closed", [&] { return !dialog->property("visible").toBool(); });
 
-            // Source choices start enabled as hover overlays, reserving no pane width
-            // or height. The three panes keep eight lines and the panes and choices
-            // stay reachable, from a roomy window down to 1280x720, and hiding them leaves every
-            // text pane as high as it was. The owner waiver still excludes strict 960x540 fit.
-            settleFor("source choices shown", [&] { return scene.item("scopedChoices")->isVisible(); });
-            const std::vector<const char *> withChoices{"showSourceChoices", "sourceChoicesMenu", "undecidedCounter",
-                                                        "stage2Label",       "resultLabel",       "stage3Label",
-                                                        "stage2Viewport",    "resultViewport",    "stage3Viewport",
-                                                        "scopedChoices",     "workflowStatus"};
-            for (const auto &screen : {QSize(1500, 1040), QSize(1280, 800), QSize(1280, 720)}) {
-                const auto size = std::to_string(screen.width()) + "x" + std::to_string(screen.height());
-                const auto pane = checkFits(scene, screen.width(), screen.height(), withChoices);
-                if (pane < 8 * lineHeight)
-                    throw std::runtime_error("with source choices, text panes " + std::to_string(pane) + " px high at "
-                                             + size + ", less than eight " + std::to_string(lineHeight) + " px lines");
-                clickFileToolbarControl(scene, "showSourceChoices");
-                settleFor("source choices hidden at " + size,
-                          [&] { return !scene.item("scopedChoices")->isVisible(); });
-                const auto hidden = checkFits(scene, screen.width(), screen.height(),
-                                              {"stage2Viewport", "resultViewport", "stage3Viewport"});
-                if (hidden != pane)
-                    throw std::runtime_error("at " + size + " the text panes are " + std::to_string(pane)
-                                             + " px high with the source choices and " + std::to_string(hidden)
-                                             + " px without them");
-                clickFileToolbarControl(scene, "showSourceChoices");
-                settleFor("source choices shown at " + size, [&] { return scene.item("scopedChoices")->isVisible(); });
-            }
-            checkOffline(scene);
-        });
-        window.run("selecting a file shows its first undecided region in all three panes", [] {
+                // Source choices start enabled as hover overlays, reserving no pane width
+                // or height. The three panes keep eight lines and the panes and choices
+                // stay reachable, from a roomy window down to 1280x720, and hiding them leaves every
+                // text pane as high as it was. The owner waiver still excludes strict 960x540 fit.
+                settleFor("source choices shown", [&] { return scene.item("scopedChoices")->isVisible(); });
+                const std::vector<const char *> withChoices{
+                    "showSourceChoices", "sourceChoicesMenu", "undecidedCounter", "stage2Label",
+                    "resultLabel",       "stage3Label",       "stage2Viewport",   "resultViewport",
+                    "stage3Viewport",    "scopedChoices",     "workflowStatus"};
+                for (const auto &screen : {QSize(1500, 1040), QSize(1280, 800), QSize(1280, 720)}) {
+                    const auto size = std::to_string(screen.width()) + "x" + std::to_string(screen.height());
+                    const auto pane = checkFits(scene, screen.width(), screen.height(), withChoices);
+                    if (pane < 8 * lineHeight)
+                        throw std::runtime_error("with source choices, text panes " + std::to_string(pane)
+                                                 + " px high at " + size + ", less than eight "
+                                                 + std::to_string(lineHeight) + " px lines");
+                    clickFileToolbarControl(scene, "showSourceChoices");
+                    settleFor("source choices hidden at " + size,
+                              [&] { return !scene.item("scopedChoices")->isVisible(); });
+                    const auto hidden = checkFits(scene, screen.width(), screen.height(),
+                                                  {"stage2Viewport", "resultViewport", "stage3Viewport"});
+                    if (hidden != pane)
+                        throw std::runtime_error("at " + size + " the text panes are " + std::to_string(pane)
+                                                 + " px high with the source choices and " + std::to_string(hidden)
+                                                 + " px without them");
+                    clickFileToolbarControl(scene, "showSourceChoices");
+                    settleFor("source choices shown at " + size,
+                              [&] { return scene.item("scopedChoices")->isVisible(); });
+                }
+                checkOffline(scene);
+            });
+        window.run("selecting a file shows its first undecided region in all three panes", [](Sandbox &sandbox) {
             QByteArray before;
             QByteArray after;
             for (int line = 1; line <= 120; ++line) before += "shared before " + QByteArray::number(line) + "\n";
             for (int line = 1; line <= 80; ++line) after += "shared after " + QByteArray::number(line) + "\n";
             // Git's conflict output stays the launch result, so the conflict starts at line 121.
-            Repository repo("merge",
+            Repository repo(GitOperation::Merge,
                             {{"long.txt", before + "base value\n" + after, before + "left value\n" + after,
                               before + "right value\n" + after, std::nullopt},
                              {"short.txt", QByteArray("short base\n"), QByteArray("short left\n"),
                               QByteArray("short right\n"), std::nullopt}});
-            Scene scene(repo);
+            Scene scene(sandbox, repo);
             int diagnosticCount = 0;
             std::string lastGeometry;
             const auto recordPlacement = [&](const char *event) {
@@ -2618,265 +2569,232 @@ Item {
             }
             checkOffline(scene);
         });
-        window.run("a choice clears hand edits on a line deleted in the editor and on text an edit left unchanged", [] {
-            // The left side changes two lines in one section, and the user set the result to it before launch.
-            const QByteArray left = "header\nleft first\nleft second\nbridge\nleft later\ntail\n";
-            Repository repo(
-                "merge",
-                {{"pair.txt", QByteArray("header\nbase first\nbase second\nbridge\nbase later\ntail\n"), left,
-                  QByteArray("header\nright first\nright second\nbridge\nright later\ntail\n"), left}});
-            Scene scene(repo);
-            clickFile(scene, "pair.txt");
-            const auto region = [&](const char *label) { return regionFor(scene, QString::fromUtf8(label)); };
-            const auto edited = [&](const char *label) {
-                return region(label).value(QStringLiteral("handEdited")).toBool();
-            };
-            const auto noneEdited = [&] {
-                const auto regions = scene.controller->selectedFile()->regions();
-                return std::none_of(regions.begin(), regions.end(), [](const QVariant &value) {
-                    return value.toMap().value(QStringLiteral("handEdited")).toBool();
-                });
-            };
-            auto *editor = scene.item("resultText");
-            const auto toLine = [&](int line) {
-                clickText(scene, editor);
-                CHECK(editor->hasActiveFocus());
-                keyClick(scene, Qt::Key_Home, Qt::ControlModifier);
-                for (int step = 1; step < line; ++step) keyClick(scene, Qt::Key_Down);
-            };
-
-            // Deleting a line of the section in the editor leaves its region marked but without a result range.
-            toLine(2);
-            keyClick(scene, Qt::Key_Down, Qt::ShiftModifier);
-            keyClick(scene, Qt::Key_Delete);
-            expectText(scene.text("resultText"), "header\nleft second\nbridge\nleft later\ntail\n", "deleted line");
-            CHECK(edited("Left line 2") && !region("Left line 2").value(QStringLiteral("mapped")).toBool());
-            const auto deleted = work(scene, "pair.txt");
-            // Accepting the section around it puts the line back and clears the mark.
-            clickChoice(scene, QString::fromUtf8("Left section, lines 2–3"), "Accept");
-            CHECK(scene.item("manualReplacementNotice")->isVisible());
-            clickDialogButton(scene, "replacementDialog", "Apply choice");
-            expectText(scene.text("resultText"), utf8(left), "restored line");
-            CHECK(noneEdited());
-            CHECK(region("Left line 2").value(QStringLiteral("state")).toString() == QStringLiteral("accepted"));
-            const auto restored = work(scene, "pair.txt");
-            scene.click("undoCommand");
-            CHECK(work(scene, "pair.txt") == deleted && edited("Left line 2"));
-            scene.click("redoCommand");
-            CHECK(work(scene, "pair.txt") == restored && noneEdited());
-
-            // Typing a character and deleting it again leaves the text as the whole left side but marks it.
-            const auto wholeLeft = [&] {
-                scene.click("sourceChoicesMenu");
-                test_support::clickItem(
-                    scene.window,
-                    test_support::waitForLayout(scene.window, QStringLiteral("wholeFileLeft"), Scene::settleMs));
-                clickDialogButton(scene, "wholeFileDialog", "Replace whole file");
-            };
-            wholeLeft();
-            expectText(scene.text("resultText"), utf8(left), "whole left");
-            CHECK(noneEdited());
-            toLine(2);
-            keyClick(scene, Qt::Key_End);
-            typeText(scene, "X");
-            keyClick(scene, Qt::Key_Backspace);
-            expectText(scene.text("resultText"), utf8(left), "typed and deleted");
-            CHECK(!noneEdited());
-            const auto manual = work(scene, "pair.txt");
-            const auto manualRegions = scene.controller->selectedFile()->regions();
-            // The same whole-file choice keeps the text and decisions but replaces the edit.
-            wholeLeft();
-            expectText(scene.text("resultText"), utf8(left), "whole left again");
-            CHECK(noneEdited() && scene.file("pair.txt").current().draft == manual.draft);
-            scene.click("undoCommand");
-            CHECK(work(scene, "pair.txt") == manual);
-            CHECK(scene.controller->selectedFile()->regions() == manualRegions);
-            scene.click("redoCommand");
-            CHECK(noneEdited());
-            checkOffline(scene);
-        });
-        window.run("lines from both sides of one multi-line conflict keep their text, decisions and undo", [] {
-            // Both sides change the same three lines, and the user set the result to the common version before launch.
-            const QByteArray base = "header\nbase one\nbase two\nbase three\ntail\n";
-            Repository repo("merge",
-                            {{"lines.txt", base, QByteArray("header\nleft one\nleft two\nleft three\ntail\n"),
-                              QByteArray("header\nright one\nright two\nright three\ntail\n"), base}});
-            Scene scene(repo);
-            clickFile(scene, "lines.txt");
-            const auto state = [&](const char *label) {
-                return choiceRow(scene, QString::fromUtf8(label)).value(QStringLiteral("state")).toString();
-            };
-            const auto states = [&](const char *expected) {
-                QStringList actual;
-                for (const auto *label :
-                     {"Left line 2", "Left line 3", "Left line 4", "Right line 2", "Right line 3", "Right line 4"})
-                    actual.push_back(state(label));
-                expectText(actual.join(QLatin1Char(' ')), QString::fromUtf8(expected), "line decisions");
-            };
-
-            // Every line inside the conflict can be chosen, at the result line with the same index.
-            for (const auto *label :
-                 {"Left line 2", "Left line 3", "Left line 4", "Right line 2", "Right line 3", "Right line 4"}) {
-                const auto row = choiceRow(scene, QString::fromUtf8(label));
-                CHECK(row.value(QStringLiteral("available")).toBool());
-                CHECK(row.value(QStringLiteral("detail")).toString().isEmpty());
-            }
-            expectText(regionResult(scene, regionFor(scene, QStringLiteral("Left line 3"))), "base two\n",
-                       "left line 3 target");
-            expectText(regionResult(scene, regionFor(scene, QStringLiteral("Right line 4"))), "base three\n",
-                       "right line 4 target");
-            states("undecided undecided undecided undecided undecided undecided");
-            std::vector<Work> history{work(scene, "lines.txt")};
-
-            // The middle line from the left replaces only the launch line at its position.
-            clickChoice(scene, "Left line 3", "Accept", Qt::Key_Menu);
-            CHECK(scene.item("manualReplacementNotice")->isVisible());
-            expectText(scene.text("replacementBeforeText"), "base two\n", "replaced left target");
-            expectText(scene.text("replacementAfterText"), "left two\n", "left replacement");
-            clickDialogButton(scene, "replacementDialog", "Apply choice");
-            expectText(scene.text("resultText"), "header\nbase one\nleft two\nbase three\ntail\n",
-                       "accept left line 3");
-            states("undecided accepted undecided undecided undecided undecided");
-            history.push_back(work(scene, "lines.txt"));
-
-            // The last line from the right goes beside it in the same conflict.
-            clickChoice(scene, "Right line 4", "Accept", Qt::Key_F10);
-            expectText(scene.text("replacementBeforeText"), "base three\n", "replaced right target");
-            expectText(scene.text("replacementAfterText"), "right three\n", "right replacement");
-            clickDialogButton(scene, "replacementDialog", "Apply choice");
-            expectText(scene.text("resultText"), "header\nbase one\nleft two\nright three\ntail\n",
-                       "accept right line 4");
-            states("undecided accepted undecided undecided undecided accepted");
-            history.push_back(work(scene, "lines.txt"));
-
-            // Ignore decides against the first left line and keeps the text.
-            clickChoice(scene, "Left line 2", "Ignore");
-            CHECK(!scene.object("replacementDialog")->property("visible").toBool());
-            expectText(scene.text("resultText"), "header\nbase one\nleft two\nright three\ntail\n",
-                       "ignore left line 2");
-            states("ignored accepted undecided undecided undecided accepted");
-            history.push_back(work(scene, "lines.txt"));
-
-            // Undo walks back through text and decisions together, and redo replays them.
-            for (std::size_t step = history.size() - 1; step-- > 0;) {
-                scene.click("undoCommand");
-                CHECK(work(scene, "lines.txt") == history[step]);
-            }
-            states("undecided undecided undecided undecided undecided undecided");
-            CHECK(!scene.file("lines.txt").canUndo() && !scene.item("undoCommand")->isEnabled());
-            for (std::size_t step = 1; step < history.size(); ++step) {
-                scene.click("redoCommand");
-                CHECK(work(scene, "lines.txt") == history[step]);
-            }
-            expectText(scene.text("resultText"), "header\nbase one\nleft two\nright three\ntail\n", "redone");
-            states("ignored accepted undecided undecided undecided accepted");
-            checkOffline(scene);
-        });
-        window.run("closing with input recovery could not keep asks to retry, and cancel keeps the window open", [] {
-            Repository repo("merge",
-                            {{"kept.txt", QByteArray("kept base\n"), QByteArray("kept left\n"),
-                              QByteArray("kept right\n"), QByteArray("kept by hand\n")}});
-            const auto launched = repo.snapshot();
-            {
-                Scene scene(repo);
-                clickFile(scene, "kept.txt");
-                auto &files = *scene.controller->store();
-                auto *prompt = scene.object("recoveryCloseDialog");
-                auto *handoff = scene.object("handoffDialog");
-                const auto closeWindow = [&] {
-                    scene.window->close();
-                    settleFor("close guard opened", [&] { return prompt->property("opened").toBool(); });
-                    CHECK(scene.window->isVisible() && !handoff->property("visible").toBool());
+        window.run(
+            "a choice clears hand edits on a line deleted in the editor and on text an edit left unchanged",
+            [](Sandbox &sandbox) {
+                // The left side changes two lines in one section, and the user set the result to it before launch.
+                const QByteArray left = "header\nleft first\nleft second\nbridge\nleft later\ntail\n";
+                Repository repo(
+                    GitOperation::Merge,
+                    {{"pair.txt", QByteArray("header\nbase first\nbase second\nbridge\nbase later\ntail\n"), left,
+                      QByteArray("header\nright first\nright second\nbridge\nright later\ntail\n"), left}});
+                Scene scene(sandbox, repo);
+                clickFile(scene, "pair.txt");
+                const auto region = [&](const char *label) { return regionFor(scene, QString::fromUtf8(label)); };
+                const auto edited = [&](const char *label) {
+                    return region(label).value(QStringLiteral("handEdited")).toBool();
                 };
-                {
-                    // Another holder of the journal lock makes the recovery commit fail, so the typed input
-                    // stays pending.
-                    QLockFile busy(files.recoveryDirectory() + QStringLiteral("/journal.lock"));
-                    CHECK(busy.tryLock(0));
-                    appendToResult(scene, "!");
-                    settleFor("pending recovery", [&] { return files.hasPendingRecovery(); });
-                    CHECK(scene.item("recoveryProblem")->isVisible());
-                    closeWindow();
-                    expectContains(prompt->property("subtitle").toString(), "Retry before closing", "close guard");
-                    clickDialogButton(scene, "recoveryCloseDialog", "Cancel");
-                    CHECK(scene.window->isVisible() && files.hasPendingRecovery()
-                          && !handoff->property("visible").toBool());
-                    // Retrying while the journal is still busy keeps the input pending and the window open.
-                    closeWindow();
-                    clickDialogButton(scene, "recoveryCloseDialog", "Retry");
-                    CHECK(scene.window->isVisible() && files.hasPendingRecovery()
-                          && !handoff->property("visible").toBool());
-                    closeWindow();
-                }
-                // With the journal free, Retry keeps the input and the close goes on to the handoff.
-                clickDialogButton(scene, "recoveryCloseDialog", "Retry");
-                settleFor("handoff opened after retry", [&] { return handoff->property("opened").toBool(); });
-                CHECK(scene.window->isVisible() && !files.hasPendingRecovery());
-                expectText(QString::fromStdString(scene.file("kept.txt").current().draft.text), "kept by hand\n!",
-                           "kept input");
-                scene.click("handoffLeave");
-                CHECK(!scene.controller->completion()->outcome().isEmpty());
+                const auto noneEdited = [&] {
+                    const auto regions = scene.controller->selectedFile()->regions();
+                    return std::none_of(regions.begin(), regions.end(), [](const QVariant &value) {
+                        return value.toMap().value(QStringLiteral("handEdited")).toBool();
+                    });
+                };
+                auto *editor = scene.item("resultText");
+                const auto toLine = [&](int line) {
+                    clickText(scene, editor);
+                    CHECK(editor->hasActiveFocus());
+                    keyClick(scene, Qt::Key_Home, Qt::ControlModifier);
+                    for (int step = 1; step < line; ++step) keyClick(scene, Qt::Key_Down);
+                };
+
+                // Deleting a line of the section in the editor leaves its region marked but without a result range.
+                toLine(2);
+                keyClick(scene, Qt::Key_Down, Qt::ShiftModifier);
+                keyClick(scene, Qt::Key_Delete);
+                expectText(scene.text("resultText"), "header\nleft second\nbridge\nleft later\ntail\n", "deleted line");
+                CHECK(edited("Left line 2") && !region("Left line 2").value(QStringLiteral("mapped")).toBool());
+                const auto deleted = work(scene, "pair.txt");
+                // Accepting the section around it puts the line back and clears the mark.
+                clickChoice(scene, QString::fromUtf8("Left section, lines 2–3"), "Accept");
+                CHECK(scene.item("manualReplacementNotice")->isVisible());
+                clickDialogButton(scene, "replacementDialog", "Apply choice");
+                expectText(scene.text("resultText"), utf8(left), "restored line");
+                CHECK(noneEdited());
+                CHECK(region("Left line 2").value(QStringLiteral("state")).toString() == QStringLiteral("accepted"));
+                const auto restored = work(scene, "pair.txt");
+                scene.click("undoCommand");
+                CHECK(work(scene, "pair.txt") == deleted && edited("Left line 2"));
+                scene.click("redoCommand");
+                CHECK(work(scene, "pair.txt") == restored && noneEdited());
+
+                // Typing a character and deleting it again leaves the text as the whole left side but marks it.
+                const auto wholeLeft = [&] {
+                    scene.click("sourceChoicesMenu");
+                    test_support::clickItem(
+                        scene.window,
+                        test_support::waitForLayout(scene.window, QStringLiteral("wholeFileLeft"), Scene::settleMs));
+                    clickDialogButton(scene, "wholeFileDialog", "Replace whole file");
+                };
+                wholeLeft();
+                expectText(scene.text("resultText"), utf8(left), "whole left");
+                CHECK(noneEdited());
+                toLine(2);
+                keyClick(scene, Qt::Key_End);
+                typeText(scene, "X");
+                keyClick(scene, Qt::Key_Backspace);
+                expectText(scene.text("resultText"), utf8(left), "typed and deleted");
+                CHECK(!noneEdited());
+                const auto manual = work(scene, "pair.txt");
+                const auto manualRegions = scene.controller->selectedFile()->regions();
+                // The same whole-file choice keeps the text and decisions but replaces the edit.
+                wholeLeft();
+                expectText(scene.text("resultText"), utf8(left), "whole left again");
+                CHECK(noneEdited() && scene.file("pair.txt").current().draft == manual.draft);
+                scene.click("undoCommand");
+                CHECK(work(scene, "pair.txt") == manual);
+                CHECK(scene.controller->selectedFile()->regions() == manualRegions);
+                scene.click("redoCommand");
+                CHECK(noneEdited());
                 checkOffline(scene);
-            }
-            CHECK(repo.snapshot() == launched);
-            // The retried input is what a new window restores.
-            Scene reopened(repo);
-            clickFile(reopened, "kept.txt");
-            expectText(reopened.text("resultText"), "kept by hand\n!", "restored input");
-            checkOffline(reopened);
-        });
+            });
+        window.run(
+            "lines from both sides of one multi-line conflict keep their text, decisions and undo",
+            [](Sandbox &sandbox) {
+                // Both sides change the same three lines, and the user set the result to the common version before
+                // launch.
+                const QByteArray base = "header\nbase one\nbase two\nbase three\ntail\n";
+                Repository repo(GitOperation::Merge,
+                                {{"lines.txt", base, QByteArray("header\nleft one\nleft two\nleft three\ntail\n"),
+                                  QByteArray("header\nright one\nright two\nright three\ntail\n"), base}});
+                Scene scene(sandbox, repo);
+                clickFile(scene, "lines.txt");
+                const auto state = [&](const char *label) {
+                    return choiceRow(scene, QString::fromUtf8(label)).value(QStringLiteral("state")).toString();
+                };
+                const auto states = [&](const char *expected) {
+                    QStringList actual;
+                    for (const auto *label :
+                         {"Left line 2", "Left line 3", "Left line 4", "Right line 2", "Right line 3", "Right line 4"})
+                        actual.push_back(state(label));
+                    expectText(actual.join(QLatin1Char(' ')), QString::fromUtf8(expected), "line decisions");
+                };
+
+                // Every line inside the conflict can be chosen, at the result line with the same index.
+                for (const auto *label :
+                     {"Left line 2", "Left line 3", "Left line 4", "Right line 2", "Right line 3", "Right line 4"}) {
+                    const auto row = choiceRow(scene, QString::fromUtf8(label));
+                    CHECK(row.value(QStringLiteral("available")).toBool());
+                    CHECK(row.value(QStringLiteral("detail")).toString().isEmpty());
+                }
+                expectText(regionResult(scene, regionFor(scene, QStringLiteral("Left line 3"))), "base two\n",
+                           "left line 3 target");
+                expectText(regionResult(scene, regionFor(scene, QStringLiteral("Right line 4"))), "base three\n",
+                           "right line 4 target");
+                states("undecided undecided undecided undecided undecided undecided");
+                std::vector<Work> history{work(scene, "lines.txt")};
+
+                // The middle line from the left replaces only the launch line at its position.
+                clickChoice(scene, "Left line 3", "Accept", Qt::Key_Menu);
+                CHECK(scene.item("manualReplacementNotice")->isVisible());
+                expectText(scene.text("replacementBeforeText"), "base two\n", "replaced left target");
+                expectText(scene.text("replacementAfterText"), "left two\n", "left replacement");
+                clickDialogButton(scene, "replacementDialog", "Apply choice");
+                expectText(scene.text("resultText"), "header\nbase one\nleft two\nbase three\ntail\n",
+                           "accept left line 3");
+                states("undecided accepted undecided undecided undecided undecided");
+                history.push_back(work(scene, "lines.txt"));
+
+                // The last line from the right goes beside it in the same conflict.
+                clickChoice(scene, "Right line 4", "Accept", Qt::Key_F10);
+                expectText(scene.text("replacementBeforeText"), "base three\n", "replaced right target");
+                expectText(scene.text("replacementAfterText"), "right three\n", "right replacement");
+                clickDialogButton(scene, "replacementDialog", "Apply choice");
+                expectText(scene.text("resultText"), "header\nbase one\nleft two\nright three\ntail\n",
+                           "accept right line 4");
+                states("undecided accepted undecided undecided undecided accepted");
+                history.push_back(work(scene, "lines.txt"));
+
+                // Ignore decides against the first left line and keeps the text.
+                clickChoice(scene, "Left line 2", "Ignore");
+                CHECK(!scene.object("replacementDialog")->property("visible").toBool());
+                expectText(scene.text("resultText"), "header\nbase one\nleft two\nright three\ntail\n",
+                           "ignore left line 2");
+                states("ignored accepted undecided undecided undecided accepted");
+                history.push_back(work(scene, "lines.txt"));
+
+                // Undo walks back through text and decisions together, and redo replays them.
+                for (std::size_t step = history.size() - 1; step-- > 0;) {
+                    scene.click("undoCommand");
+                    CHECK(work(scene, "lines.txt") == history[step]);
+                }
+                states("undecided undecided undecided undecided undecided undecided");
+                CHECK(!scene.file("lines.txt").canUndo() && !scene.item("undoCommand")->isEnabled());
+                for (std::size_t step = 1; step < history.size(); ++step) {
+                    scene.click("redoCommand");
+                    CHECK(work(scene, "lines.txt") == history[step]);
+                }
+                expectText(scene.text("resultText"), "header\nbase one\nleft two\nright three\ntail\n", "redone");
+                states("ignored accepted undecided undecided undecided accepted");
+                checkOffline(scene);
+            });
+        window.run(
+            "closing with input recovery could not keep asks to retry, and cancel keeps the window open",
+            [](Sandbox &sandbox) {
+                Repository repo(GitOperation::Merge,
+                                {{"kept.txt", QByteArray("kept base\n"), QByteArray("kept left\n"),
+                                  QByteArray("kept right\n"), QByteArray("kept by hand\n")}});
+                const auto launched = repo.snapshot();
+                {
+                    Scene scene(sandbox, repo);
+                    clickFile(scene, "kept.txt");
+                    auto &files = *scene.controller->store();
+                    auto *prompt = scene.object("recoveryCloseDialog");
+                    auto *handoff = scene.object("handoffDialog");
+                    const auto closeWindow = [&] {
+                        scene.window->close();
+                        settleFor("close guard opened", [&] { return prompt->property("opened").toBool(); });
+                        CHECK(scene.window->isVisible() && !handoff->property("visible").toBool());
+                    };
+                    {
+                        // Another holder of the journal lock makes the recovery commit fail, so the typed input
+                        // stays pending.
+                        QLockFile busy(files.recoveryDirectory() + QStringLiteral("/journal.lock"));
+                        CHECK(busy.tryLock(0));
+                        appendToResult(scene, "!");
+                        settleFor("pending recovery", [&] { return files.hasPendingRecovery(); });
+                        CHECK(scene.item("recoveryProblem")->isVisible());
+                        closeWindow();
+                        expectContains(prompt->property("subtitle").toString(), "Retry before closing", "close guard");
+                        clickDialogButton(scene, "recoveryCloseDialog", "Cancel");
+                        CHECK(scene.window->isVisible() && files.hasPendingRecovery()
+                              && !handoff->property("visible").toBool());
+                        // Retrying while the journal is still busy keeps the input pending and the window open.
+                        closeWindow();
+                        clickDialogButton(scene, "recoveryCloseDialog", "Retry");
+                        CHECK(scene.window->isVisible() && files.hasPendingRecovery()
+                              && !handoff->property("visible").toBool());
+                        closeWindow();
+                    }
+                    // With the journal free, Retry keeps the input and the close goes on to the handoff.
+                    clickDialogButton(scene, "recoveryCloseDialog", "Retry");
+                    settleFor("handoff opened after retry", [&] { return handoff->property("opened").toBool(); });
+                    CHECK(scene.window->isVisible() && !files.hasPendingRecovery());
+                    expectText(QString::fromStdString(scene.file("kept.txt").current().draft.text), "kept by hand\n!",
+                               "kept input");
+                    scene.click("handoffLeave");
+                    CHECK(!scene.controller->completion()->outcome().isEmpty());
+                    checkOffline(scene);
+                }
+                CHECK(repo.snapshot() == launched);
+                // The retried input is what a new window restores.
+                Scene reopened(sandbox, repo);
+                clickFile(reopened, "kept.txt");
+                expectText(reopened.text("resultText"), "kept by hand\n!", "restored input");
+                checkOffline(reopened);
+            });
         return results.report();
     }
 };
 
+// The process runs under tests/with-private-xdg.sh, which gives it a private HOME and XDG
+// directories. Each journey's Git, recovery root and socket directory come from its Sandbox
+// through Application::Config, and every child process gets its environment from the fixture.
 int main(int argc, char **argv)
 {
     // Child mode: git mergetool starts this binary as the real launcher.
     if (argc == 2 && std::strcmp(argv[1], "--mergetool") == 0)
         return runMergetoolLauncher(argc, argv, git::GitProgram{gitOnPath(), git::GitEnvironment::fromProcess()});
-    Sandbox shared;
-    if (!shared.root.isValid() || !shared.runtime.isValid()) return 2;
-    sandbox = &shared;
-    const auto base = shared.root.path();
-    for (const auto *name : {"/home", "/config", "/cache", "/data", "/bin"})
-        if (!QDir().mkpath(base + name)) return 2;
-    // A private runtime directory keeps the mergetool socket out of the real one. The
-    // app trusts a Git executable only in directories that other users cannot write.
-    for (const auto &path : {shared.runtime.path(), base + "/bin"})
-        if (!QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner))
-            return 2;
-    shared.bin = base + "/bin";
-    shared.argvLog = base + "/git-argv";
-    shared.networkMarker = base + "/network-attempt";
-    const auto log = quoteShell(QFile::encodeName(shared.argvLog));
-    const auto marker = quoteShell(QFile::encodeName(shared.networkMarker));
-    {
-        QFile guard(shared.bin + "/git");
-        if (!guard.open(QIODevice::WriteOnly)) return 2;
-        guard.write("#!/bin/sh\nfor argument in \"$@\"; do\n"
-                    "  case \"$argument\" in fetch|pull|push|clone|ls-remote|remote|submodule|credential) : > "
-                    + marker + "; exit 97 ;; esac\ndone\nprintf '%s\\n' \"$@\" >> " + log
-                    + "\nexec /usr/bin/git \"$@\"\n");
-    }
-    if (!QFile::setPermissions(shared.bin + "/git",
-                               QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner))
-        return 2;
-    qputenv("HOME", (base + "/home").toUtf8());
-    qputenv("XDG_CONFIG_HOME", (base + "/config").toUtf8());
-    qputenv("XDG_CACHE_HOME", (base + "/cache").toUtf8());
-    qputenv("XDG_DATA_HOME", (base + "/data").toUtf8());
-    qputenv("XDG_RUNTIME_DIR", shared.runtime.path().toUtf8());
-    qputenv("PATH", (shared.bin + ":/usr/bin:/bin").toUtf8());
-    qputenv("LC_ALL", "C.UTF-8");
-    qputenv("GIT_CONFIG_NOSYSTEM", "1");
-    qputenv("GIT_CONFIG_GLOBAL", "/dev/null");
-    qputenv("GIT_TERMINAL_PROMPT", "0");
-    // Any HTTP attempt goes to a closed local port instead of the network.
-    for (const auto *name : {"http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"})
-        qputenv(name, "http://127.0.0.1:9");
-    for (const auto *name :
-         {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "no_proxy", "NO_PROXY"})
-        qunsetenv(name);
     QApplication application(argc, argv);
     // The English catalog supplies the plural forms these checks read.
     branch_truce::installTranslations(application);

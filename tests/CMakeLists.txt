@@ -278,16 +278,17 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # The executable takes "review", "handoff" or "window"; with no argument it runs every journey.
     # Review covers panes, choices, editing, search and Save. Handoff covers staged drafts,
     # startup recovery and mergetool completion. Window covers fit, navigation and the close guard.
-    # Each timeout must be at least twice the slowest measured run.
-    add_test(NAME acceptance.journeys-review COMMAND branch_truce_journey_acceptance_tests review)
-    add_test(NAME acceptance.journeys-handoff COMMAND branch_truce_journey_acceptance_tests handoff)
-    add_test(NAME acceptance.journeys-window COMMAND branch_truce_journey_acceptance_tests window)
+    # Each timeout must be at least twice the slowest measured run. The private XDG wrapper keeps
+    # Qt's own settings and caches out of the real home and fails the run if anything reaches the
+    # real recovery root; each journey's Git, recovery root and socket directory are its own.
     foreach(journey_group review handoff window)
+        add_test(NAME acceptance.journeys-${journey_group}
+            COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_journey_acceptance_tests> ${journey_group})
         set_tests_properties(acceptance.journeys-${journey_group} PROPERTIES TIMEOUT 120 LABELS acceptance
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;LC_ALL=C.UTF-8")
     endforeach()
-    set_tests_properties(acceptance.journeys-window PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_QUICK_CONTROLS_STYLE=org.kde.desktop")
+    set_tests_properties(acceptance.journeys-window PROPERTIES ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;LC_ALL=C.UTF-8;QT_QUICK_CONTROLS_STYLE=org.kde.desktop")
 
     add_executable(branch_truce_startup_route_tests app/StartupRouteTests.cpp)
     target_include_directories(branch_truce_startup_route_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
