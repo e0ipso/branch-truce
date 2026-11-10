@@ -92,6 +92,7 @@ void MergetoolServer::accept()
             continue;
         }
         const auto id = nextConnection_++;
+        socket->setReadBufferSize(4 + kMergetoolFrameLimit);
         socket->setParent(this);
         auto *deadline = new QTimer(this);
         deadline->setSingleShot(true);

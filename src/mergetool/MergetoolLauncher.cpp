@@ -265,6 +265,7 @@ int runMergetoolLauncher(const QStringList &arguments, const git::GitProgram &gi
 
     const auto server = mergetoolServerName(directory, discovered.repository);
     QLocalSocket socket;
+    socket.setReadBufferSize(4 + kMergetoolFrameLimit);
     // One retry slice finds a window that already listens.
     bool connected = connectUntilDeadline(&socket, server, kListenRetrySliceMs);
     if (!connected && startWindow) {
