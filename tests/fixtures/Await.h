@@ -6,6 +6,12 @@
 #include <utility>
 
 namespace test_support {
+// For commands without a future, wait for this store's admitted records, including failures.
+inline void awaitRecovery(branch_truce::SessionStore &store)
+{
+    waitUntil([&] { return !store.recording(); }, "recovery did not settle");
+}
+
 template <typename T> T await(QFuture<T> future)
 {
     waitUntil([&] { return future.isFinished(); }, "command did not complete");

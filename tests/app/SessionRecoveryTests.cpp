@@ -31,17 +31,17 @@ using namespace session_fixtures;
 
 namespace {
 // Types `text` into the file one character at a time from byte `at`, as the editor sends keys.
-void typeInto(TestSession &model, const std::string &id, std::size_t at, const std::string &text)
+void typeInto(SessionStore &store, const std::string &id, std::size_t at, const std::string &text)
 {
     for (std::size_t index = 0; index < text.size(); ++index) {
-        const auto revision = model.file(id)->current().id;
-        CHECK(model.typeResult(id, revision, {{at + index, at + index}, text.substr(index, 1)}) == Transition::Applied);
+        const auto revision = store.file(id)->current().id;
+        CHECK(store.typeResult(id, revision, {{at + index, at + index}, text.substr(index, 1)}) == Transition::Applied);
     }
 }
 
-qsizetype records(const TestSession &model)
+qsizetype records(const SessionStore &store)
 {
-    return storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size();
+    return storage::RecoveryStore(store.recoveryDirectory()).read().transactions.size();
 }
 
 // Holds exactly one persistence operation. Unwinding releases it before the store drains.
@@ -65,13 +65,13 @@ struct ReleaseFiles {
 
 int acknowledgeAndCrash(const QString &directory)
 {
-    TestSession model(directory);
-    CHECK(model.appendFile(recoverableFile()));
-    CHECK(await(model.replaceDraft("recoverable", 1, savedDraft())) == Transition::Applied);
-    CHECK(await(model.recordCheckpoint("recoverable", 2, Outcome::Succeeded)) == Transition::Applied);
-    CHECK(await(model.replaceDraft("recoverable", 2, unsavedDraft())) == Transition::Applied);
-    CHECK(await(model.replaceDraft("recoverable", 3, finalDecision())) == Transition::Applied);
-    CHECK(!model.hasPendingRecovery() && model.file("recoverable")->current().id == 4);
+    SessionStore store(directory);
+    CHECK(store.appendFile(recoverableFile()));
+    CHECK(await(store.replaceDraft("recoverable", 1, savedDraft())) == Transition::Applied);
+    CHECK(await(store.recordCheckpoint("recoverable", 2, Outcome::Succeeded)) == Transition::Applied);
+    CHECK(await(store.replaceDraft("recoverable", 2, unsavedDraft())) == Transition::Applied);
+    CHECK(await(store.replaceDraft("recoverable", 3, finalDecision())) == Transition::Applied);
+    CHECK(!store.hasPendingRecovery() && store.file("recoverable")->current().id == 4);
     // Exit immediately after the acknowledgment without destructors or Qt cleanup.
     CHECK(::write(STDOUT_FILENO, "ACK 4\n", 6) == 6);
     std::_Exit(0);
@@ -94,22 +94,22 @@ int main(int argc, char **argv)
                 [=] {
                     QTemporaryDir directory;
                     CHECK(directory.isValid());
-                    TestSession model(directory.path() + "/recovery");
-                    CHECK(model.appendFile(test_support::combinationFile(scope)));
-                    CHECK(awaitAligned(model, model.editResult("choices", 1, {{0, 0}, "manual prefix\n"}))
+                    SessionStore store(directory.path() + "/recovery");
+                    CHECK(store.appendFile(test_support::combinationFile(scope)));
+                    CHECK(awaitAligned(store, store.editResult("choices", 1, {{0, 0}, "manual prefix\n"}))
                           == Transition::Applied);
-                    CHECK(await(model.recordCheckpoint("choices", 2, Outcome::Succeeded)) == Transition::Applied);
-                    const auto before = model.file("choices")->current().draft;
-                    const auto target = test_support::choiceTarget(*model.file("choices"), SourceSide::Stage2, scope);
-                    const auto preview = previewChoice(*model.file("choices"), 2, target.source.contributionId, action);
-                    const auto count = storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size();
-                    CHECK(await(model.applyChoice("choices", preview)) == Transition::ConfirmationRequired);
-                    CHECK(storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size() == count);
-                    CHECK(await(model.applyChoice("choices", preview, true)) == Transition::Applied);
-                    CHECK(storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size() == count + 1);
-                    const auto chosen = model.file("choices")->current().draft;
+                    CHECK(await(store.recordCheckpoint("choices", 2, Outcome::Succeeded)) == Transition::Applied);
+                    const auto before = store.file("choices")->current().draft;
+                    const auto target = test_support::choiceTarget(*store.file("choices"), SourceSide::Stage2, scope);
+                    const auto preview = previewChoice(*store.file("choices"), 2, target.source.contributionId, action);
+                    const auto count = storage::RecoveryStore(store.recoveryDirectory()).read().transactions.size();
+                    CHECK(await(store.applyChoice("choices", preview)) == Transition::ConfirmationRequired);
+                    CHECK(storage::RecoveryStore(store.recoveryDirectory()).read().transactions.size() == count);
+                    CHECK(await(store.applyChoice("choices", preview, true)) == Transition::Applied);
+                    CHECK(storage::RecoveryStore(store.recoveryDirectory()).read().transactions.size() == count + 1);
+                    const auto chosen = store.file("choices")->current().draft;
                     CHECK(chosen != before && chosen.text.find(preview.replacement) != std::string::npos);
-                    checkRecoveredHistory(model, before, chosen);
+                    checkRecoveredHistory(store, before, chosen);
                 });
         }
     }
@@ -117,42 +117,42 @@ int main(int argc, char **argv)
         suite.run("file batch undo and redo recover together with protected manual work: " + nameOf(scope), [=] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            TestSession model(directory.path() + "/recovery");
-            CHECK(model.appendFile(test_support::batchFile()));
-            CHECK(awaitAligned(model, model.editResult("choices", 1, {{0, 0}, "manual prefix\n"}))
+            SessionStore store(directory.path() + "/recovery");
+            CHECK(store.appendFile(test_support::batchFile()));
+            CHECK(awaitAligned(store, store.editResult("choices", 1, {{0, 0}, "manual prefix\n"}))
                   == Transition::Applied);
-            CHECK(await(model.recordCheckpoint("choices", 2, Outcome::Succeeded)) == Transition::Applied);
-            const auto before = model.file("choices")->current().draft;
-            const auto preview = previewNonConflicting(*model.file("choices"), 2, scope);
-            const auto count = storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size();
-            CHECK(await(model.applyNonConflicting("choices", preview)) == Transition::ConfirmationRequired);
-            CHECK(storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size() == count);
-            CHECK(await(model.applyNonConflicting("choices", preview, true)) == Transition::Applied);
-            CHECK(storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size() == count + 1);
-            const auto chosen = model.file("choices")->current().draft;
+            CHECK(await(store.recordCheckpoint("choices", 2, Outcome::Succeeded)) == Transition::Applied);
+            const auto before = store.file("choices")->current().draft;
+            const auto preview = previewNonConflicting(*store.file("choices"), 2, scope);
+            const auto count = storage::RecoveryStore(store.recoveryDirectory()).read().transactions.size();
+            CHECK(await(store.applyNonConflicting("choices", preview)) == Transition::ConfirmationRequired);
+            CHECK(storage::RecoveryStore(store.recoveryDirectory()).read().transactions.size() == count);
+            CHECK(await(store.applyNonConflicting("choices", preview, true)) == Transition::Applied);
+            CHECK(storage::RecoveryStore(store.recoveryDirectory()).read().transactions.size() == count + 1);
+            const auto chosen = store.file("choices")->current().draft;
             CHECK(chosen.text.starts_with("manual prefix\n") && chosen != before);
-            checkRecoveredHistory(model, before, chosen);
+            checkRecoveredHistory(store, before, chosen);
         });
     }
     for (const auto side : {SourceSide::Stage2, SourceSide::Stage3}) {
         suite.run("whole-file replacement undo and redo recover text and decisions: " + nameOf(side), [=] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            TestSession model(directory.path() + "/recovery");
-            CHECK(model.appendFile(test_support::choiceFile()));
-            CHECK(awaitAligned(model, model.editResult("choices", 1, {{0, 0}, "manual prefix\n"}))
+            SessionStore store(directory.path() + "/recovery");
+            CHECK(store.appendFile(test_support::choiceFile()));
+            CHECK(awaitAligned(store, store.editResult("choices", 1, {{0, 0}, "manual prefix\n"}))
                   == Transition::Applied);
-            CHECK(await(model.recordCheckpoint("choices", 2, Outcome::Succeeded)) == Transition::Applied);
-            const auto before = model.file("choices")->current().draft;
-            const auto preview = previewWholeFile(*model.file("choices"), 2, side);
-            const auto count = storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size();
-            CHECK(await(model.applyWholeFile("choices", preview)) == Transition::ConfirmationRequired);
-            CHECK(storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size() == count);
-            CHECK(await(model.applyWholeFile("choices", preview, true)) == Transition::Applied);
-            CHECK(storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size() == count + 1);
-            const auto chosen = model.file("choices")->current().draft;
+            CHECK(await(store.recordCheckpoint("choices", 2, Outcome::Succeeded)) == Transition::Applied);
+            const auto before = store.file("choices")->current().draft;
+            const auto preview = previewWholeFile(*store.file("choices"), 2, side);
+            const auto count = storage::RecoveryStore(store.recoveryDirectory()).read().transactions.size();
+            CHECK(await(store.applyWholeFile("choices", preview)) == Transition::ConfirmationRequired);
+            CHECK(storage::RecoveryStore(store.recoveryDirectory()).read().transactions.size() == count);
+            CHECK(await(store.applyWholeFile("choices", preview, true)) == Transition::Applied);
+            CHECK(storage::RecoveryStore(store.recoveryDirectory()).read().transactions.size() == count + 1);
+            const auto chosen = store.file("choices")->current().draft;
             CHECK(chosen.text == preview.replacement && chosen != before);
-            checkRecoveredHistory(model, before, chosen);
+            checkRecoveredHistory(store, before, chosen);
         });
     }
     for (const int operation : {0, 1, 2}) {
@@ -164,32 +164,33 @@ int main(int argc, char **argv)
                       QTemporaryDir directory;
                       CHECK(directory.isValid());
                       const auto faults = std::make_shared<test_support::SyncFaults>();
-                      TestSession model(directory.path() + "/recovery", faults);
-                      CHECK(model.appendFile(operation == 1 ? test_support::batchFile() : test_support::choiceFile()));
-                      const auto before = model.file("choices")->current().draft;
+                      SessionStore store(directory.path() + "/recovery", faults);
+                      CHECK(store.appendFile(operation == 1 ? test_support::batchFile() : test_support::choiceFile()));
+                      test_support::awaitRecovery(store);
+                      const auto before = store.file("choices")->current().draft;
                       const auto target =
-                          test_support::choiceTarget(*model.file("choices"), SourceSide::Stage2, ChoiceScope::Section);
-                      const auto combination = previewChoice(*model.file("choices"), 1, target.source.contributionId,
+                          test_support::choiceTarget(*store.file("choices"), SourceSide::Stage2, ChoiceScope::Section);
+                      const auto combination = previewChoice(*store.file("choices"), 1, target.source.contributionId,
                                                              ChoiceAction::CombineRightFirst);
-                      const auto batch = previewNonConflicting(*model.file("choices"), 1);
-                      const auto whole = previewWholeFile(*model.file("choices"), 1, SourceSide::Stage3);
+                      const auto batch = previewNonConflicting(*store.file("choices"), 1);
+                      const auto whole = previewWholeFile(*store.file("choices"), 1, SourceSide::Stage3);
                       const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
-                      const auto result = operation == 0 ? await(model.applyChoice("choices", combination, true))
-                          : operation == 1               ? await(model.applyNonConflicting("choices", batch, true))
-                                                         : await(model.applyWholeFile("choices", whole, true));
+                      const auto result = operation == 0 ? await(store.applyChoice("choices", combination, true))
+                          : operation == 1               ? await(store.applyNonConflicting("choices", batch, true))
+                                                         : await(store.applyWholeFile("choices", whole, true));
                       CHECK(result == Transition::Blocked && faults->failures == 1);
-                      CHECK(model.file("choices")->current().id == 1
-                            && model.file("choices")->current().draft == before);
-                      CHECK(model.pendingDraft("choices") && *model.pendingDraft("choices") != before);
-                      const auto chosen = *model.pendingDraft("choices");
-                      CHECK(await(model.undo("choices", 1)) == Transition::Blocked);
-                      CHECK(await(model.retryRecovery("choices")) == Transition::Applied);
-                      CHECK(model.file("choices")->current().draft == chosen && !model.hasPendingRecovery());
-                      CHECK(replayedFile(model.recoveryDirectory()).current().draft == chosen);
-                      const auto read = storage::RecoveryStore(model.recoveryDirectory()).read();
+                      CHECK(store.file("choices")->current().id == 1
+                            && store.file("choices")->current().draft == before);
+                      CHECK(store.pendingDraft("choices") && *store.pendingDraft("choices") != before);
+                      const auto chosen = *store.pendingDraft("choices");
+                      CHECK(await(store.undo("choices", 1)) == Transition::Blocked);
+                      CHECK(await(store.retryRecovery("choices")) == Transition::Applied);
+                      CHECK(store.file("choices")->current().draft == chosen && !store.hasPendingRecovery());
+                      CHECK(replayedFile(store.recoveryDirectory()).current().draft == chosen);
+                      const auto read = storage::RecoveryStore(store.recoveryDirectory()).read();
                       CHECK(read.succeeded && read.transactions.size() == 2);
-                      CHECK(await(model.undo("choices", model.file("choices")->current().id)) == Transition::Applied);
-                      CHECK(replayedFile(model.recoveryDirectory()).current().draft == before);
+                      CHECK(await(store.undo("choices", store.file("choices")->current().id)) == Transition::Applied);
+                      CHECK(replayedFile(store.recoveryDirectory()).current().draft == before);
                   });
     }
     for (const bool staging : {false, true}) {
@@ -198,21 +199,22 @@ int main(int argc, char **argv)
         suite.run("successive successful outcomes retain every earlier completion " + kindName, [=] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            TestSession model(directory.path() + "/recovery");
-            CHECK(model.appendFile(recoverableFile()));
+            SessionStore store(directory.path() + "/recovery");
+            CHECK(store.appendFile(recoverableFile()));
+            test_support::awaitRecovery(store);
             QStringList identities;
             std::vector<RevisionId> revisions;
             for (const auto &text : {std::string("first published\n"), std::string("second published\n")}) {
-                const auto current = model.file("recoverable")->current();
+                const auto current = store.file("recoverable")->current();
                 auto next = current.draft;
                 next.text = text;
-                CHECK(await(model.replaceDraft("recoverable", current.id, next)) == Transition::Applied);
-                preparePublication(model, "recoverable", staging);
-                revisions.push_back(model.file("recoverable")->current().id);
-                identities.push_back(recordIntent(model, "recoverable", kind));
-                completePublication(model, "recoverable", staging);
+                CHECK(await(store.replaceDraft("recoverable", current.id, next)) == Transition::Applied);
+                preparePublication(store, "recoverable", staging);
+                revisions.push_back(store.file("recoverable")->current().id);
+                identities.push_back(recordIntent(store, "recoverable", kind));
+                completePublication(store, "recoverable", staging);
             }
-            const auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+            const auto replay = replayRecovery(storage::RecoveryStore(store.recoveryDirectory()));
             CHECK(replay.succeeded && replay.mutations.size() == 2 && revisions[0] != revisions[1]);
             for (std::size_t i = 0; i < replay.mutations.size(); ++i) {
                 CHECK(replay.mutations[i].completed && replay.mutations[i].id == identities[static_cast<qsizetype>(i)]);
@@ -223,13 +225,14 @@ int main(int argc, char **argv)
         suite.run("earlier same-revision success cannot complete a later intent " + kindName, [=] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            TestSession model(directory.path() + "/recovery");
-            CHECK(model.appendFile(recoverableFile()));
-            preparePublication(model, "recoverable", staging);
-            const auto first = recordIntent(model, "recoverable", kind);
-            completePublication(model, "recoverable", staging);
-            const auto interrupted = recordIntent(model, "recoverable", kind);
-            const auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+            SessionStore store(directory.path() + "/recovery");
+            CHECK(store.appendFile(recoverableFile()));
+            test_support::awaitRecovery(store);
+            preparePublication(store, "recoverable", staging);
+            const auto first = recordIntent(store, "recoverable", kind);
+            completePublication(store, "recoverable", staging);
+            const auto interrupted = recordIntent(store, "recoverable", kind);
+            const auto replay = replayRecovery(storage::RecoveryStore(store.recoveryDirectory()));
             CHECK(replay.succeeded && replay.mutations.size() == 2);
             CHECK(replay.mutations[0].id == first && replay.mutations[0].completed);
             CHECK(replay.mutations[1].id == interrupted && !replay.mutations[1].completed);
@@ -238,17 +241,18 @@ int main(int argc, char **argv)
         suite.run("a later revision outcome leaves an unmatched earlier interruption uncertain " + kindName, [=] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            TestSession model(directory.path() + "/recovery");
-            CHECK(model.appendFile(recoverableFile()));
-            preparePublication(model, "recoverable", staging);
-            const auto interrupted = recordIntent(model, "recoverable", kind);
-            auto edited = model.file("recoverable")->current().draft;
+            SessionStore store(directory.path() + "/recovery");
+            CHECK(store.appendFile(recoverableFile()));
+            test_support::awaitRecovery(store);
+            preparePublication(store, "recoverable", staging);
+            const auto interrupted = recordIntent(store, "recoverable", kind);
+            auto edited = store.file("recoverable")->current().draft;
             edited.text = "newer successful revision\n";
-            CHECK(await(model.replaceDraft("recoverable", 1, edited)) == Transition::Applied);
-            preparePublication(model, "recoverable", staging);
-            const auto completed = recordIntent(model, "recoverable", kind);
-            completePublication(model, "recoverable", staging);
-            const auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+            CHECK(await(store.replaceDraft("recoverable", 1, edited)) == Transition::Applied);
+            preparePublication(store, "recoverable", staging);
+            const auto completed = recordIntent(store, "recoverable", kind);
+            completePublication(store, "recoverable", staging);
+            const auto replay = replayRecovery(storage::RecoveryStore(store.recoveryDirectory()));
             CHECK(replay.succeeded && replay.mutations.size() == 2);
             CHECK(replay.mutations[0].id == interrupted && !replay.mutations[0].completed);
             CHECK(replay.mutations[1].id == completed && replay.mutations[1].completed);
@@ -257,90 +261,77 @@ int main(int argc, char **argv)
     suite.run("outcomes match the file and kind and failed staging does not complete an intent", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
-        TestSession model(directory.path() + "/recovery");
-        CHECK(model.appendFile(recoverableFile()));
+        SessionStore store(directory.path() + "/recovery");
+        CHECK(store.appendFile(recoverableFile()));
+        test_support::awaitRecovery(store);
         auto captures = *recoverableFile().snapshots();
         captures.path = "other.txt";
-        CHECK(model.appendFile(
+        CHECK(store.appendFile(
             FileSession("other", captures.path, draft(captures.launchResult.text.utf8), {.snapshots = captures})));
-        preparePublication(model, "recoverable", false);
-        preparePublication(model, "other", false);
-        recordIntent(model, "recoverable", MutationKind::Publication);
-        recordIntent(model, "recoverable", MutationKind::Staging);
-        recordIntent(model, "other", MutationKind::Publication);
-        completePublication(model, "recoverable", false);
-        CHECK(await(model.recordStage("recoverable", 1, Outcome::Failed, {}, {}, "stage failed"))
+        test_support::awaitRecovery(store);
+        preparePublication(store, "recoverable", false);
+        preparePublication(store, "other", false);
+        recordIntent(store, "recoverable", MutationKind::Publication);
+        recordIntent(store, "recoverable", MutationKind::Staging);
+        recordIntent(store, "other", MutationKind::Publication);
+        completePublication(store, "recoverable", false);
+        CHECK(await(store.recordStage("recoverable", 1, Outcome::Failed, {}, {}, "stage failed"))
               == Transition::Applied);
-        auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+        auto replay = replayRecovery(storage::RecoveryStore(store.recoveryDirectory()));
         CHECK(replay.succeeded && replay.mutations.size() == 3);
         CHECK(replay.mutations[0].completed && !replay.mutations[1].completed && !replay.mutations[2].completed);
-        completePublication(model, "recoverable", true);
-        replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+        completePublication(store, "recoverable", true);
+        replay = replayRecovery(storage::RecoveryStore(store.recoveryDirectory()));
         CHECK(replay.succeeded && replay.mutations[1].completed && !replay.mutations[2].completed);
-        completePublication(model, "other", false);
-        replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+        completePublication(store, "other", false);
+        replay = replayRecovery(storage::RecoveryStore(store.recoveryDirectory()));
         CHECK(replay.succeeded && replay.mutations[2].completed);
     });
     for (const auto action : {ChoiceAction::Accept, ChoiceAction::Ignore, ChoiceAction::ResolveUsingSide}) {
         suite.run("command undo and redo each replay complete text and decisions: " + nameOf(action), [=] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            TestSession model(directory.path() + "/recovery");
-            CHECK(model.appendFile(test_support::choiceFile()));
-            CHECK(awaitAligned(model, model.editResult("choices", 1, {{0, 0}, "manual prefix\n"}))
+            SessionStore store(directory.path() + "/recovery");
+            CHECK(store.appendFile(test_support::choiceFile()));
+            CHECK(awaitAligned(store, store.editResult("choices", 1, {{0, 0}, "manual prefix\n"}))
                   == Transition::Applied);
-            CHECK(await(model.recordCheckpoint("choices", 2, Outcome::Succeeded)) == Transition::Applied);
-            const auto before = model.file("choices")->current().draft;
+            CHECK(await(store.recordCheckpoint("choices", 2, Outcome::Succeeded)) == Transition::Applied);
+            const auto before = store.file("choices")->current().draft;
             const auto target =
-                test_support::choiceTarget(*model.file("choices"), SourceSide::Stage3, ChoiceScope::Section);
-            const auto preview = previewChoice(*model.file("choices"), 2, target.source.contributionId, action);
-            CHECK(await(model.applyChoice("choices", preview, true)) == Transition::Applied);
-            const auto chosen = model.file("choices")->current().draft;
-            const auto check = [&](const Draft &expected) {
-                const auto replay = replayedFile(model.recoveryDirectory());
-                CHECK(replay.current().draft == expected);
-                CHECK(replay.current().id == model.file("choices")->current().id);
-                CHECK(replay.publication().checkpoint()
-                      && replay.revision(*replay.publication().checkpoint())->draft == before);
-                CHECK(!replay.publication().reviewed() && !replay.publication().written()
-                      && !replay.publication().staged() && !replay.facts().resolved);
-            };
+                test_support::choiceTarget(*store.file("choices"), SourceSide::Stage3, ChoiceScope::Section);
+            const auto preview = previewChoice(*store.file("choices"), 2, target.source.contributionId, action);
+            CHECK(await(store.applyChoice("choices", preview, true)) == Transition::Applied);
+            const auto chosen = store.file("choices")->current().draft;
             CHECK(chosen != before);
-            check(chosen);
-            CHECK(await(model.undo("choices", model.file("choices")->current().id)) == Transition::Applied);
-            check(before);
-            CHECK(await(model.redo("choices", model.file("choices")->current().id)) == Transition::Applied);
-            check(chosen);
-            auto reopened = replayedFile(model.recoveryDirectory());
-            CHECK(reopened.undo(reopened.current().id) == Transition::Applied && reopened.current().draft == before);
-            CHECK(reopened.redo(reopened.current().id) == Transition::Applied && reopened.current().draft == chosen);
+            checkRecoveredHistory(store, before, chosen);
         });
     }
     suite.run("a failed choice retains its atomic candidate until durable retry", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
         const auto faults = std::make_shared<test_support::SyncFaults>();
-        TestSession model(directory.path() + "/recovery", faults);
-        CHECK(model.appendFile(test_support::choiceFile()));
-        const auto before = model.file("choices")->current().draft;
+        auto [store, rows] = test_support::TestSession(directory.path() + "/recovery", faults);
+        CHECK(store.appendFile(test_support::choiceFile()));
+        test_support::awaitRecovery(store);
+        const auto before = store.file("choices")->current().draft;
         const auto target =
-            test_support::choiceTarget(*model.file("choices"), SourceSide::Stage3, ChoiceScope::Section);
+            test_support::choiceTarget(*store.file("choices"), SourceSide::Stage3, ChoiceScope::Section);
         const auto preview =
-            previewChoice(*model.file("choices"), 1, target.source.contributionId, ChoiceAction::ResolveUsingSide);
+            previewChoice(*store.file("choices"), 1, target.source.contributionId, ChoiceAction::ResolveUsingSide);
         const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
-        CHECK(await(model.applyChoice("choices", preview, true)) == Transition::Blocked);
-        CHECK(faults->failures == 1 && model.file("choices")->current().draft == before);
-        CHECK(model.pendingDraft("choices") && model.pendingDraft("choices")->decisions != before.decisions);
-        const auto pending = *model.pendingDraft("choices");
-        CHECK(role(model, SessionModel::PendingInputRole).toBool());
-        CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+        CHECK(await(store.applyChoice("choices", preview, true)) == Transition::Blocked);
+        CHECK(faults->failures == 1 && store.file("choices")->current().draft == before);
+        CHECK(store.pendingDraft("choices") && store.pendingDraft("choices")->decisions != before.decisions);
+        const auto pending = *store.pendingDraft("choices");
+        CHECK(role(rows, SessionModel::PendingInputRole).toBool());
+        CHECK(role(rows, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
               == FileStates::RecoveryState::Failed);
-        CHECK(!model.hasRecoveryFailure("choices") && !role(model, SessionModel::CanUndoRole).toBool());
-        CHECK(await(model.undo("choices", 1)) == Transition::Blocked);
-        CHECK(await(model.retryRecovery("choices")) == Transition::Applied);
-        CHECK(!model.hasPendingRecovery() && model.file("choices")->current().draft == pending);
-        CHECK(replayedFile(model.recoveryDirectory()).current().draft == pending);
-        const auto records = storage::RecoveryStore(model.recoveryDirectory()).read();
+        CHECK(!store.hasRecoveryFailure("choices") && !role(rows, SessionModel::CanUndoRole).toBool());
+        CHECK(await(store.undo("choices", 1)) == Transition::Blocked);
+        CHECK(await(store.retryRecovery("choices")) == Transition::Applied);
+        CHECK(!store.hasPendingRecovery() && store.file("choices")->current().draft == pending);
+        CHECK(replayedFile(store.recoveryDirectory()).current().draft == pending);
+        const auto records = storage::RecoveryStore(store.recoveryDirectory()).read();
         CHECK(records.succeeded && records.transactions.size() == 2);
     });
     for (const int checkpoint : {0, 1, 2}) {
@@ -354,25 +345,26 @@ int main(int argc, char **argv)
                       const auto location = directory.path() + "/recovery";
                       Draft retained;
                       {
-                          TestSession model(location);
-                          CHECK(model.appendFile(recoverableFile()));
+                          SessionStore store(location);
+                          CHECK(store.appendFile(recoverableFile()));
+                          test_support::awaitRecovery(store);
                           if (checkpoint != 0) {
-                              CHECK(await(model.replaceDraft("recoverable", 1, savedDraft())) == Transition::Applied);
+                              CHECK(await(store.replaceDraft("recoverable", 1, savedDraft())) == Transition::Applied);
                               if (checkpoint == 2)
-                                  resolve(model, "recoverable");
+                                  resolve(store, "recoverable");
                               else
-                                  CHECK(await(model.recordCheckpoint("recoverable", 2, Outcome::Succeeded))
+                                  CHECK(await(store.recordCheckpoint("recoverable", 2, Outcome::Succeeded))
                                         == Transition::Applied);
                           }
-                          retained = model.file("recoverable")->current().draft;
-                          CHECK(await(model.replaceDraft("recoverable", model.file("recoverable")->current().id,
+                          retained = store.file("recoverable")->current().draft;
+                          CHECK(await(store.replaceDraft("recoverable", store.file("recoverable")->current().id,
                                                          unsavedDraft()))
                                 == Transition::Applied);
-                          const auto revision = model.file("recoverable")->current().id;
-                          CHECK((checkpoint == 2 ? await(model.discardToStaged("recoverable", revision))
-                                                 : await(model.discardToCheckpoint("recoverable", revision)))
+                          const auto revision = store.file("recoverable")->current().id;
+                          CHECK((checkpoint == 2 ? await(store.discardToStaged("recoverable", revision))
+                                                 : await(store.discardToCheckpoint("recoverable", revision)))
                                 == Transition::Applied);
-                          CHECK(model.file("recoverable")->current().draft == retained && !model.hasPendingRecovery());
+                          CHECK(store.file("recoverable")->current().draft == retained && !store.hasPendingRecovery());
                       }
                       const auto restored = replayedFile(location);
                       CHECK(restored.current().draft == retained && restored.current().draft != unsavedDraft());
@@ -491,42 +483,43 @@ int main(int argc, char **argv)
         QTemporaryDir directory;
         CHECK(directory.isValid());
         const auto faults = std::make_shared<test_support::SyncFaults>();
-        TestSession model(directory.path() + "/recovery", faults);
-        CHECK(model.appendFile(recoverableFile()));
-        const auto original = model.file("recoverable")->current().draft;
+        auto [store, rows] = test_support::TestSession(directory.path() + "/recovery", faults);
+        CHECK(store.appendFile(recoverableFile()));
+        test_support::awaitRecovery(store);
+        const auto original = store.file("recoverable")->current().draft;
         const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
-        CHECK(await(model.replaceDraft("recoverable", 1, unsavedDraft())) == Transition::Blocked);
-        CHECK(faults->failures == 1 && model.hasPendingRecovery());
-        CHECK(model.file("recoverable")->current().id == 1 && model.file("recoverable")->current().draft == original);
-        CHECK(model.pendingDraft("recoverable") && *model.pendingDraft("recoverable") == unsavedDraft());
-        CHECK(role(model, SessionModel::PendingInputRole).toBool());
-        CHECK(role(model, SessionModel::PendingTextRole).toString().toUtf8()
+        CHECK(await(store.replaceDraft("recoverable", 1, unsavedDraft())) == Transition::Blocked);
+        CHECK(faults->failures == 1 && store.hasPendingRecovery());
+        CHECK(store.file("recoverable")->current().id == 1 && store.file("recoverable")->current().draft == original);
+        CHECK(store.pendingDraft("recoverable") && *store.pendingDraft("recoverable") == unsavedDraft());
+        CHECK(role(rows, SessionModel::PendingInputRole).toBool());
+        CHECK(role(rows, SessionModel::PendingTextRole).toString().toUtf8()
               == QByteArray::fromStdString(unsavedDraft().text));
-        CHECK(model.pendingDraft("recoverable")->decisions.size() == 2);
-        CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+        CHECK(store.pendingDraft("recoverable")->decisions.size() == 2);
+        CHECK(role(rows, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
               == FileStates::RecoveryState::Failed);
-        CHECK(role(model, SessionModel::RecoveryErrorRole).toString().contains("retry"));
-        CHECK(!role(model, SessionModel::CanUndoRole).toBool() && !model.canFinish());
-        CHECK(await(model.replaceDraft("recoverable", 1, draft("must not overwrite pending"))) == Transition::Blocked);
-        CHECK(await(model.recordCheckpoint("recoverable", 1, Outcome::Succeeded)) == Transition::Blocked);
-        CHECK(await(model.undo("recoverable", 1)) == Transition::Blocked);
-        storage::RecoveryStore store(model.recoveryDirectory());
-        const auto before = store.read();
+        CHECK(role(rows, SessionModel::RecoveryErrorRole).toString().contains("retry"));
+        CHECK(!role(rows, SessionModel::CanUndoRole).toBool() && !SessionHandoff::build(store, {}).clean);
+        CHECK(await(store.replaceDraft("recoverable", 1, draft("must not overwrite pending"))) == Transition::Blocked);
+        CHECK(await(store.recordCheckpoint("recoverable", 1, Outcome::Succeeded)) == Transition::Blocked);
+        CHECK(await(store.undo("recoverable", 1)) == Transition::Blocked);
+        storage::RecoveryStore journal(store.recoveryDirectory());
+        const auto before = journal.read();
         CHECK(before.succeeded && before.transactions.size() == 2);
         const auto request = before.transactions.back().id;
-        CHECK(model.retryPendingRecovery("recoverable"));
-        CHECK(!model.hasPendingRecovery() && !model.pendingDraft("recoverable"));
-        CHECK(model.file("recoverable")->current().id == 2
-              && model.file("recoverable")->current().draft == unsavedDraft());
-        CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+        CHECK(await(store.retryRecovery("recoverable")) == Transition::Applied);
+        CHECK(!store.hasPendingRecovery() && !store.pendingDraft("recoverable"));
+        CHECK(store.file("recoverable")->current().id == 2
+              && store.file("recoverable")->current().draft == unsavedDraft());
+        CHECK(role(rows, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
               == FileStates::RecoveryState::Durable);
-        CHECK(role(model, SessionModel::RecoveryErrorRole).toString().isEmpty());
-        CHECK(model.file("recoverable")->facts().unsaved && !model.file("recoverable")->publication().checkpoint());
-        const auto after = store.read();
+        CHECK(role(rows, SessionModel::RecoveryErrorRole).toString().isEmpty());
+        CHECK(store.file("recoverable")->facts().unsaved && !store.file("recoverable")->publication().checkpoint());
+        const auto after = journal.read();
         CHECK(after.succeeded && after.transactions.size() == 2 && after.transactions.back().id == request);
-        checkDraft(test_support::recordedDrafts(store).back(), unsavedDraft());
-        CHECK(await(model.undo("recoverable", 2)) == Transition::Applied);
-        CHECK(model.file("recoverable")->current().draft == original);
+        checkDraft(test_support::recordedDrafts(journal).back(), unsavedDraft());
+        CHECK(await(store.undo("recoverable", 2)) == Transition::Applied);
+        CHECK(store.file("recoverable")->current().draft == original);
     });
     suite.run("recovery root ignores the organization name and finds earlier stores", [] {
         test_support::ScopedApplicationIdentity identity("Branch Truce", {});
@@ -537,14 +530,15 @@ int main(int argc, char **argv)
         CHECK(earlier == root && recoveryRoot() == root);
         const auto stored = root + "/" + QUuid::createUuid().toString(QUuid::WithoutBraces);
         {
-            TestSession written(stored);
+            SessionStore written(stored);
             CHECK(written.appendFile(recoverableFile()));
+            test_support::awaitRecovery(written);
             CHECK(await(written.replaceDraft("recoverable", 1, unsavedDraft())) == Transition::Applied);
         }
         QCoreApplication::setOrganizationName("Example Organization");
         CHECK(recoveryRoot() == root);
-        TestSession model;
-        CHECK(QFileInfo(model.recoveryDirectory()).absolutePath() == root);
+        SessionStore store(newRecoveryDirectory());
+        CHECK(QFileInfo(store.recoveryDirectory()).absolutePath() == root);
         CHECK(QDir(root).entryList(QDir::Dirs | QDir::NoDotAndDotDot).contains(QFileInfo(stored).fileName()));
         const auto replay = replayRecovery(storage::RecoveryStore(stored));
         CHECK(replay.succeeded && replay.userWork && replay.files.size() == 1
@@ -578,34 +572,35 @@ int main(int argc, char **argv)
     suite.run("replay restores the text and markers a full decision left", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
-        TestSession model(directory.path() + "/recovery");
-        CHECK(model.appendFile(test_support::markedFile(true)));
+        SessionStore store(directory.path() + "/recovery");
+        CHECK(store.appendFile(test_support::markedFile(true)));
+        test_support::awaitRecovery(store);
         const auto choose = [&](SourceSide side, ChoiceAction action) {
-            const auto &file = *model.file("choices");
+            const auto &file = *store.file("choices");
             const auto &target = test_support::choiceTarget(file, side, ChoiceScope::Section);
-            return await(model.applyChoice(
+            return await(store.applyChoice(
                 "choices", previewChoice(file, file.current().id, target.source.contributionId, action), true));
         };
         const auto check = [&] {
-            const auto &live = *model.file("choices");
-            const auto replay = replayedFile(model.recoveryDirectory());
+            const auto &live = *store.file("choices");
+            const auto replay = replayedFile(store.recoveryDirectory());
             CHECK(replay.current().draft == live.current().draft && replay.current().id == live.current().id);
             CHECK(replay.markers() == live.markers() && replay.markerSections() == live.markerSections());
-            CHECK(!model.hasPendingRecovery());
+            CHECK(!store.hasPendingRecovery());
         };
         CHECK(choose(SourceSide::Stage2, ChoiceAction::Accept) == Transition::Applied);
         CHECK(choose(SourceSide::Stage3, ChoiceAction::Ignore) == Transition::Applied);
-        const auto chosen = model.file("choices")->current().draft;
+        const auto chosen = store.file("choices")->current().draft;
         CHECK(chosen.text.starts_with("header\nleft first\nleft second\nbridge\n<<<<<<< ours\n"));
         CHECK(chosen.unresolvedMarkers == 1);
         check();
-        CHECK(await(model.undo("choices", model.file("choices")->current().id)) == Transition::Applied);
-        CHECK(model.file("choices")->current().draft.text == test_support::markedText(true));
+        CHECK(await(store.undo("choices", store.file("choices")->current().id)) == Transition::Applied);
+        CHECK(store.file("choices")->current().draft.text == test_support::markedText(true));
         check();
-        CHECK(await(model.redo("choices", model.file("choices")->current().id)) == Transition::Applied);
-        CHECK(model.file("choices")->current().draft == chosen);
+        CHECK(await(store.redo("choices", store.file("choices")->current().id)) == Transition::Applied);
+        CHECK(store.file("choices")->current().draft == chosen);
         check();
-        auto reopened = replayedFile(model.recoveryDirectory());
+        auto reopened = replayedFile(store.recoveryDirectory());
         CHECK(reopened.undo(reopened.current().id) == Transition::Applied);
         CHECK(reopened.current().draft.text == test_support::markedText(true)
               && reopened.current().draft.unresolvedMarkers == 2);
@@ -613,17 +608,18 @@ int main(int argc, char **argv)
     suite.run("replay derives the marker count against the captured sources", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
-        TestSession model(directory.path() + "/recovery");
-        CHECK(model.appendFile(test_support::headingFile()));
-        CHECK(model.file("choices")->current().draft.unresolvedMarkers == 1);
-        auto launch = replayedFile(model.recoveryDirectory());
-        CHECK(launch.current().draft.unresolvedMarkers == 1 && launch.markers() == model.file("choices")->markers());
-        auto resolved = model.file("choices")->current().draft;
+        SessionStore store(directory.path() + "/recovery");
+        CHECK(store.appendFile(test_support::headingFile()));
+        test_support::awaitRecovery(store);
+        CHECK(store.file("choices")->current().draft.unresolvedMarkers == 1);
+        auto launch = replayedFile(store.recoveryDirectory());
+        CHECK(launch.current().draft.unresolvedMarkers == 1 && launch.markers() == store.file("choices")->markers());
+        auto resolved = store.file("choices")->current().draft;
         resolved.text = "Changes\n=======\nintro\nleft line\ntail\n";
-        CHECK(await(model.replaceDraft("choices", 1, resolved)) == Transition::Applied);
-        const auto &live = *model.file("choices");
+        CHECK(await(store.replaceDraft("choices", 1, resolved)) == Transition::Applied);
+        const auto &live = *store.file("choices");
         CHECK(live.current().draft.unresolvedMarkers == 0);
-        auto replay = replayedFile(model.recoveryDirectory());
+        auto replay = replayedFile(store.recoveryDirectory());
         CHECK(replay.current().draft == live.current().draft && replay.markers() == live.markers());
         CHECK(replay.current().draft.unresolvedMarkers == 0);
         CHECK(await(replay.beginMarkResolved(replay.current().id, true)) == Transition::Applied);
@@ -632,41 +628,41 @@ int main(int argc, char **argv)
         QTemporaryDir directory;
         CHECK(directory.isValid());
         const auto faults = std::make_shared<test_support::SyncFaults>();
-        TestSession model(directory.path() + "/recovery", faults);
-        CHECK(model.appendFile(recoverableFile()));
-        CHECK(await(model.replaceDraft("recoverable", 1, savedDraft())) == Transition::Applied);
-        CHECK(model.file("recoverable")->facts().unsaved && !model.file("recoverable")->publication().checkpoint());
-        const auto savedRevision = model.file("recoverable")->current().id;
-        CHECK(await(model.recordCheckpoint("recoverable", savedRevision, Outcome::Succeeded)) == Transition::Applied);
-        CHECK(model.file("recoverable")->publication().checkpoint()
-              && model.file("recoverable")->revision(*model.file("recoverable")->publication().checkpoint())->draft
+        auto [store, rows] = test_support::TestSession(directory.path() + "/recovery", faults);
+        CHECK(store.appendFile(recoverableFile()));
+        CHECK(await(store.replaceDraft("recoverable", 1, savedDraft())) == Transition::Applied);
+        CHECK(store.file("recoverable")->facts().unsaved && !store.file("recoverable")->publication().checkpoint());
+        const auto savedRevision = store.file("recoverable")->current().id;
+        CHECK(await(store.recordCheckpoint("recoverable", savedRevision, Outcome::Succeeded)) == Transition::Applied);
+        CHECK(store.file("recoverable")->publication().checkpoint()
+              && store.file("recoverable")->revision(*store.file("recoverable")->publication().checkpoint())->draft
                   == savedDraft());
-        CHECK(!model.file("recoverable")->facts().unsaved && !model.file("recoverable")->publication().written()
-              && !model.file("recoverable")->publication().staged()
-              && !model.file("recoverable")->publication().reviewed());
-        CHECK(role(model, SessionModel::StatusRole).toString()
+        CHECK(!store.file("recoverable")->facts().unsaved && !store.file("recoverable")->publication().written()
+              && !store.file("recoverable")->publication().staged()
+              && !store.file("recoverable")->publication().reviewed());
+        CHECK(role(rows, SessionModel::StatusRole).toString()
               == "Draft saved in Branch Truce; repository file unchanged");
-        CHECK(await(model.replaceDraft("recoverable", savedRevision, unsavedDraft())) == Transition::Applied);
-        const auto discardedRevision = model.file("recoverable")->current().id;
-        CHECK(model.file("recoverable")->facts().unsaved
-              && model.file("recoverable")->revision(*model.file("recoverable")->publication().checkpoint())->draft
+        CHECK(await(store.replaceDraft("recoverable", savedRevision, unsavedDraft())) == Transition::Applied);
+        const auto discardedRevision = store.file("recoverable")->current().id;
+        CHECK(store.file("recoverable")->facts().unsaved
+              && store.file("recoverable")->revision(*store.file("recoverable")->publication().checkpoint())->draft
                   == savedDraft());
         {
             const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
-            CHECK(await(model.discardToCheckpoint("recoverable", discardedRevision)) == Transition::Blocked);
+            CHECK(await(store.discardToCheckpoint("recoverable", discardedRevision)) == Transition::Blocked);
             CHECK(faults->failures == 1);
         }
-        CHECK(model.hasPendingRecovery() && model.file("recoverable")->current().draft == unsavedDraft());
-        CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+        CHECK(store.hasPendingRecovery() && store.file("recoverable")->current().draft == unsavedDraft());
+        CHECK(role(rows, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
               == FileStates::RecoveryState::Failed);
-        CHECK(model.retryPendingRecovery("recoverable"));
-        CHECK(model.file("recoverable")->current().draft == savedDraft());
-        CHECK(!model.file("recoverable")->facts().unsaved && !model.file("recoverable")->publication().written()
-              && !model.file("recoverable")->publication().staged());
-        storage::RecoveryStore store(model.recoveryDirectory());
-        auto read = store.read();
+        CHECK(await(store.retryRecovery("recoverable")) == Transition::Applied);
+        CHECK(store.file("recoverable")->current().draft == savedDraft());
+        CHECK(!store.file("recoverable")->facts().unsaved && !store.file("recoverable")->publication().written()
+              && !store.file("recoverable")->publication().staged());
+        storage::RecoveryStore journal(store.recoveryDirectory());
+        auto read = journal.read();
         CHECK(read.succeeded && read.transactions.back().state.value("action") == "discard-to-checkpoint");
-        const auto drafts = test_support::recordedDrafts(store);
+        const auto drafts = test_support::recordedDrafts(journal);
         checkDraft(drafts.back(), savedDraft());
         bool sawManualSave = false;
         bool sawLaterEdit = false;
@@ -684,50 +680,50 @@ int main(int argc, char **argv)
                 sawLaterEdit = true;
         }
         CHECK(sawManualSave && sawLaterEdit);
-        const auto restored = replayedFile(model.recoveryDirectory());
+        const auto restored = replayedFile(store.recoveryDirectory());
         CHECK(restored.current().draft == savedDraft() && restored.current().draft != unsavedDraft());
         CHECK(restored.publication().checkpoint()
               && restored.revision(*restored.publication().checkpoint())->draft == savedDraft());
         CHECK(!restored.facts().unsaved && !restored.publication().written() && !restored.publication().staged());
 
-        CHECK(await(model.replaceDraft("recoverable", model.file("recoverable")->current().id, unsavedDraft()))
+        CHECK(await(store.replaceDraft("recoverable", store.file("recoverable")->current().id, unsavedDraft()))
               == Transition::Applied);
-        const auto edited = *model.file("recoverable");
+        const auto edited = *store.file("recoverable");
         {
             const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
-            CHECK(await(model.recordCheckpoint("recoverable", edited.current().id, Outcome::Succeeded))
+            CHECK(await(store.recordCheckpoint("recoverable", edited.current().id, Outcome::Succeeded))
                   == Transition::Blocked);
             CHECK(faults->failures == 1);
         }
-        CHECK(model.file("recoverable")->current().id == edited.current().id);
-        CHECK(model.file("recoverable")->current().draft == unsavedDraft());
-        CHECK(model.file("recoverable")->revision(*model.file("recoverable")->publication().checkpoint())->draft
+        CHECK(store.file("recoverable")->current().id == edited.current().id);
+        CHECK(store.file("recoverable")->current().draft == unsavedDraft());
+        CHECK(store.file("recoverable")->revision(*store.file("recoverable")->publication().checkpoint())->draft
               == savedDraft());
-        CHECK(model.file("recoverable")->facts().unsaved);
-        CHECK(role(model, SessionModel::StatusRole).toString() == "Draft save failed");
-        CHECK(role(model, SessionModel::UnsavedRole).toBool());
-        CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+        CHECK(store.file("recoverable")->facts().unsaved);
+        CHECK(role(rows, SessionModel::StatusRole).toString() == "Draft save failed");
+        CHECK(role(rows, SessionModel::UnsavedRole).toBool());
+        CHECK(role(rows, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
               == FileStates::RecoveryState::SaveFailed);
-        CHECK(model.file("recoverable")->current().draft.text == unsavedDraft().text);
-        CHECK(role(model, SessionModel::FinishBlockersRole)
+        CHECK(store.file("recoverable")->current().draft.text == unsavedDraft().text);
+        CHECK(role(rows, SessionModel::FinishBlockersRole)
                   .toStringList()
                   .contains("Draft save failed; the edited result is still available"));
-        CHECK(!model.file("recoverable")->publication().written()
-              && !model.file("recoverable")->publication().staged());
-        CHECK(await(model.discardToCheckpoint("recoverable", edited.current().id)) == Transition::Blocked);
-        CHECK(model.retryPendingRecovery("recoverable"));
-        CHECK(!model.hasPendingRecovery()
-              && model.file("recoverable")->revision(*model.file("recoverable")->publication().checkpoint())->draft
+        CHECK(!store.file("recoverable")->publication().written()
+              && !store.file("recoverable")->publication().staged());
+        CHECK(await(store.discardToCheckpoint("recoverable", edited.current().id)) == Transition::Blocked);
+        CHECK(await(store.retryRecovery("recoverable")) == Transition::Applied);
+        CHECK(!store.hasPendingRecovery()
+              && store.file("recoverable")->revision(*store.file("recoverable")->publication().checkpoint())->draft
                   == unsavedDraft());
-        CHECK(!model.file("recoverable")->facts().unsaved && !model.file("recoverable")->publication().written()
-              && !model.file("recoverable")->publication().staged());
-        CHECK(role(model, SessionModel::StatusRole).toString()
+        CHECK(!store.file("recoverable")->facts().unsaved && !store.file("recoverable")->publication().written()
+              && !store.file("recoverable")->publication().staged());
+        CHECK(role(rows, SessionModel::StatusRole).toString()
               == "Draft saved in Branch Truce; repository file unchanged");
-        read = storage::RecoveryStore(model.recoveryDirectory()).read();
+        read = storage::RecoveryStore(store.recoveryDirectory()).read();
         CHECK(read.succeeded && read.transactions.back().state.value("action") == "manual-save");
         CHECK(read.transactions.back().state.value("written").isNull()
               && read.transactions.back().state.value("staged").isNull());
-        const auto retried = replayedFile(model.recoveryDirectory());
+        const auto retried = replayedFile(store.recoveryDirectory());
         CHECK(retried.current().draft == unsavedDraft() && retried.publication().checkpoint()
               && retried.revision(*retried.publication().checkpoint())->draft == unsavedDraft()
               && !retried.publication().written() && !retried.publication().staged());
@@ -736,118 +732,119 @@ int main(int argc, char **argv)
         QTemporaryDir directory;
         CHECK(directory.isValid());
         const auto faults = std::make_shared<test_support::SyncFaults>();
-        TestSession model(directory.path() + "/recovery", faults);
-        CHECK(model.appendFile(recoverableFile()));
-        CHECK(model.appendFile(FileSession("other", "other.txt", draft())));
-        CHECK(!model.hasPendingRecovery());
-        CHECK(await(model.replaceDraft("recoverable", 1, savedDraft())) == Transition::Applied);
-        const auto savedRevision = model.file("recoverable")->current().id;
-        CHECK(await(model.recordCheckpoint("recoverable", savedRevision, Outcome::Succeeded)) == Transition::Applied);
-        CHECK(await(model.replaceDraft("recoverable", savedRevision, unsavedDraft())) == Transition::Applied);
-        const auto discardedRevision = model.file("recoverable")->current().id;
-        const auto otherRevision = model.file("other")->current().id;
-        const auto otherDraft = model.file("other")->current().draft;
-        storage::RecoveryStore store(model.recoveryDirectory());
+        auto [store, rows] = test_support::TestSession(directory.path() + "/recovery", faults);
+        CHECK(store.appendFile(recoverableFile()));
+        CHECK(store.appendFile(FileSession("other", "other.txt", draft())));
+        test_support::awaitRecovery(store);
+        CHECK(!store.hasPendingRecovery());
+        CHECK(await(store.replaceDraft("recoverable", 1, savedDraft())) == Transition::Applied);
+        const auto savedRevision = store.file("recoverable")->current().id;
+        CHECK(await(store.recordCheckpoint("recoverable", savedRevision, Outcome::Succeeded)) == Transition::Applied);
+        CHECK(await(store.replaceDraft("recoverable", savedRevision, unsavedDraft())) == Transition::Applied);
+        const auto discardedRevision = store.file("recoverable")->current().id;
+        const auto otherRevision = store.file("other")->current().id;
+        const auto otherDraft = store.file("other")->current().draft;
+        storage::RecoveryStore journal(store.recoveryDirectory());
         qsizetype records = 0;
         QString request;
         {
             const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
-            CHECK(await(model.discardToCheckpoint("recoverable", discardedRevision)) == Transition::Blocked);
+            CHECK(await(store.discardToCheckpoint("recoverable", discardedRevision)) == Transition::Blocked);
             CHECK(faults->failures == 1);
         }
-        CHECK(model.hasPendingRecovery() && model.file("recoverable")->current().draft == unsavedDraft());
-        CHECK(model.pendingDraft("recoverable") && *model.pendingDraft("recoverable") == savedDraft());
-        CHECK(model.file("recoverable")->revision(*model.file("recoverable")->publication().checkpoint())->draft
+        CHECK(store.hasPendingRecovery() && store.file("recoverable")->current().draft == unsavedDraft());
+        CHECK(store.pendingDraft("recoverable") && *store.pendingDraft("recoverable") == savedDraft());
+        CHECK(store.file("recoverable")->revision(*store.file("recoverable")->publication().checkpoint())->draft
               == savedDraft());
-        CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+        CHECK(role(rows, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
               == FileStates::RecoveryState::Failed);
-        CHECK(await(model.replaceDraft("other", otherRevision, draft("blocked other"))) == Transition::Blocked);
-        CHECK(await(model.undo("recoverable", discardedRevision)) == Transition::Blocked);
-        CHECK(await(model.recordCheckpoint("recoverable", discardedRevision, Outcome::Succeeded))
+        CHECK(await(store.replaceDraft("other", otherRevision, draft("blocked other"))) == Transition::Blocked);
+        CHECK(await(store.undo("recoverable", discardedRevision)) == Transition::Blocked);
+        CHECK(await(store.recordCheckpoint("recoverable", discardedRevision, Outcome::Succeeded))
               == Transition::Blocked);
-        CHECK(model.file("other")->current().id == otherRevision && model.file("other")->current().draft == otherDraft);
-        CHECK(model.file("recoverable")->current().draft == unsavedDraft());
+        CHECK(store.file("other")->current().id == otherRevision && store.file("other")->current().draft == otherDraft);
+        CHECK(store.file("recoverable")->current().draft == unsavedDraft());
         {
-            const auto pending = store.read();
+            const auto pending = journal.read();
             CHECK(pending.succeeded && pending.transactions.back().state.value("action") == "discard-to-checkpoint");
             records = pending.transactions.size();
             request = pending.transactions.back().id;
-            checkDraft(test_support::recordedDrafts(store).back(), savedDraft());
+            checkDraft(test_support::recordedDrafts(journal).back(), savedDraft());
         }
-        CHECK(model.retryPendingRecovery("recoverable"));
-        CHECK(!model.hasPendingRecovery() && model.file("recoverable")->current().draft == savedDraft());
-        CHECK(model.file("recoverable")->current().draft.decisions.at("right").value == DecisionValue::Ignored);
-        CHECK(!model.file("recoverable")->publication().written()
-              && !model.file("recoverable")->publication().staged());
+        CHECK(await(store.retryRecovery("recoverable")) == Transition::Applied);
+        CHECK(!store.hasPendingRecovery() && store.file("recoverable")->current().draft == savedDraft());
+        CHECK(store.file("recoverable")->current().draft.decisions.at("right").value == DecisionValue::Ignored);
+        CHECK(!store.file("recoverable")->publication().written()
+              && !store.file("recoverable")->publication().staged());
         {
-            const auto committed = store.read();
+            const auto committed = journal.read();
             CHECK(committed.succeeded && committed.transactions.size() == records);
             CHECK(committed.transactions.back().id == request);
             CHECK(committed.transactions.back().state.value("action") == "discard-to-checkpoint");
             CHECK(committed.transactions.back().state.value("written").isNull()
                   && committed.transactions.back().state.value("staged").isNull());
-            checkDraft(test_support::recordedDrafts(store).back(), savedDraft());
+            checkDraft(test_support::recordedDrafts(journal).back(), savedDraft());
         }
-        CHECK(await(model.replaceDraft("other", otherRevision, draft("other stayed editable"))) == Transition::Applied);
+        CHECK(await(store.replaceDraft("other", otherRevision, draft("other stayed editable"))) == Transition::Applied);
 
-        CHECK(await(model.replaceDraft("recoverable", model.file("recoverable")->current().id, unsavedDraft()))
+        CHECK(await(store.replaceDraft("recoverable", store.file("recoverable")->current().id, unsavedDraft()))
               == Transition::Applied);
-        const auto editedRevision = model.file("recoverable")->current().id;
-        const auto otherEdited = model.file("other")->current();
+        const auto editedRevision = store.file("recoverable")->current().id;
+        const auto otherEdited = store.file("other")->current();
         {
             const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
-            CHECK(await(model.recordCheckpoint("recoverable", editedRevision, Outcome::Succeeded))
+            CHECK(await(store.recordCheckpoint("recoverable", editedRevision, Outcome::Succeeded))
                   == Transition::Blocked);
             CHECK(faults->failures == 1);
         }
-        CHECK(model.file("recoverable")->current().id == editedRevision);
-        CHECK(model.file("recoverable")->current().draft == unsavedDraft());
-        CHECK(model.pendingDraft("recoverable") && *model.pendingDraft("recoverable") == unsavedDraft());
-        CHECK(model.file("recoverable")->revision(*model.file("recoverable")->publication().checkpoint())->draft
+        CHECK(store.file("recoverable")->current().id == editedRevision);
+        CHECK(store.file("recoverable")->current().draft == unsavedDraft());
+        CHECK(store.pendingDraft("recoverable") && *store.pendingDraft("recoverable") == unsavedDraft());
+        CHECK(store.file("recoverable")->revision(*store.file("recoverable")->publication().checkpoint())->draft
               == savedDraft());
-        CHECK(model.file("recoverable")->facts().unsaved && !model.file("recoverable")->publication().written()
-              && !model.file("recoverable")->publication().staged());
-        CHECK(role(model, SessionModel::StatusRole).toString() == "Draft save failed");
-        CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+        CHECK(store.file("recoverable")->facts().unsaved && !store.file("recoverable")->publication().written()
+              && !store.file("recoverable")->publication().staged());
+        CHECK(role(rows, SessionModel::StatusRole).toString() == "Draft save failed");
+        CHECK(role(rows, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
               == FileStates::RecoveryState::SaveFailed);
-        CHECK(model.file("recoverable")->current().draft.text == unsavedDraft().text);
-        CHECK(await(model.replaceDraft("other", otherEdited.id, draft("must stay blocked"))) == Transition::Blocked);
-        CHECK(await(model.undo("recoverable", editedRevision)) == Transition::Blocked);
-        CHECK(await(model.discardToCheckpoint("recoverable", editedRevision)) == Transition::Blocked);
-        CHECK(model.file("other")->current().id == otherEdited.id
-              && model.file("other")->current().draft == otherEdited.draft);
-        CHECK(model.file("recoverable")->current().draft == unsavedDraft());
+        CHECK(store.file("recoverable")->current().draft.text == unsavedDraft().text);
+        CHECK(await(store.replaceDraft("other", otherEdited.id, draft("must stay blocked"))) == Transition::Blocked);
+        CHECK(await(store.undo("recoverable", editedRevision)) == Transition::Blocked);
+        CHECK(await(store.discardToCheckpoint("recoverable", editedRevision)) == Transition::Blocked);
+        CHECK(store.file("other")->current().id == otherEdited.id
+              && store.file("other")->current().draft == otherEdited.draft);
+        CHECK(store.file("recoverable")->current().draft == unsavedDraft());
         {
-            const auto pending = store.read();
+            const auto pending = journal.read();
             CHECK(pending.succeeded && pending.transactions.back().state.value("action") == "manual-save");
             records = pending.transactions.size();
             request = pending.transactions.back().id;
             CHECK(pending.transactions.back().state.value("written").isNull()
                   && pending.transactions.back().state.value("staged").isNull());
-            checkDraft(test_support::recordedDrafts(store).back(), unsavedDraft());
+            checkDraft(test_support::recordedDrafts(journal).back(), unsavedDraft());
         }
-        CHECK(model.retryPendingRecovery("recoverable"));
-        CHECK(!model.hasPendingRecovery() && model.file("recoverable")->current().draft == unsavedDraft());
-        CHECK(model.file("recoverable")->publication().checkpoint()
-              && model.file("recoverable")->revision(*model.file("recoverable")->publication().checkpoint())->draft
+        CHECK(await(store.retryRecovery("recoverable")) == Transition::Applied);
+        CHECK(!store.hasPendingRecovery() && store.file("recoverable")->current().draft == unsavedDraft());
+        CHECK(store.file("recoverable")->publication().checkpoint()
+              && store.file("recoverable")->revision(*store.file("recoverable")->publication().checkpoint())->draft
                   == unsavedDraft());
-        CHECK(model.file("recoverable")->current().draft.decisions.at("right").value == DecisionValue::Accepted);
-        CHECK(!model.file("recoverable")->facts().unsaved && !model.file("recoverable")->publication().written()
-              && !model.file("recoverable")->publication().staged());
-        CHECK(role(model, SessionModel::StatusRole).toString()
+        CHECK(store.file("recoverable")->current().draft.decisions.at("right").value == DecisionValue::Accepted);
+        CHECK(!store.file("recoverable")->facts().unsaved && !store.file("recoverable")->publication().written()
+              && !store.file("recoverable")->publication().staged());
+        CHECK(role(rows, SessionModel::StatusRole).toString()
               == "Draft saved in Branch Truce; repository file unchanged");
         {
-            const auto committed = store.read();
+            const auto committed = journal.read();
             CHECK(committed.succeeded && committed.transactions.size() == records);
             CHECK(committed.transactions.back().id == request);
             CHECK(committed.transactions.back().state.value("action") == "manual-save");
             CHECK(committed.transactions.back().state.value("written").isNull()
                   && committed.transactions.back().state.value("staged").isNull());
-            checkDraft(test_support::recordedDrafts(store).back(), unsavedDraft());
+            checkDraft(test_support::recordedDrafts(journal).back(), unsavedDraft());
         }
-        CHECK(await(model.replaceDraft("other", otherEdited.id, draft("unblocked after retry")))
+        CHECK(await(store.replaceDraft("other", otherEdited.id, draft("unblocked after retry")))
               == Transition::Applied);
-        const auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+        const auto replay = replayRecovery(storage::RecoveryStore(store.recoveryDirectory()));
         CHECK(replay.succeeded && replay.files.size() == 2);
         const FileSession *restored = nullptr;
         for (const auto &file : replay.files)
@@ -860,219 +857,232 @@ int main(int argc, char **argv)
     suite.run("typed edits apply at once, one undo takes back their burst and one record holds it", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
-        TestSession model(directory.path() + "/recovery");
-        CHECK(model.appendFile(test_support::choiceFile()));
-        const auto launch = model.file("choices")->current();
-        const auto before = records(model);
-        typeInto(model, "choices", 0, "abc");
-        const auto typed = model.file("choices")->current();
+        auto [store, rows] = test_support::TestSession(directory.path() + "/recovery");
+        CHECK(store.appendFile(test_support::choiceFile()));
+        test_support::awaitRecovery(store);
+        const auto launch = store.file("choices")->current();
+        const auto before = records(store);
+        typeInto(store, "choices", 0, "abc");
+        const auto typed = store.file("choices")->current();
         CHECK(typed.id == launch.id + 3 && typed.draft.text == "abc" + launch.draft.text);
         // Applied, aligned later and not yet acknowledged.
-        CHECK(model.file("choices")->pendingAlignment() != nullptr);
-        CHECK(model.recording("choices") && model.holdsUserWork() && records(model) == before);
-        CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+        CHECK(store.file("choices")->pendingAlignment() != nullptr);
+        CHECK(store.recording("choices") && store.holdsUserWork() && records(store) == before);
+        CHECK(role(rows, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
               == FileStates::RecoveryState::Recording);
         // The burst ends after a pause, and its record is written behind the editor.
-        test_support::waitUntil([&] { return !model.recording(); }, "the typed burst was not recorded");
-        CHECK(records(model) == before + 1 && !model.hasPendingRecovery());
-        CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+        test_support::waitUntil([&] { return !store.recording(); }, "the typed burst was not recorded");
+        CHECK(records(store) == before + 1 && !store.hasPendingRecovery());
+        CHECK(role(rows, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
               == FileStates::RecoveryState::Durable);
-        const auto replayed = replayedFile(model.recoveryDirectory());
+        const auto replayed = replayedFile(store.recoveryDirectory());
         CHECK(replayed.current().id == typed.id && replayed.current().draft.text == typed.draft.text);
-        CHECK(await(model.undo("choices", typed.id)) == Transition::Applied);
-        CHECK(model.file("choices")->current().draft.text == launch.draft.text && !model.file("choices")->canUndo());
-        CHECK(replayedFile(model.recoveryDirectory()).current().draft.text == launch.draft.text);
+        CHECK(await(store.undo("choices", typed.id)) == Transition::Applied);
+        CHECK(store.file("choices")->current().draft.text == launch.draft.text && !store.file("choices")->canUndo());
+        CHECK(replayedFile(store.recoveryDirectory()).current().draft.text == launch.draft.text);
     });
     suite.run("a typed line break starts a new undo step", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
-        TestSession model(directory.path() + "/recovery");
-        CHECK(model.appendFile(test_support::choiceFile()));
-        const auto launch = model.file("choices")->current().draft.text;
-        typeInto(model, "choices", 0, "a\nb");
-        CHECK(model.recordTyping() && !model.recording());
-        CHECK(await(model.undo("choices", model.file("choices")->current().id)) == Transition::Applied);
-        CHECK(model.file("choices")->current().draft.text == "a" + launch);
-        CHECK(await(model.undo("choices", model.file("choices")->current().id)) == Transition::Applied);
-        CHECK(model.file("choices")->current().draft.text == launch);
-        const auto drafts = test_support::recordedDrafts(storage::RecoveryStore(model.recoveryDirectory()));
+        SessionStore store(directory.path() + "/recovery");
+        CHECK(store.appendFile(test_support::choiceFile()));
+        test_support::awaitRecovery(store);
+        const auto launch = store.file("choices")->current().draft.text;
+        typeInto(store, "choices", 0, "a\nb");
+        store.recordTyping();
+        test_support::awaitRecovery(store);
+        CHECK(!store.hasPendingRecovery() && !store.recording());
+        CHECK(await(store.undo("choices", store.file("choices")->current().id)) == Transition::Applied);
+        CHECK(store.file("choices")->current().draft.text == "a" + launch);
+        CHECK(await(store.undo("choices", store.file("choices")->current().id)) == Transition::Applied);
+        CHECK(store.file("choices")->current().draft.text == launch);
+        const auto drafts = test_support::recordedDrafts(storage::RecoveryStore(store.recoveryDirectory()));
         CHECK(drafts.size() == 5);
         CHECK(drafts[1].text == "a" + launch && drafts[2].text == "a\nb" + launch);
     });
     suite.run("a command records the typing before it, so the journal keeps the order of edits", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
-        TestSession model(directory.path() + "/recovery");
-        CHECK(model.appendFile(test_support::choiceFile()));
-        const auto before = records(model);
-        typeInto(model, "choices", 0, "saved ");
-        const auto typed = model.file("choices")->current();
-        CHECK(await(model.recordCheckpoint("choices", typed.id, Outcome::Succeeded)) == Transition::Applied);
-        CHECK(!model.recording() && records(model) == before + 2);
-        const auto replayed = replayedFile(model.recoveryDirectory());
+        SessionStore store(directory.path() + "/recovery");
+        CHECK(store.appendFile(test_support::choiceFile()));
+        test_support::awaitRecovery(store);
+        const auto before = records(store);
+        typeInto(store, "choices", 0, "saved ");
+        const auto typed = store.file("choices")->current();
+        CHECK(await(store.recordCheckpoint("choices", typed.id, Outcome::Succeeded)) == Transition::Applied);
+        CHECK(!store.recording() && records(store) == before + 2);
+        const auto replayed = replayedFile(store.recoveryDirectory());
         CHECK(replayed.publication().checkpoint() == typed.id);
         CHECK(replayed.revision(typed.id)->draft.text == typed.draft.text);
         // The next key starts a new burst rather than joining the one the Save recorded.
-        typeInto(model, "choices", 0, "x");
-        CHECK(await(model.undo("choices", model.file("choices")->current().id)) == Transition::Applied);
-        CHECK(model.file("choices")->current().draft.text == typed.draft.text);
+        typeInto(store, "choices", 0, "x");
+        CHECK(await(store.undo("choices", store.file("choices")->current().id)) == Transition::Applied);
+        CHECK(store.file("choices")->current().draft.text == typed.draft.text);
     });
     suite.run("typing that puts every recorded field back leaves no record and no undo step", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
-        TestSession model(directory.path() + "/recovery");
-        CHECK(model.appendFile(test_support::choiceFile()));
-        CHECK(awaitAligned(model, model.editResult("choices", 1, {{0, 0}, "hand "})) == Transition::Applied);
-        const auto edited = model.file("choices")->current();
-        const auto before = records(model);
-        typeInto(model, "choices", 2, "q");
-        const auto revision = model.file("choices")->current().id;
-        CHECK(model.typeResult("choices", revision, {{2, 3}, ""}) == Transition::Applied);
+        SessionStore store(directory.path() + "/recovery");
+        CHECK(store.appendFile(test_support::choiceFile()));
+        CHECK(awaitAligned(store, store.editResult("choices", 1, {{0, 0}, "hand "})) == Transition::Applied);
+        const auto edited = store.file("choices")->current();
+        const auto before = records(store);
+        typeInto(store, "choices", 2, "q");
+        const auto revision = store.file("choices")->current().id;
+        CHECK(store.typeResult("choices", revision, {{2, 3}, ""}) == Transition::Applied);
         // Inside the hand-edited range, so text, decisions, hand-edit flags and ranges are as they
         // were: the file is back at the revision before the burst at once.
-        CHECK(model.file("choices")->current().id == edited.id && !model.recording());
-        CHECK(model.file("choices")->correspondence()->handEditedRanges() == edited.correspondence->handEditedRanges());
-        CHECK(model.recordTyping() && records(model) == before);
-        const auto replayed = replayedFile(model.recoveryDirectory());
+        CHECK(store.file("choices")->current().id == edited.id && !store.recording());
+        CHECK(store.file("choices")->correspondence()->handEditedRanges() == edited.correspondence->handEditedRanges());
+        CHECK(store.recordTyping() && records(store) == before);
+        const auto replayed = replayedFile(store.recoveryDirectory());
         CHECK(replayed.current().id == edited.id && replayed.current().draft.text == edited.draft.text);
-        CHECK(await(model.undo("choices", edited.id)) == Transition::Applied && !model.file("choices")->canUndo());
+        CHECK(await(store.undo("choices", edited.id)) == Transition::Applied && !store.file("choices")->canUndo());
     });
     suite.run("a failed typed record keeps every later typed edit pending in order until one retry", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
         const auto faults = std::make_shared<test_support::SyncFaults>();
-        TestSession model(directory.path() + "/recovery", faults);
-        CHECK(model.appendFile(test_support::choiceFile()));
-        const auto launch = model.file("choices")->current();
-        const auto before = records(model);
+        auto [store, rows] = test_support::TestSession(directory.path() + "/recovery", faults);
+        CHECK(store.appendFile(test_support::choiceFile()));
+        test_support::awaitRecovery(store);
+        const auto launch = store.file("choices")->current();
+        const auto before = records(store);
         {
             const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
             // The line break ends the first burst, whose record goes to the worker; the rest of
             // the typing is applied before its outcome arrives.
-            typeInto(model, "choices", 0, "a\nb");
-            CHECK(model.file("choices")->current().draft.text == "a\nb" + launch.draft.text);
-            CHECK(!model.recordTyping());
+            typeInto(store, "choices", 0, "a\nb");
+            CHECK(store.file("choices")->current().draft.text == "a\nb" + launch.draft.text);
+            store.recordTyping();
+            test_support::awaitRecovery(store);
+            CHECK(store.hasPendingRecovery());
             CHECK_EQ(faults->failures.load(), 1);
         }
         // The file shows its acknowledged state and the editor the newest pending draft.
-        CHECK(model.hasPendingRecovery() && !model.recording());
-        CHECK(model.file("choices")->current().id == launch.id
-              && model.file("choices")->current().draft.text == launch.draft.text);
-        CHECK(model.pendingDraft("choices") && model.pendingDraft("choices")->text == "a\nb" + launch.draft.text);
-        CHECK(model.pendingAction("choices") == SessionStore::Action::ReplaceDraft);
-        CHECK(!model.pendingError("choices").isEmpty());
-        CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+        CHECK(store.hasPendingRecovery() && !store.recording());
+        CHECK(store.file("choices")->current().id == launch.id
+              && store.file("choices")->current().draft.text == launch.draft.text);
+        CHECK(store.pendingDraft("choices") && store.pendingDraft("choices")->text == "a\nb" + launch.draft.text);
+        CHECK(store.pendingAction("choices") == SessionStore::Action::ReplaceDraft);
+        CHECK(!store.pendingError("choices").isEmpty());
+        CHECK(role(rows, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
               == FileStates::RecoveryState::Failed);
-        CHECK(model.typeResult("choices", launch.id, {{0, 0}, "z"}) == Transition::Blocked);
-        CHECK(model.retryPendingRecovery("choices"));
-        CHECK(!model.hasPendingRecovery() && !model.pendingDraft("choices"));
-        const auto typed = model.file("choices")->current();
+        CHECK(store.typeResult("choices", launch.id, {{0, 0}, "z"}) == Transition::Blocked);
+        CHECK(await(store.retryRecovery("choices")) == Transition::Applied);
+        CHECK(!store.hasPendingRecovery() && !store.pendingDraft("choices"));
+        const auto typed = store.file("choices")->current();
         CHECK(typed.draft.text == "a\nb" + launch.draft.text);
         // Each record once, in the order typed.
-        const auto drafts = test_support::recordedDrafts(storage::RecoveryStore(model.recoveryDirectory()));
-        CHECK(records(model) == before + 2);
+        const auto drafts = test_support::recordedDrafts(storage::RecoveryStore(store.recoveryDirectory()));
+        CHECK(records(store) == before + 2);
         CHECK(drafts[drafts.size() - 2].text == "a" + launch.draft.text && drafts.back().text == typed.draft.text);
-        const auto replayed = replayedFile(model.recoveryDirectory());
+        const auto replayed = replayedFile(store.recoveryDirectory());
         CHECK(replayed.current().id == typed.id && replayed.current().draft.text == typed.draft.text);
-        CHECK(await(model.undo("choices", typed.id)) == Transition::Applied);
-        CHECK(model.file("choices")->current().draft.text == "a" + launch.draft.text);
+        CHECK(await(store.undo("choices", typed.id)) == Transition::Applied);
+        CHECK(store.file("choices")->current().draft.text == "a" + launch.draft.text);
     });
     suite.run("Save and undo queue behind delayed typing without acknowledging unfinished work", [] {
         QTemporaryDir directory;
         auto files = std::make_shared<DelayedFiles>();
-        TestSession model(directory.path() + "/recovery", files);
-        CHECK(model.appendFile(test_support::choiceFile()));
-        const auto initial = model.file("choices")->current().draft;
+        SessionStore store(directory.path() + "/recovery", files);
+        CHECK(store.appendFile(test_support::choiceFile()));
+        test_support::awaitRecovery(store);
+        const auto initial = store.file("choices")->current().draft;
         ReleaseFiles release{files};
         files->armed = true;
-        typeInto(model, "choices", 0, "typed ");
-        const auto typed = model.file("choices")->current();
-        auto saved = model.recordCheckpoint("choices", typed.id, Outcome::Succeeded);
-        auto undone = model.undo("choices", typed.id);
+        typeInto(store, "choices", 0, "typed ");
+        const auto typed = store.file("choices")->current();
+        auto saved = store.recordCheckpoint("choices", typed.id, Outcome::Succeeded);
+        auto undone = store.undo("choices", typed.id);
         test_support::waitUntil([&] { return files->entered.load(); }, "typing did not reach persistence");
         CHECK(!saved.isFinished() && !undone.isFinished());
-        CHECK(model.file("choices")->current().id == typed.id && !model.file("choices")->publication().checkpoint());
-        CHECK(!model.canFinish() && !model.handoffFacts().canLeave);
+        CHECK(store.file("choices")->current().id == typed.id && !store.file("choices")->publication().checkpoint());
+        CHECK(!SessionHandoff::build(store, {}).clean && !SessionHandoff::build(store, {}).canLeave);
         files->release.release();
         CHECK(await(saved) == Transition::Applied);
         CHECK(await(undone) == Transition::Applied);
-        CHECK(model.file("choices")->current().draft == initial);
-        const auto read = storage::RecoveryStore(model.recoveryDirectory()).read();
+        CHECK(store.file("choices")->current().draft == initial);
+        const auto read = storage::RecoveryStore(store.recoveryDirectory()).read();
         CHECK(read.succeeded && read.transactions.size() == 4);
         CHECK(read.transactions[1].state.value("action") == "replace-draft");
         CHECK(read.transactions[2].state.value("action") == "manual-save");
         CHECK(read.transactions[3].state.value("action") == "undo");
-        CHECK(replayedFile(model.recoveryDirectory()).current().draft == initial);
+        CHECK(replayedFile(store.recoveryDirectory()).current().draft == initial);
     });
     suite.run("a failed command holds another file and retry commits both original transactions in order", [] {
         QTemporaryDir directory;
         auto files = std::make_shared<DelayedFiles>();
-        TestSession model(directory.path() + "/recovery", files);
-        CHECK(model.appendFile(sessionFile("first")) && model.appendFile(sessionFile("second")));
+        SessionStore store(directory.path() + "/recovery", files);
+        CHECK(store.appendFile(sessionFile("first")) && store.appendFile(sessionFile("second")));
+        test_support::awaitRecovery(store);
         ReleaseFiles release{files};
         files->armed = true;
         files->arm(test_support::SyncFaults::Point::JournalSync);
-        auto first = model.editResult("first", 1, {{0, 0}, "one "});
-        auto second = model.editResult("second", 1, {{0, 0}, "two "});
+        auto first = store.editResult("first", 1, {{0, 0}, "one "});
+        auto second = store.editResult("second", 1, {{0, 0}, "two "});
         test_support::waitUntil([&] { return files->entered.load(); }, "command did not reach persistence");
         CHECK(!first.isFinished() && !second.isFinished());
-        CHECK(model.file("first")->current().id == 1 && model.file("second")->current().id == 1);
+        CHECK(store.file("first")->current().id == 1 && store.file("second")->current().id == 1);
         files->release.release();
         CHECK(await(first) == Transition::Blocked && await(second) == Transition::Blocked);
-        CHECK(files->failures == 1 && model.hasPendingRecovery());
-        CHECK(model.pendingDraft("first")->text == "one result\n");
-        CHECK(model.pendingDraft("second")->text == "two result\n");
-        const auto beforeRetry = storage::RecoveryStore(model.recoveryDirectory()).read();
+        CHECK(files->failures == 1 && store.hasPendingRecovery());
+        CHECK(store.pendingDraft("first")->text == "one result\n");
+        CHECK(store.pendingDraft("second")->text == "two result\n");
+        const auto beforeRetry = storage::RecoveryStore(store.recoveryDirectory()).read();
         CHECK(beforeRetry.succeeded && beforeRetry.transactions.size() == 3);
         const auto original = beforeRetry.transactions.back().id;
         files->entered = false;
         files->armed = true;
-        auto retry = model.retryRecovery("first");
+        auto retry = store.retryRecovery("first");
         test_support::waitUntil([&] { return files->entered.load(); }, "retry did not reach persistence");
-        CHECK(model.pendingDraft("first")->text == "one result\n");
-        CHECK(model.pendingDraft("second")->text == "two result\n");
+        CHECK(store.pendingDraft("first")->text == "one result\n");
+        CHECK(store.pendingDraft("second")->text == "two result\n");
         files->release.release();
         CHECK(await(retry) == Transition::Applied);
-        const auto committed = storage::RecoveryStore(model.recoveryDirectory()).read();
+        const auto committed = storage::RecoveryStore(store.recoveryDirectory()).read();
         CHECK(committed.succeeded && committed.transactions.size() == 4);
         CHECK(committed.transactions[2].id == original);
-        CHECK(RecoveryRecordReader(storage::RecoveryStore(model.recoveryDirectory()), committed.transactions[2].state)
+        CHECK(RecoveryRecordReader(storage::RecoveryStore(store.recoveryDirectory()), committed.transactions[2].state)
                   .fileId()
               == "first");
-        CHECK(RecoveryRecordReader(storage::RecoveryStore(model.recoveryDirectory()), committed.transactions[3].state)
+        CHECK(RecoveryRecordReader(storage::RecoveryStore(store.recoveryDirectory()), committed.transactions[3].state)
                   .fileId()
               == "second");
-        CHECK(model.file("first")->current().draft.text == "one result\n");
-        CHECK(model.file("second")->current().draft.text == "two result\n");
-        CHECK(await(model.undo("first", 2)) == Transition::Applied);
-        CHECK(await(model.undo("second", 2)) == Transition::Applied);
-        CHECK(model.file("first")->current().draft.text == "result\n");
-        CHECK(model.file("second")->current().draft.text == "result\n");
+        CHECK(store.file("first")->current().draft.text == "one result\n");
+        CHECK(store.file("second")->current().draft.text == "two result\n");
+        CHECK(await(store.undo("first", 2)) == Transition::Applied);
+        CHECK(await(store.undo("second", 2)) == Transition::Applied);
+        CHECK(store.file("first")->current().draft.text == "result\n");
+        CHECK(store.file("second")->current().draft.text == "result\n");
     });
     suite.run("a durable mutation receipt keeps its exact store lease across replacement", [] {
         QTemporaryDir directory;
-        TestSession model(directory.path() + "/recovery");
-        CHECK(model.appendFile(recoverableFile()));
-        const auto original = model.recoveryDirectory();
+        SessionStore store(directory.path() + "/recovery");
+        CHECK(store.appendFile(recoverableFile()));
+        test_support::awaitRecovery(store);
+        const auto original = store.recoveryDirectory();
         const auto transaction = mutationRecoveryTransaction(
-            *model.file("recoverable"), {QUuid::createUuid().toString(), MutationKind::Publication, {}});
-        const auto receipt = await(model.commitRecord(transaction));
-        CHECK(receipt.commit.succeeded && receipt.lease == model.recoveryLease());
-        CHECK(model.startNewRecoveryStore());
-        model.replaceFiles({recoverableFile()});
-        CHECK(model.recoveryLease() && model.recoveryLease() != receipt.lease);
-        CHECK(receipt.lease->directory() == original && model.recoveryDirectory() != original);
+            *store.file("recoverable"), {QUuid::createUuid().toString(), MutationKind::Publication, {}});
+        const auto receipt = await(store.commitRecord(transaction));
+        CHECK(receipt.commit.succeeded && receipt.lease == store.recoveryLease());
+        CHECK(store.startNewRecoveryStore());
+        store.replaceFiles({recoverableFile()});
+        test_support::awaitRecovery(store);
+        CHECK(store.recoveryLease() && store.recoveryLease() != receipt.lease);
+        CHECK(receipt.lease->directory() == original && store.recoveryDirectory() != original);
         const auto read = storage::RecoveryStore(original).read();
         CHECK(read.succeeded && read.transactions.back().id == transaction.id);
     });
     suite.run("closing drains an accepted command and finishes its durability future", [] {
         QTemporaryDir directory;
         const auto location = directory.path() + "/recovery";
-        auto model = std::make_unique<TestSession>(location);
-        CHECK(model->appendFile(test_support::choiceFile()));
-        auto command = model->editResult("choices", 1, {{0, 0}, "kept "});
+        auto store = std::make_unique<SessionStore>(location);
+        CHECK(store->appendFile(test_support::choiceFile()));
+        test_support::awaitRecovery(*store);
+        auto command = store->editResult("choices", 1, {{0, 0}, "kept "});
         CHECK(!command.isFinished());
-        model.reset();
+        store.reset();
         CHECK(command.isFinished() && command.result() == Transition::Applied);
         CHECK(replayedFile(location).current().draft.text.starts_with("kept "));
     });
@@ -1082,11 +1092,12 @@ int main(int argc, char **argv)
         const auto location = directory.path() + "/recovery";
         std::string typed;
         {
-            TestSession model(location);
-            CHECK(model.appendFile(test_support::choiceFile()));
-            typeInto(model, "choices", 0, "kept ");
-            typed = model.file("choices")->current().draft.text;
-            CHECK(model.recording());
+            SessionStore store(location);
+            CHECK(store.appendFile(test_support::choiceFile()));
+            test_support::awaitRecovery(store);
+            typeInto(store, "choices", 0, "kept ");
+            typed = store.file("choices")->current().draft.text;
+            CHECK(store.recording());
         }
         CHECK(replayedFile(location).current().draft.text == typed);
     });

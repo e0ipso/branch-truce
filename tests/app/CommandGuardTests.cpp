@@ -1,7 +1,6 @@
 // The command guard: the revision strings views pass, and each refusal checkCommand gives before a
 // result command can change work.
 #include "TestHarness.h"
-#include "TestSession.h"
 #include "app/CommandGuard.h"
 #include "fixtures/Await.h"
 #include "fixtures/ChoiceFile.h"
@@ -16,7 +15,6 @@
 using test_support::awaitAligned;
 
 using namespace branch_truce;
-using test_support::TestSession;
 
 namespace {
 // What checkCommand returned: the target's revision, or the refusal.
@@ -45,7 +43,7 @@ struct Guarded {
     }
     QTemporaryDir directory;
     std::shared_ptr<test_support::SyncFaults> faults = std::make_shared<test_support::SyncFaults>();
-    TestSession store{directory.path() + "/recovery", faults};
+    SessionStore store{directory.path() + "/recovery", faults};
 };
 }
 
@@ -132,7 +130,7 @@ int main(int argc, char **argv)
         CHECK(session.store.hasPendingRecovery());
         CHECK(session.check("outside", "1", CommandCheck::Current, false, "outside") == Result{Transition::Blocked});
         CHECK(session.check("choices", "2", CommandCheck::Edit) == Result{Transition::Blocked});
-        CHECK(session.store.retryPendingRecovery("choices"));
+        CHECK(test_support::await(session.store.retryRecovery("choices")) == Transition::Applied);
         CHECK(session.check("choices", "3", CommandCheck::Current) == Result{RevisionId{3}});
     });
     return suite.report();

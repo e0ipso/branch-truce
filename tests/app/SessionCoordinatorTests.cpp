@@ -15,14 +15,8 @@
 #include "session/SessionCoordinator.h"
 #include "storage/OffThread.h"
 #include <QCoreApplication>
-#include <QDir>
-#include <QEventLoop>
 #include <QFile>
-#include <QJsonArray>
-#include <QProcess>
-#include <QProcessEnvironment>
 #include <QSemaphore>
-#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QThreadPool>
@@ -90,8 +84,9 @@ public:
         write("tracked.txt", "before\n");
         git({"add", "--", "tracked.txt"});
         coordinator = std::make_unique<SessionCoordinator>(
-            model, git::gitAdapters({test_support::gitExecutable(), git::GitEnvironment::fromProcess()}), workers);
-        QObject::connect(coordinator.get(), &SessionCoordinator::taskFinished, &model,
+            model.store, git::gitAdapters({test_support::gitExecutable(), git::GitEnvironment::fromProcess()}),
+            workers);
+        QObject::connect(coordinator.get(), &SessionCoordinator::taskFinished, &model.store,
                          [this](const TaskCompletion &value) { finished.push_back(value); });
         replace();
     }
@@ -100,7 +95,7 @@ public:
     void replace(const QByteArray &path = "tracked.txt", const QString &operation = "merge")
     {
         CHECK(coordinator->replaceSession(root(), operation, {FileSession("file", path.toStdString(), draft())}));
-        model.settle();
+        test_support::awaitRecovery(model.store);
     }
     // Writes a worktree file named by raw bytes.
     void write(const QByteArray &relative, const QByteArray &bytes) { repository.writePath(relative, bytes); }
@@ -154,7 +149,7 @@ public:
                 });
             CHECK(id != 0 && f.coordinator->pendingTasks() == 1 && f.finished.empty() && applied == 0);
             gate.wait();
-            QTimer::singleShot(0, &f.model, [&] { timerFired = true; });
+            QTimer::singleShot(0, &f.model.store, [&] { timerFired = true; });
             waitUntil([&] { return timerFired; }, "the event loop did not run while the worker waited");
             CHECK(workerThread->load() && f.finished.empty() && f.coordinator->pendingTasks() == 1);
             gate.open();
@@ -199,11 +194,11 @@ public:
                 gate.wait();
                 auto edited = draft(decisionsOnly ? "before\n" : "edited\n");
                 if (decisionsOnly) edited.decisions["left"] = {DecisionValue::Ignored, {}};
-                CHECK(await(f.model.replaceDraft("file", 1, edited)) == Transition::Applied);
+                CHECK(await(f.model.store.replaceDraft("file", 1, edited)) == Transition::Applied);
                 gate.open();
                 f.wait(1);
                 CHECK(applied == 0 && f.finished[0].disposition == TaskDisposition::StaleRevision);
-                CHECK(f.finished[0].result.data == "before\n" && f.model.file("file")->current().draft == edited);
+                CHECK(f.finished[0].result.data == "before\n" && f.model.store.file("file")->current().draft == edited);
             }
         });
         test("editing during mutation inspection retains evidence without applying it to the new revision", [] {
@@ -222,14 +217,14 @@ public:
                 [&](const TaskCompletion &) { ++applied; });
             CHECK(id != 0);
             inspect.wait();
-            CHECK(await(f.model.replaceDraft("file", 1, draft("new draft\n"))) == Transition::Applied);
+            CHECK(await(f.model.store.replaceDraft("file", 1, draft("new draft\n"))) == Transition::Applied);
             inspect.open();
             f.wait(1);
             CHECK(applied == 0 && f.finished[0].disposition == TaskDisposition::StaleRevision);
             CHECK(f.finished[0].result.status == TaskStatus::Succeeded);
             CHECK(f.finished[0].result.mutation == MutationObservation::ObservedChanged);
             CHECK(f.finished[0].stamp.inputRevision == 1 && f.finished[0].result.data == "old result\n");
-            CHECK(f.model.file("file")->current().draft.text == "new draft\n");
+            CHECK(f.model.store.file("file")->current().draft.text == "new draft\n");
             CHECK(f.finished[0].stamp.id == id);
         });
         test("closing waits for an admitted mutation and records what it observed", [] {
@@ -250,7 +245,7 @@ public:
             // wait on closing can record the observation.
             inspect.open();
             f.coordinator.reset();
-            const auto replay = replayRecovery(storage::RecoveryStore(f.model.recoveryDirectory()));
+            const auto replay = replayRecovery(storage::RecoveryStore(f.model.store.recoveryDirectory()));
             CHECK(replay.succeeded && replay.mutations.size() == 1);
             CHECK(replay.mutations.front().observation == MutationObservation::ObservedChanged);
         });
@@ -428,9 +423,9 @@ public:
                 });
             CHECK(id != 0);
             inspect.wait();
-            const auto original = f.model.recoveryDirectory();
+            const auto original = f.model.store.recoveryDirectory();
             // The session moves to a new store while the mutation is still inspecting.
-            CHECK(f.model.startNewRecoveryStore() && f.model.recoveryDirectory() != original);
+            CHECK(f.model.store.startNewRecoveryStore() && f.model.store.recoveryDirectory() != original);
             CHECK(storage::RecoveryLease::acquire(original) == nullptr);
             inspect.open();
             f.wait(1);
@@ -544,7 +539,7 @@ public:
                 f.coordinator.reset();
                 CHECK(gate.state->phase.load() == Gate::Phase::Released);
                 if (duringInspection) {
-                    const auto journal = storage::RecoveryStore(f.model.recoveryDirectory()).read();
+                    const auto journal = storage::RecoveryStore(f.model.store.recoveryDirectory()).read();
                     CHECK(journal.succeeded
                           && journal.transactions.back().state.value("action") == "mutation-observation");
                 }
@@ -556,7 +551,7 @@ public:
             Fixture f;
             Gate unrelated;
             auto future = runOffThread(
-                f.workers, &f.model,
+                f.workers, &f.model.store,
                 [state = unrelated.state] {
                     state->pause();
                     return true;
@@ -573,7 +568,7 @@ public:
             int applied = 0;
             bool replacementQueued = false;
             const auto work = [](const TaskInput &, const TaskControl &) { return TaskResult{}; };
-            QObject::connect(f.coordinator.get(), &SessionCoordinator::taskFinished, &f.model,
+            QObject::connect(f.coordinator.get(), &SessionCoordinator::taskFinished, &f.model.store,
                              [&](const TaskCompletion &value) {
                                  if (value.stamp.generation == 1) EXPECT(applied == 1 && replacementQueued);
                              });
@@ -597,11 +592,11 @@ public:
                 ++*calls;
                 return TaskResult{};
             };
-            QObject::connect(&f.model.rows, &QAbstractItemModel::modelAboutToBeReset, &f.model, [&] {
+            QObject::connect(&f.model.rows, &QAbstractItemModel::modelAboutToBeReset, &f.model.store, [&] {
                 resetGuarded = f.coordinator->submit("file", 1, work) == 0
                     && !f.coordinator->replaceSession(f.root(), "recursive", {});
             });
-            QObject::connect(f.coordinator.get(), &SessionCoordinator::pendingTasksChanged, &f.model, [&] {
+            QObject::connect(f.coordinator.get(), &SessionCoordinator::pendingTasksChanged, &f.model.store, [&] {
                 if (replaced || f.coordinator->pendingTasks() != 1) return;
                 replaced = true;
                 EXPECT(f.coordinator->replaceSession(f.root(), "replacement",
@@ -619,7 +614,7 @@ public:
                 Fixture f;
                 bool destroyed = false;
                 if (!inCompletion) {
-                    QObject::connect(f.coordinator.get(), &SessionCoordinator::taskFinished, &f.model,
+                    QObject::connect(f.coordinator.get(), &SessionCoordinator::taskFinished, &f.model.store,
                                      [&](const TaskCompletion &) {
                                          f.coordinator.reset();
                                          destroyed = true;
@@ -694,12 +689,12 @@ public:
             };
             QThreadPool workers;
             SessionCoordinator coordinator(
-                model,
+                model.store,
                 test_support::ScriptedGit::runners(
                     {test_support::gitExecutable(), git::GitEnvironment::from(repository.environment())}, timedOut),
                 workers);
             std::vector<TaskCompletion> finished;
-            QObject::connect(&coordinator, &SessionCoordinator::taskFinished, &model,
+            QObject::connect(&coordinator, &SessionCoordinator::taskFinished, &model.store,
                              [&](const TaskCompletion &value) { finished.push_back(value); });
             CHECK(
                 coordinator.replaceSession(repository.root(), "merge", {FileSession("file", "tracked.txt", draft())}));
