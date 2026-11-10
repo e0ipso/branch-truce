@@ -58,10 +58,37 @@ are display only, so their limits drop the word ranges and never the text:
 | --- | ---: | --- |
 | Line length | 1000 bytes, newline excluded | the line is compared as one token and keeps its line colouring only |
 | Token comparisons for one pair of passages | 1000000 | the pair gets no word ranges |
-| Token comparisons for one revision | 4000000 | pairs later in the text get no word ranges |
+| Token comparisons for one revision | 4000000 | the revision gets no partial word ranges |
+| Combined input for one pair | 2097152 bytes | the revision gets no word ranges |
+| Tokens for one pair | 65536 | tokenization stops before further allocation |
+| Estimated token and match retention for one pair | 8388608 bytes | tokenization stops before further allocation |
+| Aggregate compared input for one file pass | 8388608 bytes | the revision gets no partial word ranges |
 
-The ranges are computed once for each result revision. Changing the theme or
-redrawing the panes reuses them.
+Word ranges and choice previews compute on owned immutable snapshots in the
+application worker pool. A shared admission boundary permits two visual jobs and
+1 GiB of conservatively charged retained input/output. A pending decoration
+request coalesces to the latest file/revision without retaining another snapshot.
+Completion checks file, revision, captures and correspondence before installing
+ranges; panes also check exact document text. A limit or failure clears word
+ranges while preserving text and other formatting. Changing the theme or redrawing
+reuses the current ranges.
+
+Preview acceptance starts work. `previewPending` covers alignment and computation;
+`previewReady` permits inspection and confirmation. Canceled or replaced requests
+cannot open a later dialog or apply a stale preview. Applying the displayed choice
+still uses durable command persistence.
+
+Background alignment admits two jobs and a conservative 256 MiB across session
+generations. Replacing a session invalidates publication but releases a reservation
+only when its old worker terminates. Current files form the coalesced queue and
+up to 128 observers receive explicit completion, stale-input or refusal results.
+An algorithm that blocks can occupy its finite slot and delay shutdown.
+
+Non-conflicting batch planning admits 8192 targets, 32 MiB of charged candidate
+storage and 4000000 units of identifier/text work. Accepted ranges, collisions and
+duplicate changes use indexes; admission failure returns `ResourceLimit` without
+partial edits. Ambiguous copied-marker analysis shares a 4000000 comparison budget.
+Exhaustion keeps unproved separator-like lines outstanding as markers.
 
 ## Typing and scrolling in highlighted panes
 
