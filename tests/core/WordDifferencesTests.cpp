@@ -141,11 +141,28 @@ int main()
             right += "b b b b b b b\n";
         }
         std::size_t budget = kMaxWordDifferenceCells;
-        CHECK(wordDifferences(left, right, budget) == WordDifferences{});
+        CHECK(wordDifferences(left, right, budget) == WordDifferences{{}, {}, WordDifferenceState::ResourceLimit});
         CHECK(budget == kMaxWordDifferenceCells);
         std::size_t small = 3;
-        CHECK(wordDifferences("one two\n", "six ten\n", small) == WordDifferences{});
+        CHECK(wordDifferences("one two\n", "six ten\n", small)
+              == WordDifferences{{}, {}, WordDifferenceState::ResourceLimit});
         CHECK(small == 3);
+    });
+
+    suite.run("token input and retained admission precedes allocation and preserves pair budget", [] {
+        std::string punctuation;
+        for (int i = 0; i < 200; ++i) punctuation += "!!!???\n";
+        for (const auto limits : {WordDifferenceLimits{64, 65536, 8388608}, WordDifferenceLimits{2097152, 32, 8388608},
+                                  WordDifferenceLimits{2097152, 65536, 256}}) {
+            std::size_t budget = kMaxWordDifferenceCells;
+            const auto refused = wordDifferences(punctuation, punctuation + "x", budget, limits);
+            CHECK(refused.state == WordDifferenceState::ResourceLimit);
+            CHECK(refused.left.empty() && refused.right.empty() && budget == kMaxWordDifferenceCells);
+        }
+        std::size_t budget = 4;
+        const auto small = wordDifferences("same prefix left same suffix", "same prefix right same suffix", budget);
+        CHECK(small.state == WordDifferenceState::Computed && small.left == std::vector<ByteRange>{{12, 16}});
+        CHECK(small.right == std::vector<ByteRange>{{12, 17}} && budget == 3);
     });
 
     suite.run("undecided competing sections pair with each other in the sources and the result", [] {

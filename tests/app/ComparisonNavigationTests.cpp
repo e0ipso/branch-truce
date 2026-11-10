@@ -588,9 +588,11 @@ void comparison_scene::addNavigationCases(Groups groups)
         const auto offset = editor->property("cursorPosition").toInt();
         const auto before = fixture.text();
         const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
-        CHECK(controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
-                                                  QString::fromStdString(target.source.contributionId),
-                                                  ChoicePreviewFlow::Action::ResolveUsingSide));
+        CHECK(test_support::previewResult(
+            controller,
+            controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
+                                                QString::fromStdString(target.source.contributionId),
+                                                ChoicePreviewFlow::Action::ResolveUsingSide)));
         CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
         CHECK(fixture.text() != before && !fixture.text().contains(QStringLiteral("right only")));
         settleReplacement(fixture);
@@ -606,9 +608,11 @@ void comparison_scene::addNavigationCases(Groups groups)
         placeResultCursor(fixture, QStringLiteral("shared 120\n"), 148 * line);
         CHECK(cursorInView(fixture));
         const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
-        CHECK(controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
-                                                  QString::fromStdString(target.source.contributionId),
-                                                  ChoicePreviewFlow::Action::ResolveUsingSide));
+        CHECK(test_support::previewResult(
+            controller,
+            controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
+                                                QString::fromStdString(target.source.contributionId),
+                                                ChoicePreviewFlow::Action::ResolveUsingSide)));
         CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
         CHECK(!fixture.text().contains(QStringLiteral("right only")));
         settleReplacement(fixture);
@@ -637,7 +641,9 @@ void comparison_scene::addNavigationCases(Groups groups)
             CHECK(editor->property("selectionStart").toInt() == editor->property("selectionEnd").toInt());
             CHECK(std::abs(contentY(result) - 140 * line) < 1);
         };
-        CHECK(controller.choices()->previewWholeFile("choices", revision(), ChoicePreviewFlow::Side::LeftSide));
+        CHECK(test_support::previewResult(
+            controller,
+            controller.choices()->previewWholeFile("choices", revision(), ChoicePreviewFlow::Side::LeftSide)));
         CHECK(commandResult(controller, controller.choices()->applyWholeFile()));
         CHECK(fixture.text().contains(QStringLiteral("left first\n"))
               && fixture.text().contains(QStringLiteral("left last\n")));

@@ -29,6 +29,8 @@ bool CommandFeedback::report(Transition result)
     case Transition::PreviewChanged: show(tr("The target is no longer valid. Select the scope again.")); break;
     case Transition::TextTooLarge: show(tr("The result would be over the supported size. Nothing changed.")); break;
     case Transition::InvalidText: show(tr("The text is not valid UTF-8 with LF line endings. Nothing changed.")); break;
+    case Transition::ResourceLimit: show(tr("Computation exceeds the supported work limit. Nothing changed.")); break;
+    case Transition::ComputationFailed: show(tr("Could not compute this revision. Nothing changed.")); break;
     case Transition::OutOfMemory: show(tr("Not enough memory to complete the command. Nothing changed.")); break;
     default: show(tr("Command not completed. Check pending recovery and the selected scope.")); break;
     }

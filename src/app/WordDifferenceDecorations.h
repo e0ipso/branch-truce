@@ -14,6 +14,7 @@ class QTextDocument;
 namespace branch_truce {
 class CorrespondenceMap;
 class SessionStore;
+class RevisionWorkers;
 struct FileSnapshots;
 
 // Draws the word-level differences of one file's current revision
@@ -34,17 +35,21 @@ struct FileSnapshots;
 class WordDifferenceDecorations final : public QObject {
     Q_OBJECT
 public:
-    explicit WordDifferenceDecorations(const SessionStore &store, QObject *parent = nullptr);
+    explicit WordDifferenceDecorations(const SessionStore &store, RevisionWorkers &workers, QObject *parent = nullptr);
     // The file whose differences the panes show; refresh draws them.
     void setFile(const QString &fileId) { targetFileId_ = fileId; }
+    [[nodiscard]] bool pending() const { return active_ || needsCompute_; }
     // Attaching the same editor again changes nothing. An editor without
     // wordDifferenceStyle, or without a highlighter yet, is left alone.
     void attach(QObject *editor, QTextDocument *document);
 
 public Q_SLOTS:
-    // Computes the ranges when the file or its revision changed, and
+    // Requests worker ranges when the file or its revision changed, and
     // redraws every pane whose text, line kinds or colours changed.
     void refresh();
+
+Q_SIGNALS:
+    void pendingChanged();
 
 private:
     struct Pane {
@@ -67,6 +72,9 @@ private:
     [[nodiscard]] QList<QTextLayout::FormatRange> formats(const Pane &pane, const PaneRanges *ranges) const;
 
     const SessionStore &files_;
+    RevisionWorkers &workers_;
+    quint64 request_ = 0;
+    bool active_ = false, needsCompute_ = false, publishedPending_ = false;
     QString targetFileId_;
     QList<Pane> panes_;
     // What the ranges were computed from.

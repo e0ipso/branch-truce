@@ -45,9 +45,16 @@ bool covers(const std::vector<ByteRange> &known, ByteRange line)
 
 // Whether `part` is consecutive whole lines of `source`. Git ends a region's
 // last line with a newline even where the source's last line has none.
-bool wholeLines(std::string_view source, std::string_view part)
+bool wholeLines(std::string_view source, std::string_view part, std::size_t &budget, bool &limited)
 {
     if (part.empty()) return true;
+    // Bound every repeated find, including highly repetitive near-matches.
+    const auto width = part.size() + 2;
+    if (source.size() > budget / width || part.size() > budget - source.size() * width) {
+        limited = true;
+        return false;
+    }
+    budget -= source.size() * width + part.size();
     const auto lineStart = [&](std::size_t at) { return at == 0 || source[at - 1] == '\n'; };
     for (auto at = source.find(part); at != std::string_view::npos; at = source.find(part, at + 1))
         if (lineStart(at)) return true;
@@ -66,7 +73,8 @@ public:
           earlier_(mergeRanges(std::move(context.earlier))),
           uncertain_(mergeRanges(std::move(context.uncertain))),
           right_(mergeRanges(std::move(context.right))),
-          sources_(std::move(context.sources))
+          sources_(std::move(context.sources)),
+          budget_(context.analysisBudget)
     {}
 
     [[nodiscard]] std::size_t size() const noexcept { return text_.size(); }
@@ -89,6 +97,8 @@ public:
              next = lineAt(next.end))
             lines.push_back(next);
         if (const auto git = copiedAround(base, lines)) return ByteRange{lines[*git].begin, lines.back().end};
+        // Unproved separator-like lines remain markers on admission failure.
+        if (limited_) return first;
         const auto begin = baseEnd(first);
         return ByteRange{begin, lineAt(begin).end};
     }
@@ -141,19 +151,29 @@ private:
         if (!end) return std::nullopt;
         std::optional<std::size_t> found;
         for (std::size_t i = 0; i < lines.size(); ++i) {
-            if (!copied(*sources_, base, lines[i], *end)) continue;
+            const auto matches = copied(*sources_, base, lines[i], *end);
+            if (limited_) return std::nullopt;
+            if (!matches) continue;
             if (found) return std::nullopt;
             found = i;
         }
         return found;
     }
 
-    [[nodiscard]] bool copied(const RegionSources &sources, ByteRange base, ByteRange separator, std::size_t end) const
+    [[nodiscard]] bool copied(const RegionSources &sources, ByteRange base, ByteRange separator, std::size_t end)
     {
         const auto region = slice(text_, {base.begin, separator.begin});
-        if (std::find(sources.bases.begin(), sources.bases.end(), region) != sources.bases.end()) return true;
-        return wholeLines(sources.earlier, slice(text_, {base.end, separator.begin}))
-            && wholeLines(sources.right, slice(text_, {separator.end, end}));
+        for (const auto known : sources.bases) {
+            const auto cost = std::min(known.size(), region.size()) + 1;
+            if (cost > budget_) {
+                limited_ = true;
+                return false;
+            }
+            budget_ -= cost;
+            if (known == region) return true;
+        }
+        return wholeLines(sources.earlier, slice(text_, {base.end, separator.begin}), budget_, limited_)
+            && wholeLines(sources.right, slice(text_, {separator.end, end}), budget_, limited_);
     }
 
     std::string_view text_;
@@ -163,6 +183,8 @@ private:
     std::vector<ByteRange> uncertain_;
     std::vector<ByteRange> right_;
     std::optional<RegionSources> sources_;
+    std::size_t budget_;
+    bool limited_ = false;
     std::optional<std::vector<std::size_t>> ends_;
 };
 

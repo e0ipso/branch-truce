@@ -6,6 +6,7 @@
 #include "FileNavigator.h"
 #include "MergetoolStatus.h"
 #include "ResultEditorAdapter.h"
+#include "RevisionWorkers.h"
 #include "SelectedFile.h"
 #include "Selection.h"
 #include "SessionCompletion.h"
@@ -59,6 +60,7 @@ public:
     // Main.qml's required properties, by name.
     [[nodiscard]] QVariantMap windowProperties();
 
+    [[nodiscard]] RevisionWorkers *revisionWorkers() noexcept { return &revisionWorkers_; }
     [[nodiscard]] SessionStore *store() noexcept { return &store_; }
     [[nodiscard]] SessionModel *files() noexcept { return &files_; }
     [[nodiscard]] SessionCoordinator *coordinator() noexcept { return &coordinator_; }
@@ -80,6 +82,7 @@ private:
     std::shared_ptr<git::GitProcesses> gitProcesses_;
     // The coordinator's workers; they outlive it, so it can wait for them.
     QThreadPool workers_;
+    RevisionWorkers revisionWorkers_;
     SessionStore store_;
     SessionModel files_;
     SessionCoordinator coordinator_;

@@ -125,9 +125,11 @@ void comparison_scene::addFoldingCases(Groups groups)
             CHECK(!item->objectName().startsWith("resultTakeBoth-") || !item->isVisible());
         const auto original = captureWork(fixture, *controller.selectedFile());
         const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
-        CHECK(!controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
-                                                   QString::fromStdString(target.source.contributionId),
-                                                   ChoicePreviewFlow::Action::CombineLeftFirst));
+        CHECK(!test_support::previewResult(
+            controller,
+            controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
+                                                QString::fromStdString(target.source.contributionId),
+                                                ChoicePreviewFlow::Action::CombineLeftFirst)));
         checkUnchanged(fixture, *controller.selectedFile(), original);
         auto *toggle = fixture.object("showConflictMarkers");
         CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
@@ -342,9 +344,11 @@ void comparison_scene::addFoldingCases(Groups groups)
         // second block stays folded and only its regions still have markers.
         const auto &first = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
         const auto section = QString::fromStdString(first.section);
-        CHECK(controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
-                                                  QString::fromStdString(first.source.contributionId),
-                                                  ChoicePreviewFlow::Action::ResolveUsingSide));
+        CHECK(test_support::previewResult(
+            controller,
+            controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
+                                                QString::fromStdString(first.source.contributionId),
+                                                ChoicePreviewFlow::Action::ResolveUsingSide)));
         CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
         CHECK(!fixture.text().contains(QStringLiteral(">>>>>>> theirs\nbridge")));
         CHECK(controller.selectedFile()->comparison()->markerBlocks().size() == 1);
@@ -370,9 +374,11 @@ void comparison_scene::addFoldingCases(Groups groups)
         CHECK(!notice->isVisible() && rowLine() != QStringLiteral("Ready to mark resolved"));
         const auto resolve = [&](SourceSide side, std::size_t section) {
             const auto &target = test_support::choiceTarget(fixture.file(), side, ChoiceScope::Section, section);
-            CHECK(controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
-                                                      QString::fromStdString(target.source.contributionId),
-                                                      ChoicePreviewFlow::Action::ResolveUsingSide));
+            CHECK(test_support::previewResult(
+                controller,
+                controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
+                                                    QString::fromStdString(target.source.contributionId),
+                                                    ChoicePreviewFlow::Action::ResolveUsingSide)));
             CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
         };
         resolve(SourceSide::Stage2, 0);
@@ -414,9 +420,11 @@ void comparison_scene::addFoldingCases(Groups groups)
         settle([&] { return foldedLines(fixture) == numbers(3, 11); });
         const auto resolve = [&](SourceSide side, std::size_t at) {
             const auto &target = test_support::choiceTarget(fixture.file(), side, ChoiceScope::Section, at);
-            CHECK(controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
-                                                      QString::fromStdString(target.source.contributionId),
-                                                      ChoicePreviewFlow::Action::ResolveUsingSide));
+            CHECK(test_support::previewResult(
+                controller,
+                controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
+                                                    QString::fromStdString(target.source.contributionId),
+                                                    ChoicePreviewFlow::Action::ResolveUsingSide)));
             CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
         };
         // Deciding the first section keeps the block, its fold and every region's markers.
@@ -489,9 +497,11 @@ void comparison_scene::addFoldingCases(Groups groups)
         };
         noConflicts();
         const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
-        CHECK(controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
-                                                  QString::fromStdString(target.source.contributionId),
-                                                  ChoicePreviewFlow::Action::Ignore));
+        CHECK(test_support::previewResult(
+            controller,
+            controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
+                                                QString::fromStdString(target.source.contributionId),
+                                                ChoicePreviewFlow::Action::Ignore)));
         CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
         CHECK(fixture.file().facts().undecided == 3);
         CHECK(fixture.text().toStdString() == result);

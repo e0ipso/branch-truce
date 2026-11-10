@@ -550,8 +550,10 @@ int main(int argc, char **argv)
         RegionView view(test_support::markedFile());
         auto file = view.file();
         const auto preview = [&](const char *side, ChoicePreviewFlow::Action action) {
-            return view.controller.choices()->previewChoice("choices", file->currentRevision(),
-                                                            regionId(file, side, "section", 2), action);
+            return test_support::previewResult(
+                view.controller,
+                view.controller.choices()->previewChoice("choices", file->currentRevision(),
+                                                         regionId(file, side, "section", 2), action));
         };
         CHECK(preview("stage2", ChoicePreviewFlow::Action::Accept));
         CHECK(view.controller.feedback()->message()

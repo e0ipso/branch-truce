@@ -363,6 +363,11 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     branch_truce_add_unit_test(git.mergetool-parent git/MergetoolParentTests.cpp LIBS branch_truce_controller
         PRIVATE_XDG TIMEOUT 450 LABELS git DEPENDS branch-truce ARGS $<TARGET_FILE:branch-truce>)
 
+    branch_truce_add_unit_test(app.revision-computation app/RevisionComputationTests.cpp
+        LIBS branch_truce_controller Qt6::Test PRIVATE_XDG LABELS app)
+    set_tests_properties(app.revision-computation PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software")
+
     branch_truce_add_unit_test(app.session-execution app/SessionExecutionTests.cpp
         LIBS branch_truce_controller PRIVATE_XDG LABELS app)
 

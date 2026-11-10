@@ -18,6 +18,7 @@ git::GitRunners runnersOf(Application::Config &config, const std::shared_ptr<git
 Application::Application(Config config, QObject *parent)
     : QObject(parent),
       gitProcesses_(std::make_shared<git::GitProcesses>()),
+      revisionWorkers_(workers_),
       store_(std::move(config.recoveryDirectory), config.files, this),
       files_(store_, this),
       coordinator_(store_, runnersOf(config, gitProcesses_), workers_, this),
@@ -25,11 +26,11 @@ Application::Application(Config config, QObject *parent)
       mergetool_(
           publisher_, store_, coordinator_, [this] { return loader_.repository(); },
           {config.mergetoolDirectory, config.git.environment, runnersOf(config, gitProcesses_)}, this),
-      editor_(store_, this),
+      editor_(store_, revisionWorkers_, this),
       selection_(files_, editor_, this),
       selectedFile_(files_, selection_, this),
       feedback_(store_, selection_, this),
-      choices_(store_, files_, editor_, selection_, feedback_, this),
+      choices_(store_, files_, editor_, selection_, feedback_, revisionWorkers_, this),
       navigator_(store_, files_, editor_, selection_, this),
       commands_(store_, selection_, editor_, publisher_, mergetool_, feedback_, this),
       completion_(store_, publisher_, mergetool_, feedback_, this),

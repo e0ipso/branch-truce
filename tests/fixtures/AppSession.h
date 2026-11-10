@@ -41,6 +41,14 @@ inline void waitOpened(branch_truce::Application &application, const std::string
               [&] { return what + " did not finish opening: " + loader->detail().toStdString(); });
 }
 
+// Preview acceptance starts work; readiness authorizes inspection and confirmation.
+inline bool previewResult(branch_truce::Application &application, bool accepted)
+{
+    auto *choices = application.choices();
+    waitUntil([&] { return !choices->previewPending(); }, "preview computation did not settle");
+    return accepted && choices->previewReady();
+}
+
 // The GUI returns request acceptance; tests await its real persistence boundary.
 inline bool commandResult(branch_truce::Application &application, bool accepted)
 {

@@ -16,7 +16,7 @@ using test_support::settleFor;
 class Fixture {
 public:
     explicit Fixture(Application &controller, FileSession file = test_support::batchFile())
-        : store_(*controller.store()), selection_(*controller.selection())
+        : store_(*controller.store()), selection_(*controller.selection()), choices_(*controller.choices())
     {
         CHECK(controller.store()->appendFile(std::move(file)));
         CHECK(controller.selection()->select("choices"));
@@ -55,7 +55,8 @@ public:
     }
     void settleCommand()
     {
-        settleFor("the clicked command committed", [&] { return !store_.commandPending(selection_.id()); });
+        settleFor("the clicked command committed",
+                  [&] { return !choices_.previewPending() && !store_.commandPending(selection_.id()); });
         settleAligned();
     }
     [[nodiscard]] QList<QUrl> networkRequests() const { return network.requests(); }
@@ -64,6 +65,7 @@ public:
 private:
     SessionStore &store_;
     Selection &selection_;
+    ChoicePreviewFlow &choices_;
     // The factory outlives the engine and its image loader.
     RecordingNetwork network;
     QQmlApplicationEngine engine;

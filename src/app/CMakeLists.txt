@@ -6,6 +6,7 @@ add_library(branch_truce_controller STATIC Application.cpp Application.h AppPath
     SessionCompletion.cpp SessionCompletion.h SessionHandoff.cpp SessionHandoff.h SessionModel.cpp SessionModel.h
     ResultEditorAdapter.cpp ResultEditorAdapter.h TextChange.cpp TextChange.h
     SessionLoader.cpp SessionLoader.h StartupReport.cpp StartupReport.h Translations.cpp Translations.h QtText.h
+    RevisionWorkers.h
     WordDifferenceDecorations.cpp WordDifferenceDecorations.h)
 qt_add_qml_module(branch_truce_controller
     URI BranchTruce.App VERSION 1.0

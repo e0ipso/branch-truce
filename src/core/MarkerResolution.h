@@ -79,6 +79,9 @@ public:
         : choices_(choices), launch_(launch), markerSize_(markerSize)
     {}
 
+    [[nodiscard]] const LaunchFrames &frames() const noexcept { return launch_; }
+    [[nodiscard]] std::size_t markerSize() const noexcept { return markerSize_; }
+
     // The marker sections of `text`. A block whose marker lines or base text
     // no launch block has is orphaned. `scan`, when given, is the scan of `text`.
     [[nodiscard]] std::vector<MarkerSection> sections(std::string_view text, const CorrespondenceMap &mapping,
