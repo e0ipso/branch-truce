@@ -152,7 +152,8 @@ public:
     Transition replayDraft(RevisionId expected, const RecordedRevision &recorded);
     Transition editResult(RevisionId expected, const ResultEdit &edit, EditOptions options = {});
     // The current revision's correspondence while its passages are
-    // provisional, or null. Safe to read from any thread.
+    // provisional, or null. Obtain it while the session is not being mutated;
+    // the returned immutable snapshot can then be read on any thread.
     [[nodiscard]] std::shared_ptr<const CorrespondenceMap> pendingAlignment() const noexcept;
     // Replaces the current revision's provisional passages with `aligned`, a
     // map pendingAlignment() returned for `revision` and realigned() built.
