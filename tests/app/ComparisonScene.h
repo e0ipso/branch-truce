@@ -24,23 +24,27 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFont>
-#include <QHostAddress>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QMap>
+#include <QMutex>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QQmlApplicationEngine>
 #include <QQmlExpression>
+#include <QQmlNetworkAccessManagerFactory>
 #include <QQuickItem>
 #include <QQuickTextDocument>
 #include <QQuickWindow>
 #include <QSet>
 #include <QSignalSpy>
-#include <QTcpServer>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextLayout>
 #include <QTimer>
+#include <QUrl>
 #include <QWheelEvent>
 #include <QtQml/qqml.h>
 #include <QtQuickTest/quicktest.h>
@@ -63,12 +67,50 @@ using test_support::settle;
 using test_support::settleFor;
 using test_support::visualLines;
 
+// A network access manager factory whose managers record every request and fail it, so a case can
+// check that the scene asked for nothing. Managers may live on the image loader's thread.
+class RecordingNetwork final : public QQmlNetworkAccessManagerFactory {
+public:
+    QNetworkAccessManager *create(QObject *parent) override { return new Manager(*this, parent); }
+    [[nodiscard]] QList<QUrl> requests() const
+    {
+        const QMutexLocker lock(&mutex_);
+        return requests_;
+    }
+
+private:
+    class Manager final : public QNetworkAccessManager {
+    public:
+        Manager(RecordingNetwork &log, QObject *parent) : QNetworkAccessManager(parent), log_(log) {}
+
+    protected:
+        QNetworkReply *createRequest(Operation operation, const QNetworkRequest &request, QIODevice *data) override
+        {
+            log_.record(request.url());
+            // A scheme no manager serves, so the request fails without leaving the process.
+            return QNetworkAccessManager::createRequest(operation, QNetworkRequest(QUrl(QStringLiteral("refused:"))),
+                                                        data);
+        }
+
+    private:
+        RecordingNetwork &log_;
+    };
+    void record(const QUrl &url)
+    {
+        const QMutexLocker lock(&mutex_);
+        requests_.append(url);
+    }
+    mutable QMutex mutex_;
+    QList<QUrl> requests_;
+};
+
 class Fixture {
 public:
     explicit Fixture(FileSession file = test_support::batchFile())
     {
         CHECK(controller.store()->appendFile(std::move(file)));
         CHECK(controller.selection()->select("choices"));
+        engine.setNetworkAccessManagerFactory(&network);
         engine.setInitialProperties(controller.windowProperties());
         engine.loadFromModule("BranchTruce", "Main");
         CHECK(engine.rootObjects().size() == 1);
@@ -176,6 +218,8 @@ public:
                                                .recoveryDirectory = newRecoveryDirectory(),
                                                .correspondence = {},
                                                .files = faults}};
+    // Every network request the scene makes; it outlives the engine that uses it.
+    RecordingNetwork network;
     QQmlApplicationEngine engine;
     QQuickWindow *window = nullptr;
 };

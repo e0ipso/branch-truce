@@ -249,12 +249,9 @@ void comparison_scene::addSessionCases(Groups groups)
     });
     scenes.run("notices and tooltips show a path as typed and load nothing it names", [] {
         Fixture fixture;
-        QTcpServer server;
-        CHECK(server.listen(QHostAddress::LocalHost));
         // A file name cannot hold a slash, so the image address spells its slashes as entities.
-        const auto path = QStringLiteral("<b>x</b><img src=\"http:&#47;&#47;127.0.0.1:%1&#47;probe\">.txt")
-                              .arg(server.serverPort())
-                              .toStdString();
+        const auto path =
+            QStringLiteral("<b>x</b><img src=\"http:&#47;&#47;127.0.0.1:9&#47;probe\">.txt").toStdString();
         auto sources = *test_support::choiceFile().snapshots();
         sources.path = path;
         const auto launch = sources.launchResult.text.utf8;
@@ -314,8 +311,9 @@ void comparison_scene::addSessionCases(Groups groups)
         CHECK(tooltip && !shared.hasError());
         CHECK(tooltip->setProperty("parent", QVariant::fromValue(heading)) && tooltip->setProperty("text", message)
               && tooltip->setProperty("visible", true));
-        const auto requested = QTest::qWaitFor([&] { return server.hasPendingConnections(); }, 1000);
-        server.close();
+        // Every label and the tooltip are laid out, and any image they named requested, by then.
+        test_support::waitForFrames(fixture.window, "the notices and the tooltip are drawn");
+        const auto requested = !fixture.network.requests().isEmpty();
         for (const auto *name :
              {"handoffOutcome", "inventoryWarning", "recoveryProblem", "commandMessage", "parentStagingState",
               "mergetoolHolding", "mergetoolWait", "choiceNotice", "sessionPlaceholder", "selectedProblem"})
