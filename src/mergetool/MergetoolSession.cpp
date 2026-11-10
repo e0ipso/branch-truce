@@ -395,17 +395,20 @@ void MergetoolSession::acceptCopiedLaunches()
         // so Git inspects both again off the GUI thread before the error clears.
         const auto fileId = entry->first;
         const auto identity = entry->second;
+        auto live = std::make_shared<storage::DestinationCapture>();
         const auto task = coordinator_.submit(
             fileId, file->current().id,
-            [snapshots = *file->snapshots(), identity, repository = loadedRepository_(),
-             git = config_.git](const TaskInput &, const TaskControl &) {
+            [snapshots = *file->snapshots(), identity, repository = loadedRepository_(), git = config_.git, live,
+             path = QByteArray::fromStdString(file->path()),
+             files = publisher_.destinations()](const TaskInput &, const TaskControl &) {
                 TaskResult result;
                 result.problem = revalidateCopiedLaunch(snapshots, identity, repository, git);
+                *live = storage::captureDestination(repository.worktreeRoot, path, files);
                 return result;
             },
-            [this, fileId, identity](const TaskCompletion &completion) {
+            [this, fileId, identity, live](const TaskCompletion &completion) {
                 copiedLaunchChecks_.erase(fileId);
-                settleCopiedLaunch(fileId, identity, completion.result.problem);
+                settleCopiedLaunch(fileId, identity, completion.result.problem, *live);
             });
         if (task != 0) copiedLaunchChecks_.insert_or_assign(fileId, task);
         ++entry;
@@ -413,7 +416,7 @@ void MergetoolSession::acceptCopiedLaunches()
 }
 
 void MergetoolSession::settleCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity,
-                                          const Problem &failure)
+                                          const Problem &failure, const storage::DestinationCapture &live)
 {
     const auto entry = copiedLaunches_.find(fileId);
     if (entry == copiedLaunches_.end() || entry->second != identity) return;
@@ -425,7 +428,7 @@ void MergetoolSession::settleCopiedLaunch(const std::string &fileId, const Snaps
     // The launcher left while Git inspected the path; a later attach checks again.
     if (!launchedWithCapturedBytes(*file)) return;
     // The copy must still be the file recovery validated; any change keeps the path failed.
-    const bool settled = failure.isEmpty() && publisher_.adoptCopiedLaunch(fileId, identity)
+    const bool settled = failure.isEmpty() && publisher_.adoptCopiedLaunch(fileId, identity, live)
         ? files_.settleRecoveryFailure(fileId, ProblemCode::RecoveryCopiedLaunch)
         : files_.settleRecoveryFailure(fileId, ProblemCode::RecoveryCopiedLaunch,
                                        !failure.isEmpty() ? failure

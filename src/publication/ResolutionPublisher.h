@@ -49,10 +49,11 @@ public:
     // Uses baselines a load read for repository's files.
     void adoptBaselines(const git::RepositoryContext &repository, Baselines baselines);
     [[nodiscard]] const std::shared_ptr<const storage::FileSystem> &destinations() const { return destinations_; }
-    // Uses the current repository file as the launch destination of a
-    // recovered file that git mergetool replaced by a copy. The file must
-    // still have the identity recovery validated and the launch bytes.
-    bool adoptCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity);
+    // Uses live, the repository file a worker just captured, as the launch
+    // destination of a recovered file that git mergetool replaced by a copy.
+    // It must still have the identity recovery validated and the launch bytes.
+    bool adoptCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity,
+                           const storage::DestinationCapture &live);
     // Empty path clears the assignment. The assigned path is never passed to git add.
     bool assignParentStaging(const QByteArray &path);
     [[nodiscard]] bool busy() const;
@@ -90,6 +91,8 @@ private:
         Step step = Step::Prepare;
         TaskId task = 0;
         std::optional<git::ConvertedText> prepared;
+        // What the publish step's writer saw, once it ran.
+        std::shared_ptr<const storage::PublicationResult> published;
     };
 
     [[nodiscard]] const FileSession *file(const std::string &id) const;

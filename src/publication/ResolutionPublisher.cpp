@@ -97,18 +97,15 @@ void ResolutionPublisher::adoptBaselines(const git::RepositoryContext &repositor
     baselines_ = std::move(baselines);
 }
 
-bool ResolutionPublisher::adoptCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity)
+bool ResolutionPublisher::adoptCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity,
+                                            const storage::DestinationCapture &live)
 {
     const auto *session = file(fileId);
     if ((attempt_ && attempt_->fileId == fileId) || !session || session->support() != Support::Supported
-        || !session->snapshots())
+        || !session->snapshots() || !live.destination || live.destination->identity() != identity
+        || live.destination->bytes().toStdString() != session->snapshots()->launchResult.text.bytes)
         return false;
-    const auto captured = storage::captureDestination(repository_.worktreeRoot,
-                                                      QByteArray::fromStdString(session->path()), destinations_);
-    if (!captured.destination || captured.destination->identity() != identity
-        || captured.destination->bytes().toStdString() != session->snapshots()->launchResult.text.bytes)
-        return false;
-    baselines_.insert_or_assign(fileId, Baseline{captured.destination, QString{}});
+    baselines_.insert_or_assign(fileId, Baseline{live.destination, QString{}});
     return true;
 }
 
@@ -545,6 +542,7 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
     const auto mode = attempt_->mode;
     QPointer<ResolutionPublisher> self(this);
     attempt_->step = Step::Publish;
+    attempt_->published = evidence;
     const auto id = coordinator_.submitMutation(
         attempt_->fileId, attempt_->revision,
         [evidence, baseline, bytes, mode](const TaskInput &, const TaskControl &control) {
@@ -684,19 +682,13 @@ void ResolutionPublisher::noteStale(const TaskCompletion &completion)
     const bool wrote = completion.result.mutation == MutationObservation::ObservedChanged
         && attempt_->step == Step::Publish && completion.result.status == TaskStatus::Succeeded;
     if (wrote) {
-        // Exchange already replaced the launch inode. Adopt the live destination
-        // only while it still holds the bytes this publish wrote. Different bytes
-        // keep the previous baseline, so a later resolution fails closed.
-        auto live = storage::captureDestination(repository_.worktreeRoot, attempt_->path, destinations_);
-        if (live.destination && live.destination->bytes() == attempt_->serialized) {
-            auto baseline = baselines_.find(attempt_->fileId);
-            if (baseline == baselines_.end())
-                baselines_.emplace(attempt_->fileId, Baseline{std::move(live.destination), QString{}});
-            else {
-                baseline->second.destination = std::move(live.destination);
-                baseline->second.diagnostic.clear();
-            }
-        }
+        // Exchange already replaced the launch inode. Adopt the destination the
+        // writer saw only while it holds the bytes this publish wrote, which the
+        // worker's inspection observed. Different bytes keep the previous
+        // baseline, so a later resolution fails closed.
+        const auto &live = attempt_->published->destination;
+        if (live && live->bytes() == attempt_->serialized)
+            baselines_.insert_or_assign(attempt_->fileId, Baseline{live, QString{}});
         const auto recorded = files_.recordWrite(attempt_->fileId, attempt_->revision, Outcome::Succeeded);
         clearAttempt();
         Q_EMIT changed(recorded == Transition::Applied

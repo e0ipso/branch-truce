@@ -120,7 +120,9 @@ private:
     [[nodiscard]] qsizetype indexOfConnection(quint64 connection) const;
     [[nodiscard]] qsizetype indexOfPath(const QByteArray &path) const;
     [[nodiscard]] bool launchedWithCapturedBytes(const FileSession &file) const;
-    void settleCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity, const Problem &failure);
+    // live is the repository file the check captured with the problem.
+    void settleCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity, const Problem &failure,
+                            const storage::DestinationCapture &live);
 
     ResolutionPublisher &publisher_;
     SessionStore &files_;
