@@ -57,10 +57,10 @@ public:
         MergetoolSession &mergetool;
         const SessionCompletion &completion;
     };
-    // gitExecutable is the Git that classifies the conflicts and restores recovery.
-    // Loaded files align their sources with `correspondence`, or with the
-    // engine's default when it is null.
-    SessionLoader(Session session, QString gitExecutable, QObject *parent = nullptr,
+    // git builds the runners that classify the conflicts and reconcile
+    // recovery. Loaded files align their sources with `correspondence`, or
+    // with the engine's default when it is null.
+    SessionLoader(Session session, git::GitRunners git, QObject *parent = nullptr,
                   std::shared_ptr<const CorrespondenceAlgorithm> correspondence = {});
 
     [[nodiscard]] QString startupState() const { return state_; }
@@ -126,7 +126,7 @@ private:
     // Leaves a choice that will not reload: the window shows its files again.
     void refuseChoice(const QString &message);
     Session session_;
-    const QString gitExecutable_;
+    const git::GitRunners git_;
     std::shared_ptr<const CorrespondenceAlgorithm> correspondence_;
     git::ConflictClassifier classifier_;
     git::RepositoryContext repository_;

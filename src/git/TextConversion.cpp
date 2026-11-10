@@ -273,9 +273,6 @@ TextConversion::TextConversion(const GitRunners &runners, QObject *parent)
 TextConversion::TextConversion(GitProgram program, QObject *parent)
     : TextConversion(gitAdapters(std::move(program)), parent)
 {}
-TextConversion::TextConversion(const QString &executable, QObject *parent)
-    : TextConversion(GitProgram{executable, GitEnvironment::fromProcess()}, parent)
-{}
 TextConversion::~TextConversion() = default;
 bool TextConversion::start(const TextConversionRequest &request)
 {

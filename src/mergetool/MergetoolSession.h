@@ -36,8 +36,8 @@ public:
         // The configuration files this window's Git reads. A launcher whose
         // Git reads others is refused, since the parent stages with them.
         git::GitEnvironment gitEnvironment;
-        // The Git that copied-launch checks run.
-        QString gitExecutable;
+        // Builds the runners copied-launch checks run Git on, on a worker thread.
+        git::GitRunners git;
     };
     // loadedRepository is the loaded operation that copied-launch checks inspect.
     MergetoolSession(ResolutionPublisher &publisher, SessionStore &files, SessionCoordinator &coordinator,

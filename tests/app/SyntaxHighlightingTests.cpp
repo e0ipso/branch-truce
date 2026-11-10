@@ -2,6 +2,7 @@
 #include "app/AppPaths.h"
 #include "app/Application.h"
 #include "app/Translations.h"
+#include "fixtures/AppSession.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/QuickScene.h"
@@ -92,7 +93,7 @@ public:
     }
     const FileSession &file(const std::string &id = "app") { return *controller.store()->file(id); }
 
-    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+    Application controller{test_support::windowConfig()};
     QQmlApplicationEngine engine;
     QQuickWindow *window = nullptr;
 };

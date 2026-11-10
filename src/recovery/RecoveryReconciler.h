@@ -12,11 +12,12 @@
 namespace branch_truce {
 
 // The read-only repository facts reconciliation checks recovered work
-// against. The default runs Git and reads the destination; both block, so
-// call it from a worker thread. A test substitutes its own facts.
+// against. The default runs Git on a runner from git and reads the
+// destination; both block, so call it from a worker thread. A test
+// substitutes its own facts.
 class RepositoryProbe {
 public:
-    explicit RepositoryProbe(QString gitExecutable);
+    explicit RepositoryProbe(git::GitRunners git);
     virtual ~RepositoryProbe() = default;
     // Runs one read-only Git request to completion.
     [[nodiscard]] virtual git::Result inspect(const git::Request &request) const;
@@ -24,7 +25,7 @@ public:
                                                               const QByteArray &path) const;
 
 private:
-    QString executable_;
+    git::GitRunners git_;
 };
 
 struct Reconciliation {

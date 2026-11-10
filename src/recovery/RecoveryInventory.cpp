@@ -54,14 +54,14 @@ const FileSession *firstCaptured(const std::vector<FileSession> &files)
 }
 
 QString revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
-                               const git::RepositoryContext &repository, const QString &gitExecutable)
+                               const git::RepositoryContext &repository, const git::GitRunners &git)
 {
-    return revalidateCopiedLaunch(captured, identity, repository, RepositoryProbe(gitExecutable));
+    return revalidateCopiedLaunch(captured, identity, repository, RepositoryProbe(git));
 }
 
 RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude,
                                 const git::RepositoryContext &repository, const std::vector<FileSession> &observed,
-                                const QString &executable, const QString &chosenSession, const RestoreOptions &options)
+                                const git::GitRunners &git, const QString &chosenSession, const RestoreOptions &options)
 {
     RecoveryRestore result;
     std::vector<RecoveryCandidate> candidates;
@@ -196,7 +196,7 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
     if (replay.incompleteTail)
         result.diagnostics.push_back(
             QStringLiteral("An interrupted final recovery record was ignored. Pending input may need repeating."));
-    const RepositoryProbe probe(executable);
+    const RepositoryProbe probe(git);
     for (auto &file : replay.files) {
         const auto reconciled = reconcile(file, replay.mutations, observed, repository, probe, *adopted->lease);
         if (!reconciled.failure.isEmpty()) store.failures.emplace(file.id(), reconciled.failure);

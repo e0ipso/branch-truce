@@ -127,11 +127,10 @@ int main(int argc, char *argv[])
     if (paths.size() > 1) parser.showHelp(2);
 
     // The composition root: the data roots and services this session uses.
-    branch_truce::Application session({git.executable,
-                                       branch_truce::newRecoveryDirectory(),
-                                       {},
-                                       git.environment,
-                                       branch_truce::mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"))});
+    branch_truce::Application session(
+        {.git = git,
+         .recoveryDirectory = branch_truce::newRecoveryDirectory(),
+         .mergetoolDirectory = branch_truce::mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"))});
     QQmlApplicationEngine engine;
     branch_truce::selectControlsStyle(engine);
     engine.setInitialProperties(session.windowProperties());

@@ -365,7 +365,7 @@ public:
         writeFile(path(QStringLiteral("result.txt")), manual);
         // Restores the process environment when it goes, even if the rest of construction throws.
         scoped.emplace(environment);
-        controller = std::make_unique<Application>(Application::Config{gitOnPath(), newRecoveryDirectory(), {}});
+        controller = std::make_unique<Application>(test_support::windowConfig());
         test_support::openRepository(*controller, root);
         if (controller->loader()->startupState() != QLatin1String("ready"))
             throw std::runtime_error("controller startup: " + controller->loader()->detail().toStdString());

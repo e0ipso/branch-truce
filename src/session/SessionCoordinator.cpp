@@ -323,9 +323,6 @@ public:
     std::vector<TaskCompletion> mutations;
 };
 
-SessionCoordinator::SessionCoordinator(SessionStore &store, QString gitExecutable, QObject *parent)
-    : SessionCoordinator(store, git::gitAdapters(std::move(gitExecutable)), parent)
-{}
 SessionCoordinator::SessionCoordinator(SessionStore &store, git::GitRunners git, QObject *parent)
     : QObject(parent), d(std::make_unique<State>(*this, store, std::move(git)))
 {}

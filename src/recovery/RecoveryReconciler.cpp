@@ -1,25 +1,13 @@
 // Recovery reconciliation checks recovered files against the live repository before editing resumes.
 #include "recovery/RecoveryReconciler.h"
 #include "recovery/SessionIdentity.h"
-#include <QEventLoop>
 #include <QUuid>
 #include <algorithm>
 
 namespace branch_truce {
-RepositoryProbe::RepositoryProbe(QString gitExecutable) : executable_(std::move(gitExecutable)) {}
+RepositoryProbe::RepositoryProbe(git::GitRunners git) : git_(std::move(git)) {}
 
-git::Result RepositoryProbe::inspect(const git::Request &request) const
-{
-    git::GitAdapter adapter(executable_);
-    QEventLoop loop;
-    git::Result result;
-    QObject::connect(&adapter, &git::GitAdapter::finished, &loop, [&](const git::Result &value) {
-        result = value;
-        loop.quit();
-    });
-    if (adapter.start(request)) loop.exec();
-    return result;
-}
+git::Result RepositoryProbe::inspect(const git::Request &request) const { return git::runBlocking(git_, request); }
 
 storage::DestinationCapture RepositoryProbe::capture(const QString &worktreeRoot, const QByteArray &path) const
 {

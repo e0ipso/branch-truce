@@ -7,6 +7,7 @@
 #include "app/SelectedFile.h"
 #include "app/Selection.h"
 #include "app/Translations.h"
+#include "fixtures/AppSession.h"
 #include "fixtures/Files.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/RecoveryJournal.h"
@@ -213,7 +214,7 @@ struct RegionView {
         CHECK(controller.store()->redo("choices", revision()) == Transition::Applied);
         return file();
     }
-    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+    Application controller{test_support::windowConfig()};
 };
 }
 
@@ -283,7 +284,7 @@ int main(int argc, char **argv)
               && selected.choices().isEmpty());
     });
     suite.run("the selected file exposes passage kinds, region ranges, decisions and the file name", [] {
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         CHECK(controller.store()->appendFile(viewFile()));
         CHECK(controller.selection()->select("choices"));
         const auto file = controller.selectedFile();
@@ -313,7 +314,7 @@ int main(int argc, char **argv)
         CHECK(choices[6].toMap().value("state").toString() == "undecided");
     });
     suite.run("selected file notifies changed parts without re-emitting sources on edits", [] {
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         CHECK(controller.store()->appendFile(viewFile()));
         CHECK(controller.selection()->select("choices"));
         auto *selected = controller.selectedFile();
@@ -337,7 +338,7 @@ int main(int argc, char **argv)
         CHECK(identity.count() == 0 && sources.count() == 0 && result.count() == 1 && decisions.count() == 1);
     });
     suite.run("accepted controller edit keeps source signals and row status in sync", [] {
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         CHECK(controller.store()->appendFile(viewFile()));
         CHECK(controller.selection()->select("choices"));
         auto *selected = controller.selectedFile();
@@ -366,7 +367,7 @@ int main(int argc, char **argv)
               && rows.count() == 1);
     });
     suite.run("selected file ranges, kinds and region states follow each new revision", [] {
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         CHECK(controller.store()->appendFile(viewFile()));
         CHECK(controller.selection()->select("choices"));
         int changes = 0;

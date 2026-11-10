@@ -282,7 +282,7 @@ int gitWorker(const WorkerArgs &args)
     using branch_truce::git::Outcome;
     using branch_truce::git::Request;
     using branch_truce::git::Result;
-    GitAdapter adapter(fixtureGit());
+    GitAdapter adapter(branch_truce::git::GitProgram{fixtureGit(), branch_truce::git::GitEnvironment::fromProcess()});
     Request request;
     request.directory = repo;
     request.sessionGeneration = 1;

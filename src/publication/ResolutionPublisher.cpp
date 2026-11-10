@@ -39,14 +39,14 @@ Outcome failedObservation(const TaskResult &result)
 }
 }
 
-ResolutionPublisher::ResolutionPublisher(SessionStore &files, SessionCoordinator &coordinator, QString gitExecutable,
+ResolutionPublisher::ResolutionPublisher(SessionStore &files, SessionCoordinator &coordinator,
+                                         const git::GitRunners &git,
                                          std::shared_ptr<const storage::FileSystem> destinations, QObject *parent)
     : QObject(parent),
       files_(files),
       coordinator_(coordinator),
-      executable_(std::move(gitExecutable)),
       destinations_(std::move(destinations)),
-      conversion_(executable_, this)
+      conversion_(git, this)
 {
     connect(&conversion_, &git::TextConversion::finished, this, [this](const git::TextConversionResult &result) {
         if (!attempt_) return;

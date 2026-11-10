@@ -129,9 +129,6 @@ class GitAdapter final : public GitRunner {
     Q_OBJECT
 public:
     explicit GitAdapter(GitProgram program, QObject *parent = nullptr);
-    // Reads the configuration this process's environment selects. For callers
-    // that hold only the executable.
-    explicit GitAdapter(const QString &executable, QObject *parent = nullptr);
     ~GitAdapter() override;
     bool start(const Request &request) override;
     void cancel() override;
@@ -144,13 +141,13 @@ private:
 
 // Runners that are GitAdapters for program.
 [[nodiscard]] GitRunners gitAdapters(GitProgram program);
-// Runners that are GitAdapters for executable, each reading the configuration the process
-// environment selects when it is built.
-[[nodiscard]] GitRunners gitAdapters(QString executable);
 
-// Runs one request to completion in a nested event loop and returns its
-// result. The adapter's own deadline bounds the wait. For headless callers
-// with no event loop of their own, such as the mergetool launcher.
+// Runs one request to completion on a runner from runners, in a nested event
+// loop, and returns its result. The runner's own deadline bounds the wait. For
+// worker threads and headless callers with no event loop of their own, such
+// as recovery reconciliation and the mergetool launcher. A runner that refuses
+// the request gives a Rejected result that says so.
+[[nodiscard]] Result runBlocking(const GitRunners &runners, const Request &request);
 [[nodiscard]] Result runBlocking(const GitProgram &program, const Request &request);
 } // namespace branch_truce::git
 Q_DECLARE_METATYPE(branch_truce::git::Result)

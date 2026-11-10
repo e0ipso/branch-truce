@@ -405,9 +405,9 @@ void MergetoolSession::acceptCopiedLaunches()
         const auto task = coordinator_.submit(
             fileId, file->current().id,
             [snapshots = *file->snapshots(), identity, repository = loadedRepository_(),
-             executable = config_.gitExecutable](const TaskInput &, const TaskControl &) {
+             git = config_.git](const TaskInput &, const TaskControl &) {
                 TaskResult result;
-                result.diagnostic = revalidateCopiedLaunch(snapshots, identity, repository, executable);
+                result.diagnostic = revalidateCopiedLaunch(snapshots, identity, repository, git);
                 return result;
             },
             [this, fileId, identity](const TaskCompletion &completion) {

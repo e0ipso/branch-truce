@@ -23,12 +23,15 @@ class ScriptedGitRunner final : public branch_truce::git::GitRunner {
 public:
     using Answer = std::function<branch_truce::git::Result(const branch_truce::git::Request &)>;
 
+    // Every other request runs on a GitAdapter for executable, reading the configuration this
+    // process's environment selects.
     ScriptedGitRunner(branch_truce::git::Operation scripted, Answer answer, const QString &executable,
                       QObject *parent = nullptr)
         : GitRunner(parent),
           scripted_(scripted),
           answer_(std::move(answer)),
-          real_(std::make_unique<branch_truce::git::GitAdapter>(executable, this))
+          real_(std::make_unique<branch_truce::git::GitAdapter>(
+              branch_truce::git::GitProgram{executable, branch_truce::git::GitEnvironment::fromProcess()}, this))
     {
         connect(real_.get(), &branch_truce::git::GitRunner::finished, this,
                 [this](const branch_truce::git::Result &result) { Q_EMIT finished(result); });

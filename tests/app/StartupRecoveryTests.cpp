@@ -1,12 +1,13 @@
 // Startup recovery: restoring acknowledged work, incomplete records, retired and unadopted stores,
 // several windows and the recovery-session choice, and external resolution while closed.
 #include "StartupRoutes.h"
+#include "fixtures/AppSession.h"
 
 using namespace startup_routes;
 
 int startup_routes::openEditAndCrash(const QString &root)
 {
-    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+    Application controller{test_support::windowConfig()};
     if (!controller.loader()->openRepository(root)) return 3;
     QEventLoop loop;
     QObject::connect(controller.loader(), &SessionLoader::launchChanged, &loop, [&] {
@@ -46,7 +47,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         CHECK_EQ(stores.size(), 1);
         const auto location = recoveryRoot() + "/" + stores.front();
         CHECK(QFileInfo::exists(location + "/session.lock"));
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         CHECK(controller.loader()->recoveryChoices().isEmpty());
         CHECK_EQ(controller.store()->recoveryDirectory(), location);
@@ -62,7 +63,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         Draft saved, unsaved;
         std::optional<FileSnapshots> captured;
         {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             auto *model = controller.store();
             const auto &selected = openedFile(controller);
@@ -82,7 +83,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
             CHECK(!model->hasPendingRecovery());
         }
         for (int restart = 0; restart < 2; ++restart) {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             const auto &restored = openedFile(controller);
             CHECK(controller.store()->recoveryDirectory() == location);
@@ -106,7 +107,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         QString location;
         Draft acknowledged;
         {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             const auto &selected = openedFile(controller);
             CHECK(controller.store()->editResult(selected.id(), 1, {{0, 0}, "acknowledged\n"}) == Transition::Applied);
@@ -117,7 +118,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         CHECK(journal.open(QIODevice::Append));
         CHECK(journal.write("{\"interrupted pending input\":", 29) == 29);
         journal.close();
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         const auto &restored = openedFile(controller);
         CHECK(restored.current().draft == acknowledged && restored.facts().unsaved);
@@ -137,7 +138,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
                       QString abandoned;
                       const QByteArray oldDraft = "old acknowledged unsaved work\n";
                       {
-                          Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+                          Application controller{test_support::windowConfig()};
                           openController(controller, repo);
                           const auto &selected = openedFile(controller);
                           auto edited = selected.current().draft;
@@ -175,7 +176,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
                               writeFile(path, "different payload bytes");
                           diagnostic = "payload";
                       }
-                      Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+                      Application controller{test_support::windowConfig()};
                       openController(controller, repo);
                       const auto detail = controller.loader()->detail();
                       CHECK(detail.contains(diagnostic) && controller.store()->recoveryDirectory() != abandoned);
@@ -200,7 +201,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         ScopedEnvironment environment(repo.environment);
         QString abandoned;
         {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             abandoned = controller.store()->recoveryDirectory();
         }
@@ -214,7 +215,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         CHECK(QDir().rename(abandoned, retired) && !QFileInfo::exists(abandoned));
         CHECK(storeContents(retired) == retained);
         {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             CHECK(!controller.loader()->detail().contains("rejected") && !controller.store()->hasRecoveryFailures());
             const auto &selected = openedFile(controller);
@@ -222,7 +223,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
                   == Transition::Applied);
         }
         CHECK(QDir().rename(retired, abandoned) && storeContents(abandoned) == retained);
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         CHECK(controller.loader()->detail().contains("integrity") && !controller.store()->hasRecoveryFailures());
         CHECK(openedFile(controller).current().draft.text.starts_with("live edit\n"));
@@ -233,9 +234,9 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         ScopedEnvironment environment(repo.environment);
         QStringList untouched;
         {
-            Application first{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application first{test_support::windowConfig()};
             openController(first, repo);
-            Application second{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application second{test_support::windowConfig()};
             openController(second, repo);
             untouched = {first.store()->recoveryDirectory(), second.store()->recoveryDirectory()};
             CHECK(untouched.front() != untouched.back());
@@ -243,7 +244,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         }
         QString location;
         {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             CHECK(!controller.loader()->detail().contains("Multiple recovery sessions"));
             CHECK(controller.loader()->detail().contains("without app edits that were deleted: 2"));
@@ -256,7 +257,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
             location = controller.store()->recoveryDirectory();
         }
         for (int restart = 0; restart < 2; ++restart) {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             CHECK(!controller.loader()->detail().contains("Multiple recovery sessions"));
             CHECK(controller.loader()->detail().contains("Recovered app drafts"));
@@ -271,9 +272,9 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         QString first;
         QString second;
         {
-            Application one{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application one{test_support::windowConfig()};
             openController(one, repo);
-            Application two{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application two{test_support::windowConfig()};
             openController(two, repo);
             for (auto *controller : {&one, &two}) {
                 const auto &selected = openedFile(*controller);
@@ -289,7 +290,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         const auto retained = storeContents(second);
         // The block holds across launches; each blocked launch opens the live files.
         for (int restart = 0; restart < 2; ++restart) {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             const auto detail = controller.loader()->detail();
             CHECK(detail.contains("restoration is blocked rather than guessing")
@@ -302,7 +303,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
                   && !live.current().draft.text.starts_with("second window"));
         }
         {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo, firstName);
             CHECK(controller.store()->recoveryDirectory() == first);
             CHECK(controller.loader()->detail().contains("Recovered app drafts"));
@@ -314,7 +315,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         setAside.remove("set-aside");
         CHECK(setAside == retained);
         {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             CHECK(controller.store()->recoveryDirectory() == first
                   && !controller.loader()->detail().contains("blocked"));
@@ -322,7 +323,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         }
         // Choosing the set-aside session brings it back and sets the other one aside.
         {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo, secondName);
             CHECK(controller.store()->recoveryDirectory() == second);
             CHECK(controller.loader()->detail().contains(firstName + " was set aside, not deleted"));
@@ -337,9 +338,9 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         QString first;
         QString second;
         {
-            Application one{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application one{test_support::windowConfig()};
             openController(one, repo);
-            Application two{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application two{test_support::windowConfig()};
             openController(two, repo);
             for (auto *controller : {&one, &two}) {
                 const auto &selected = openedFile(*controller);
@@ -363,7 +364,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         // A window with its own edits refuses to switch, so they are never left behind.
         QString third;
         {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             CHECK(controller.loader()->recoveryChoices().size() == 2);
             const auto &live = openedFile(controller);
@@ -379,7 +380,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         // Retire the third store outside v1 so the remaining checks see two choices again.
         CHECK(QDir().rename(third, repo.executables.path() + "/retired-third"));
 
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         const auto choices = controller.loader()->recoveryChoices();
         CHECK(choices.size() == 2);
@@ -436,9 +437,9 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         ScopedEnvironment environment(repo.environment);
         QString first;
         {
-            Application one{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application one{test_support::windowConfig()};
             openController(one, repo);
-            Application two{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application two{test_support::windowConfig()};
             openController(two, repo);
             for (auto *controller : {&one, &two}) {
                 const auto &selected = openedFile(*controller);
@@ -447,7 +448,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
             }
             first = one.store()->recoveryDirectory();
         }
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         CHECK(controller.loader()->operation() == "Merge");
         repo.git({"merge", "--abort"});
@@ -463,9 +464,9 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         QString first;
         QString second;
         {
-            Application one{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application one{test_support::windowConfig()};
             openController(one, repo);
-            Application two{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application two{test_support::windowConfig()};
             openController(two, repo);
             for (auto *controller : {&one, &two}) {
                 const auto &selected = openedFile(*controller);
@@ -496,8 +497,11 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         };
 
         const auto alignments = std::make_shared<const RecordingCorrespondence>();
-        Application controller{Application::Config{
-            .gitExecutable = gitOnPath(), .recoveryDirectory = newRecoveryDirectory(), .correspondence = alignments}};
+        Application controller{[&] {
+            auto config = test_support::windowConfig();
+            config.correspondence = alignments;
+            return config;
+        }()};
         openController(controller, repo);
         CHECK(controller.loader()->recoveryChoices().size() == 2);
         const auto own = controller.store()->recoveryDirectory();
@@ -545,9 +549,9 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         QString first;
         QString second;
         {
-            Application one{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application one{test_support::windowConfig()};
             openController(one, repo);
-            Application two{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application two{test_support::windowConfig()};
             openController(two, repo);
             for (auto *controller : {&one, &two}) {
                 const auto &selected = openedFile(*controller);
@@ -563,7 +567,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         const auto retainedFirst = storeContents(first);
         const auto retainedSecond = storeContents(second);
         {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             CHECK(controller.loader()->recoveryChoices().size() == 2);
             const auto own = controller.store()->recoveryDirectory();
@@ -593,7 +597,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
             CHECK(!QFileInfo::exists(own));
         }
         // Once the other window lets go, the chosen session still restores.
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         openController(controller, repo, firstName);
         CHECK(controller.store()->recoveryDirectory() == first);
         CHECK(controller.loader()->detail().contains(secondName + " was set aside, not deleted"));
@@ -606,14 +610,14 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         const auto unknown = QUuid::createUuid().toString(QUuid::WithoutBraces);
         QString store;
         {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             store = controller.store()->recoveryDirectory();
         }
         // A lone store holding only launch captures has no work to choose
         // between, so it is still adopted.
         {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo, unknown);
             CHECK(controller.store()->recoveryDirectory() == store);
             CHECK(controller.loader()->detail().contains("Recovery session " + unknown
@@ -627,7 +631,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         const auto storeName = QFileInfo(store).fileName();
         const auto retained = storeContents(store);
         {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo, unknown);
             CHECK(controller.store()->recoveryDirectory() != store);
             CHECK(controller.loader()->detail().contains("Recovery session " + unknown
@@ -640,7 +644,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
             CHECK(storeContents(store) == retained);
         }
         // Without a name, the only edited store is restored as before.
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         CHECK(controller.store()->recoveryDirectory() == store);
         CHECK(openedFile(controller).current().draft.text.starts_with("edited\n"));
@@ -662,7 +666,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         Draft recovered;
         QString location;
         {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             const auto &selected = openedFile(controller);
             CHECK(controller.store()->editResult(selected.id(), 1, {{0, 0}, "acknowledged draft\n"})
@@ -673,7 +677,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         writeFile(repo.path("tracked.txt"), "resolved outside the app\n");
         repo.git({"add", "--", "tracked.txt"});
         for (int restart = 0; restart < 2; ++restart) {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             auto *model = controller.store();
             const auto &failed = openedFile(controller);
@@ -736,7 +740,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         QString location;
         std::optional<FileSession> captured;
         {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             captured = openedFile(controller);
             location = controller.store()->recoveryDirectory();
@@ -749,7 +753,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
                   ->commit(recoveryTransaction(legacy, RecoveryAction::Open, QUuid::createUuid().toString(), {}))
                   .succeeded);
         for (int restart = 0; restart < 2; ++restart) {
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             const auto &restored = openedFile(controller);
             CHECK(controller.store()->recoveryDirectory() == location);
@@ -785,7 +789,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
                     const QByteArray candidate = "reviewed result awaiting completion\n";
                     QString location;
                     {
-                        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+                        Application controller{test_support::windowConfig()};
                         openController(controller, repo);
                         auto *model = controller.store();
                         const auto &selected = openedFile(controller);
@@ -817,7 +821,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
                         repo.git({"add", "--", "tracked.txt"});
                     }
                     const auto repositoryBefore = repo.snapshot();
-                    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+                    Application controller{test_support::windowConfig()};
                     openController(controller, repo);
                     const auto &restored = openedFile(controller);
                     const auto diagnostic =

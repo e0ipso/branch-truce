@@ -101,9 +101,6 @@ GitAdapter::GitAdapter(GitProgram program, QObject *parent)
 {
     qRegisterMetaType<Result>();
 }
-GitAdapter::GitAdapter(const QString &executable, QObject *parent)
-    : GitAdapter(GitProgram{executable, GitEnvironment::fromProcess()}, parent)
-{}
 GitAdapter::~GitAdapter() = default;
 bool GitAdapter::start(const Request &request)
 {
@@ -151,30 +148,28 @@ GitRunners gitAdapters(GitProgram program)
     };
 }
 
-GitRunners gitAdapters(QString executable)
+Result runBlocking(const GitRunners &runners, const Request &request)
 {
-    return [executable = std::move(executable)](QObject *parent) -> std::unique_ptr<GitRunner> {
-        return std::make_unique<GitAdapter>(executable, parent);
-    };
-}
-
-Result runBlocking(const GitProgram &program, const Request &request)
-{
-    GitAdapter adapter(program);
+    const auto runner = runners(nullptr);
     QEventLoop loop;
     std::optional<Result> result;
-    QObject::connect(&adapter, &GitAdapter::finished, &loop, [&](const Result &value) {
+    QObject::connect(runner.get(), &GitRunner::finished, &loop, [&](const Result &value) {
         result = value;
         loop.quit();
     });
-    if (!adapter.start(request)) {
+    if (!runner->start(request)) {
         Result refused;
         refused.request = request;
         refused.diagnostic = QStringLiteral("The Git request could not start");
         return refused;
     }
-    // Every accepted request completes within the adapter's deadline.
+    // Every accepted request completes within the runner's deadline.
     loop.exec();
     return result.value_or(Result{});
+}
+
+Result runBlocking(const GitProgram &program, const Request &request)
+{
+    return runBlocking(gitAdapters(program), request);
 }
 } // namespace branch_truce::git

@@ -33,8 +33,9 @@ struct Publishing {
 
     QTemporaryDir directory;
     test_support::TestSession store{directory.path() + "/recovery"};
-    SessionCoordinator coordinator{store, test_support::gitExecutable()};
-    ResolutionPublisher publisher{store, coordinator, test_support::gitExecutable()};
+    const git::GitRunners git = git::gitAdapters({test_support::gitExecutable(), git::GitEnvironment::fromProcess()});
+    SessionCoordinator coordinator{store, git};
+    ResolutionPublisher publisher{store, coordinator, git};
     QStringList messages;
 };
 }

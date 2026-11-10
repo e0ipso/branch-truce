@@ -82,9 +82,8 @@ Sandbox::Sandbox()
 Application::Config Sandbox::config(const Repository &repository) const
 {
     Application::Config config;
-    config.gitExecutable = git_.executable();
+    config.git = {git_.executable(), git::GitEnvironment::from(repository.environment())};
     config.recoveryDirectory = recovery_.path() + QLatin1Char('/') + QUuid::createUuid().toString(QUuid::WithoutBraces);
-    config.gitEnvironment = git::GitEnvironment::from(repository.environment());
     config.mergetoolDirectory = socketDirectory();
     return config;
 }

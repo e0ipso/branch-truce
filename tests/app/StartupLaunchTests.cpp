@@ -1,6 +1,7 @@
 // Starting the real binary and the controller on a repository: the root and directory arguments,
 // the mergetool argument, rebase and cherry-pick routes, offline startup and invalid selections.
 #include "StartupRoutes.h"
+#include "fixtures/AppSession.h"
 
 using namespace startup_routes;
 
@@ -117,7 +118,7 @@ void startup_routes::addLaunchCases(test_support::Suite &suite, const QString &a
                   true);
         const auto path = qgetenv("PATH");
         CHECK(gitOnPath() != script);
-        Application controller{Application::Config{script, newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig(script)};
         openController(controller, repo);
         CHECK(qgetenv("PATH") == path && gitOnPath() != script);
         // Opening the repository inspected it through the wrapper.

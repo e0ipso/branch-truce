@@ -47,8 +47,6 @@ public:
     // Runs its Git requests one at a time on one runner from runners.
     explicit TextConversion(const GitRunners &runners, QObject *parent = nullptr);
     explicit TextConversion(GitProgram program, QObject *parent = nullptr);
-    // Reads the configuration this process's environment selects.
-    explicit TextConversion(const QString &executable, QObject *parent = nullptr);
     ~TextConversion() override;
     bool start(const TextConversionRequest &request);
     void cancel();

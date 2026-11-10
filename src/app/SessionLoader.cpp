@@ -15,13 +15,13 @@
 #include <memory>
 
 namespace branch_truce {
-SessionLoader::SessionLoader(Session session, QString gitExecutable, QObject *parent,
+SessionLoader::SessionLoader(Session session, git::GitRunners git, QObject *parent,
                              std::shared_ptr<const CorrespondenceAlgorithm> correspondence)
     : QObject(parent),
       session_(session),
-      gitExecutable_(std::move(gitExecutable)),
+      git_(std::move(git)),
       correspondence_(std::move(correspondence)),
-      classifier_(gitExecutable_, this)
+      classifier_(git_, this)
 {
     connect(&classifier_, &git::ConflictClassifier::finished, this, &SessionLoader::classified);
     // The fences drop a choice's read when work changes or the session is
@@ -316,8 +316,8 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
     const auto task = session_.coordinator.submit(
         anchor, 1,
         [files = std::move(conflicts), repository = repository_, sessionId, loaded, recovery, recoveryDirectory,
-         recoveryInventory, executable = gitExecutable_, correspondence = correspondence_, chosen = recoverySession_,
-         baselines, destinations = session_.publisher.destinations()](const TaskInput &, const TaskControl &control) {
+         recoveryInventory, git = git_, correspondence = correspondence_, chosen = recoverySession_, baselines,
+         destinations = session_.publisher.destinations()](const TaskInput &, const TaskControl &control) {
             for (const auto &file : files) {
                 if (control.cancellationRequested()) return TaskResult{TaskStatus::Cancelled, {}, {}, {}, {}};
                 Draft draft;
@@ -340,7 +340,7 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
                                                 .initializeChoices = true,
                                                 .algorithm = correspondence});
             }
-            *recovery = restoreRecovery(recoveryInventory, recoveryDirectory, repository, *loaded, executable, chosen,
+            *recovery = restoreRecovery(recoveryInventory, recoveryDirectory, repository, *loaded, git, chosen,
                                         {correspondence, QDateTime::currentDateTimeUtc()});
             // Reading every destination waits on the disk, so it happens here too.
             if (repository.supported)

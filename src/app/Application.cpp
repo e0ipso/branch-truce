@@ -2,15 +2,22 @@
 #include "Application.h"
 
 namespace branch_truce {
+namespace {
+git::GitRunners runnersOf(const Application::Config &config)
+{
+    return config.gitRunners ? config.gitRunners : git::gitAdapters(config.git);
+}
+}
+
 Application::Application(Config config, QObject *parent)
     : QObject(parent),
       store_(std::move(config.recoveryDirectory), config.files, this),
       files_(store_, this),
-      coordinator_(store_, config.sessionGit ? config.sessionGit : git::gitAdapters(config.gitExecutable), this),
-      publisher_(store_, coordinator_, config.gitExecutable, config.files, this),
+      coordinator_(store_, runnersOf(config), this),
+      publisher_(store_, coordinator_, runnersOf(config), config.files, this),
       mergetool_(
           publisher_, store_, coordinator_, [this] { return loader_.repository(); },
-          {config.mergetoolDirectory, config.gitEnvironment, config.gitExecutable}, this),
+          {config.mergetoolDirectory, config.git.environment, runnersOf(config)}, this),
       editor_(store_, this),
       selection_(files_, editor_, this),
       selectedFile_(files_, selection_, this),
@@ -20,7 +27,7 @@ Application::Application(Config config, QObject *parent)
       commands_(store_, selection_, editor_, publisher_, mergetool_, feedback_, this),
       completion_(store_, publisher_, mergetool_, feedback_, this),
       mergetoolStatus_(mergetool_, publisher_, files_, selection_, this),
-      loader_({store_, coordinator_, selection_, publisher_, mergetool_, completion_}, config.gitExecutable, this,
+      loader_({store_, coordinator_, selection_, publisher_, mergetool_, completion_}, runnersOf(config), this,
               std::move(config.correspondence))
 {
     // The editor shows the selected file, and reloads it after any change.

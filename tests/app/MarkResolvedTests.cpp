@@ -148,10 +148,11 @@ struct Session {
     Repository repo;
     ScopedEnvironment environment;
     std::shared_ptr<PublishFiles> files = std::make_shared<PublishFiles>();
-    Application controller{Application::Config{.gitExecutable = gitOnPath(),
-                                               .recoveryDirectory = newRecoveryDirectory(),
-                                               .correspondence = {},
-                                               .files = files}};
+    Application controller{[&] {
+        auto config = test_support::windowConfig();
+        config.files = files;
+        return config;
+    }()};
     QString id;
     explicit Session(bool unsupportedResult = false) : environment(repo.environment)
     {
@@ -255,7 +256,7 @@ struct RestartedWrite {
     {
         const auto hook = repo.path(".git/hooks/post-index-change");
         {
-            Application first{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application first{test_support::windowConfig()};
             openController(first, repo);
             CHECK(first.selection()->select(id));
             auto draft = openedFile(first).current().draft;
@@ -278,7 +279,7 @@ struct RestartedWrite {
             CHECK(readFile(repo.path("tracked.txt")) == edited);
         }
         CHECK(QFile::remove(hook));
-        controller = std::make_unique<Application>(Application::Config{gitOnPath(), newRecoveryDirectory(), {}});
+        controller = std::make_unique<Application>(test_support::windowConfig());
         openController(*controller, repo);
         CHECK(controller->selection()->select(id));
         const auto &restored = openedFile(*controller);
@@ -408,11 +409,12 @@ int main(int argc, char **argv)
             result.diagnostic = QStringLiteral("Git refused to stage the file.");
             return result;
         };
-        Application controller{Application::Config{
-            .gitExecutable = gitOnPath(),
-            .recoveryDirectory = newRecoveryDirectory(),
-            .correspondence = {},
-            .sessionGit = test_support::ScriptedGitRunner::runners(git::Operation::StageFile, refused, gitOnPath())}};
+        Application controller{[&] {
+            auto config = test_support::windowConfig();
+            config.gitRunners =
+                test_support::ScriptedGitRunner::runners(git::Operation::StageFile, refused, gitOnPath());
+            return config;
+        }()};
         openController(controller, repo);
         const auto id = selectTracked(controller);
         const auto before = repo.snapshot();
@@ -585,11 +587,12 @@ int main(int argc, char **argv)
             result.diagnostic = diagnostic;
             return result;
         };
-        Application controller{Application::Config{
-            .gitExecutable = gitOnPath(),
-            .recoveryDirectory = newRecoveryDirectory(),
-            .correspondence = {},
-            .sessionGit = test_support::ScriptedGitRunner::runners(git::Operation::StageFile, timedOut, gitOnPath())}};
+        Application controller{[&] {
+            auto config = test_support::windowConfig();
+            config.gitRunners =
+                test_support::ScriptedGitRunner::runners(git::Operation::StageFile, timedOut, gitOnPath());
+            return config;
+        }()};
         openController(controller, repo);
         const auto id = selectTracked(controller);
         auto draft = openedFile(controller).current().draft;

@@ -374,9 +374,6 @@ ConflictClassifier::ConflictClassifier(const GitRunners &runners, QObject *paren
 ConflictClassifier::ConflictClassifier(GitProgram program, QObject *parent)
     : ConflictClassifier(gitAdapters(std::move(program)), parent)
 {}
-ConflictClassifier::ConflictClassifier(const QString &executable, QObject *parent)
-    : ConflictClassifier(GitProgram{executable, GitEnvironment::fromProcess()}, parent)
-{}
 ConflictClassifier::~ConflictClassifier() = default;
 bool ConflictClassifier::start(const ConflictClassificationRequest &request)
 {

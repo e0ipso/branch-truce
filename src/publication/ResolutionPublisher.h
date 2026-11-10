@@ -43,8 +43,9 @@ public:
         std::optional<MarkerScan> markers;
     };
 
-    // destinations is the file system repository files are captured and written through.
-    ResolutionPublisher(SessionStore &files, SessionCoordinator &coordinator, QString gitExecutable,
+    // git builds the runner that converts results. destinations is the file
+    // system repository files are captured and written through.
+    ResolutionPublisher(SessionStore &files, SessionCoordinator &coordinator, const git::GitRunners &git,
                         std::shared_ptr<const storage::FileSystem> destinations = storage::systemFileSystem(),
                         QObject *parent = nullptr);
 
@@ -114,7 +115,6 @@ private:
 
     SessionStore &files_;
     SessionCoordinator &coordinator_;
-    const QString executable_;
     const std::shared_ptr<const storage::FileSystem> destinations_;
     git::RepositoryContext repository_;
     git::TextConversion conversion_;
