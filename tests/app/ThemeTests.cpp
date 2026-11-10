@@ -19,6 +19,7 @@
 // file that names a missing icon, and pass that list.
 #include "TestHarness.h"
 #include "app/AppPaths.h"
+#include "app/Appearance.h"
 #include "app/Application.h"
 #include "app/Translations.h"
 #include "fixtures/ChoiceFile.h"
@@ -78,26 +79,6 @@ constexpr int kRepeats = 3;
 constexpr int kKeysPerRepeat = 6;
 constexpr int kNotchesPerRepeat = 15;
 #endif
-
-// As src/app/main.cpp: the KDE style when it is installed, with Fusion for the controls it lacks,
-// and otherwise Fusion. QT_QUICK_CONTROLS_STYLE wins.
-void selectControlsStyle(const QQmlEngine &engine)
-{
-    if (!qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) return;
-    const auto paths = engine.importPathList();
-    const bool kdeStyle = std::any_of(paths.cbegin(), paths.cend(), [](const QString &path) {
-        return QFileInfo::exists(path + QStringLiteral("/org/kde/desktop/qmldir"));
-    });
-    QQuickStyle::setStyle(kdeStyle ? QStringLiteral("org.kde.desktop") : QStringLiteral("Fusion"));
-    if (kdeStyle) QQuickStyle::setFallbackStyle(QStringLiteral("Fusion"));
-}
-
-// As src/app/main.cpp: Breeze as the fallback icon theme, and hicolor when the platform names none.
-void selectIconThemes()
-{
-    QIcon::setFallbackThemeName(QStringLiteral("breeze"));
-    if (QIcon::themeName().isEmpty()) QIcon::setThemeName(QStringLiteral("hicolor"));
-}
 
 class Scene {
 public:
@@ -267,7 +248,7 @@ int checkRoles(const QString &scheme, const QString &other)
     }
     scene.showEarlier();
     // Let the gutters and backgrounds lay out before the frame is taken.
-    QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+    test_support::waitForFrames(scene.window, "the panes are laid out");
     const auto frame = scene.window->grabWindow();
     std::cout << "scheme " << scheme.toStdString() << ": View background " << describe(*view) << ", "
               << other.toStdString() << " " << describe(*otherView) << '\n';
@@ -337,7 +318,7 @@ int checkCues()
             auto *slot = scene.item(gutter->objectName() + QStringLiteral("MarkerSlot"));
             test_support::settleFor(std::string("the ") + pane + " gutter rows",
                                     [&] { return gutter->property("rows").toList().size() > 0; });
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            test_support::waitForFrames(scene.window, std::string("the ") + pane + " glyphs are drawn");
             const auto lines = colouredLines(backgrounds);
             const auto glyphs = glyphLines(slot);
             std::ostringstream shown;
@@ -737,20 +718,31 @@ int main(int argc, char **argv)
 {
     // Unbuffered, so a run that times out still shows how far it got.
     std::cout << std::unitbuf;
-    QTemporaryDir data;
-    if (!data.isValid()) return 2;
     const QString mode = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QString();
     const QString argument = argc > 2 ? QString::fromLocal8Bit(argv[2]) : QString();
-    const auto configHome = data.path() + QStringLiteral("/config");
-    qputenv("XDG_DATA_HOME", data.path().toUtf8());
+    // The colour scheme under test is a kdeglobals file in a configuration home of its own, which
+    // KColorScheme reads at startup. The CTest wrapper keeps every other XDG directory private.
+    QTemporaryDir scheme;
+    if (!scheme.isValid()) {
+        std::cerr << "cannot create a configuration home for the colour scheme\n";
+        return 2;
+    }
+    const auto configHome = scheme.path() + QStringLiteral("/config");
     qputenv("XDG_CONFIG_HOME", configHome.toUtf8());
-    qputenv("XDG_CACHE_HOME", (data.path() + "/cache").toUtf8());
-    if (mode == QStringLiteral("roles") && !writeColourScheme(configHome, argument)) return 2;
+    if (mode == QStringLiteral("roles") && !writeColourScheme(configHome, argument)) {
+        std::cerr << "cannot write the " << argument.toStdString() << " colour scheme to " << configHome.toStdString()
+                  << '\n';
+        return 2;
+    }
     QApplication application(argc, argv);
     // The English catalog supplies the plural forms these checks read.
     branch_truce::installTranslations(application);
     QCoreApplication::setApplicationName("BranchTruceThemeTests");
-    if (QGuiApplication::platformName() != QStringLiteral("offscreen")) return 2;
+    if (QGuiApplication::platformName() != QStringLiteral("offscreen")) {
+        std::cerr << "run with QT_QPA_PLATFORM=offscreen, not " << QGuiApplication::platformName().toStdString()
+                  << '\n';
+        return 2;
+    }
     if (mode == QStringLiteral("icons") && argc == 3) return checkIcons(argument);
     if (mode == QStringLiteral("roles") && argc == 3) {
         const auto other =

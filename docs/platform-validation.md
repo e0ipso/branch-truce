@@ -381,7 +381,7 @@ and with it the recovery journals of earlier runs.
 `GenericDataLocation` plus `/Branch Truce/recovery/v1`, which is the path the
 app already used with no organization name, so stores written by earlier
 builds are found where they are and nothing is moved. A later change that sets
-an organization name leaves the root alone. `app.session-model` pins both: the
+an organization name leaves the root alone. `app.session-recovery` pins both: the
 root, and a store written at the earlier path with an organization name set.
 
 ### QApplication and the KDE style

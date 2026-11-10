@@ -46,6 +46,9 @@ public:
         QString mergetoolDirectory = mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"));
         // The file system the recovery store and repository publication write through.
         std::shared_ptr<const storage::FileSystem> files = storage::systemFileSystem();
+        // The runner of each Git task the session queues, such as staging a resolved file. Empty
+        // runs gitExecutable.
+        git::GitRunners sessionGit = {};
     };
     explicit Application(Config config, QObject *parent = nullptr);
 

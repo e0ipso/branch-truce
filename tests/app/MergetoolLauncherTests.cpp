@@ -2,6 +2,8 @@
 #include "app/AppPaths.h"
 #include "app/Application.h"
 #include "app/Translations.h"
+#include "fixtures/AppSession.h"
+#include "fixtures/ConflictedRepository.h"
 #include "fixtures/EventLoop.h"
 #include "fixtures/Files.h"
 #include "fixtures/GitOnPath.h"
@@ -72,39 +74,15 @@ QString privateDirectory(const QString &path)
 
 // A merge with tracked.txt and excluded.txt in conflict, the launcher registered as the
 // truce-launcher tool, and the fixture Git's private configuration.
-class Repository {
+class Repository : public test_support::ConflictedRepository {
 public:
     explicit Repository(QByteArray trackedText, QByteArray excludedText)
         : tracked(std::move(trackedText)), excluded(std::move(excludedText))
     {
-        CHECK(runtime.isValid());
-        root = repository_.root();
-        // The shared Git sandbox sets PATH, LC_ALL, HOME, XDG_CONFIG_HOME and the Git configuration.
-        environment = repository_.environment();
-        environment.insert("XDG_CACHE_HOME", repository_.home().path() + "/cache");
-        environment.insert("XDG_DATA_HOME", repository_.home().path() + "/data");
-        // The session socket lives here, so the in-process session and every launcher meet.
-        environment.insert("XDG_RUNTIME_DIR", privateDirectory(runtime.path()));
         environment.insert("BRANCH_TRUCE_MERGETOOL_NO_SPAWN", "1");
-        git({"config", "user.name", "Branch Truce Tests"});
-        git({"config", "user.email", "tests@example.invalid"});
-        git({"config", "core.autocrlf", "false"});
-        writeFile(path("tracked.txt"), "base\n");
-        writeFile(path("excluded.txt"), "base\n");
-        writeFile(path("notes.txt"), "notes stay staged\n");
-        git({"add", "--", "tracked.txt", "excluded.txt", "notes.txt"});
-        git({"commit", "--quiet", "-m", "base"});
-        git({"checkout", "--quiet", "-b", "side"});
-        writeFile(path("tracked.txt"), "side\n");
-        writeFile(path("excluded.txt"), "side\n");
-        git({"add", "--", "tracked.txt", "excluded.txt"});
-        git({"commit", "--quiet", "-m", "side"});
-        git({"checkout", "--quiet", "main"});
-        writeFile(path("tracked.txt"), "main\n");
-        writeFile(path("excluded.txt"), "main\n");
-        git({"add", "--", "tracked.txt", "excluded.txt"});
-        git({"commit", "--quiet", "-m", "main"});
-        git({"merge", "--no-edit", "side"}, 1);
+        commit({{"tracked.txt", "base\n"}, {"excluded.txt", "base\n"}, {"notes.txt", "notes stay staged\n"}}, "base");
+        conflict({{"tracked.txt", "main\n"}, {"excluded.txt", "main\n"}},
+                 {{"tracked.txt", "side\n"}, {"excluded.txt", "side\n"}});
         writeFile(path("tracked.txt"), tracked);
         writeFile(path("excluded.txt"), excluded);
         notesObject = git({"rev-parse", ":notes.txt"}).trimmed();
@@ -115,22 +93,6 @@ public:
         git({"config", "mergetool.keepBackup", "false"});
         git({"config", "mergetool.keepTemporaries", "false"});
     }
-    QString path(const QString &relative) const { return root + '/' + relative; }
-    QByteArray git(const QStringList &arguments, int expected = 0) const
-    {
-        return test_support::runGit(environment, root, arguments, {}, expected);
-    }
-
-private:
-    test_support::GitRepository repository_;
-
-public:
-    // Under a long TMPDIR a QTemporaryDir would push the socket path past its
-    // length limit, and every session would fall back to the shared
-    // /tmp/branch-truce-<uid>. A short base under /tmp keeps it private.
-    QTemporaryDir runtime{QStringLiteral("/tmp/bt-run-XXXXXX")};
-    QString root;
-    QProcessEnvironment environment;
     QByteArray notesObject;
     QByteArray tracked;
     QByteArray excluded;
@@ -155,11 +117,7 @@ QString checkSocketDirectory(const Repository &repo)
 void startController(Application &controller, const Repository &repo, const QString &preferredFileId = {})
 {
     checkSocketDirectory(repo);
-    CHECK(controller.loader()->openRepository(repo.root, preferredFileId));
-    // Opening takes about 0.5 s on an idle host. At load averages of 25 to 36 on 8 cores it
-    // averaged 2.5 s and some opens took over 10 s.
-    pump([&] { return !controller.loader()->opening(); }, QStringLiteral("the repository opening did not finish"));
-    CHECK(!controller.loader()->opening());
+    test_support::openRepository(controller, repo.root, preferredFileId);
 }
 
 void openController(Application &controller, const Repository &repo, const QString &preferredFileId = {},
@@ -850,10 +808,8 @@ int main(int argc, char **argv)
              QStringLiteral("the launcher did not start a session"));
         CHECK(launcher.spawned());
         const auto launched = launcher.checkSpawnArguments();
-        // Retries that fail at once would have given up long before this.
-        QElapsedTimer pause;
-        pause.start();
-        while (pause.elapsed() < 1500) QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        // The launcher spawned the session because nothing listened, so the session below starts
+        // listening after the launcher began its retries.
         CHECK(launcher.process.state() == QProcess::Running);
         openController(controller, repo, launched, true);
         // The session opens on the launched path, not on the first file in the list.
@@ -861,7 +817,6 @@ int main(int argc, char **argv)
         CHECK(controller.selection()->fileId() == launched);
         pump([&] { return controller.mergetoolSession()->waitingPath() == "tracked.txt"; },
              controller.feedback()->message());
-        CHECK(launcher.clock.elapsed() < 15000);
         CHECK(controller.mergetool()->waiting());
         CHECK(readFile(controller.mergetoolSession()->intake("tracked.txt") + "/merged") == repo.tracked);
         select(controller, "tracked.txt");

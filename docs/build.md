@@ -67,8 +67,8 @@ Two independent desktop tests may overlap. `install.prefix`, `ui.qmllint`,
 Do not run a second build or CTest process against that build tree concurrently.
 Run GUI/permission tests as an unprivileged user; retain reported skips as skips.
 
-CTest entries that start the real binary or load Qt Quick outside the unit harness run through
-`tests/with-private-xdg.sh`. It gives them a private `HOME` and XDG directories, removes
+Every app, ui, acceptance and Git CTest entry runs through `tests/with-private-xdg.sh`; no suite
+redirects those directories itself. It gives them a private `HOME` and XDG directories, removes
 them afterwards, and fails the entry if the run created anything under
 `<data home>/Branch Truce/recovery` of the invoking user, so a test run never adds
 sessions to the recovery list of the developer's installed app. The data home is

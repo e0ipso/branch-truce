@@ -19,7 +19,6 @@
 #include <QQuickItem>
 #include <QQuickTextDocument>
 #include <QQuickWindow>
-#include <QTemporaryDir>
 #include <QTextBlock>
 #include <QTextCharFormat>
 #include <QTextCursor>
@@ -273,6 +272,11 @@ public:
             CHECK(result->toPlainText() == QStringLiteral("x") + text);
             checkPythonColours(result);
         });
+#else
+        // Built without KSyntaxHighlighting: the run still names these cases, as skipped.
+        for (const auto *name : {"app.py gets the Python definition in every pane and an unknown extension gets none",
+                                 "a format-only highlight pass creates no revision and no recovery transaction"})
+            suite.run(name, [] { test_support::skip("this build has BRANCH_TRUCE_SYNTAX_HIGHLIGHTING off"); });
 #endif
         suite.run("changed words are tinted and underlined in every pane, and a format pass makes no revision", [] {
             Fixture fixture;
@@ -307,7 +311,8 @@ public:
             const auto transactions = fixture.transactions();
             CHECK(transactions > 0);
             const auto unchanged = [&] {
-                QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+                // An edit capture the pass queued would have run before the next frame.
+                test_support::waitForFrames(fixture.window, "the format pass has run");
                 CHECK(fixture.file().current().id == before.id);
                 CHECK(fixture.file().current().draft == before.draft);
                 CHECK(fixture.file().canUndo() == canUndo);
@@ -344,7 +349,8 @@ public:
             document.setPlainText(QStringLiteral("plain text line\n").repeated(32));
             PaneHighlighter highlighter(&document);
             highlighter.attach();
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            // Runs the highlighter's queued first pass.
+            QCoreApplication::sendPostedEvents();
             document.setModified(false);
             const auto text = document.toPlainText();
             const auto undo = document.isUndoAvailable();
@@ -401,7 +407,7 @@ public:
             highlighter->setDecorations({});
             CHECK(highlighter->decorations().isEmpty());
             // Let a queued edit capture run, if the pass started one.
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            test_support::waitForFrames(fixture.window, "the decoration pass has run");
             CHECK(fixture.file("notes").current().id == before.id);
             CHECK(fixture.file("notes").current().draft == before.draft);
             CHECK(fixture.file("notes").canUndo() == canUndo);
@@ -419,7 +425,8 @@ public:
             document.setPlainText(QStringLiteral("plain text line\n").repeated(32));
             PaneHighlighter highlighter(&document);
             highlighter.attach();
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            // Runs the highlighter's queued first pass.
+            QCoreApplication::sendPostedEvents();
             const QList<QTextBlock> decorated{document.findBlockByNumber(4), document.findBlockByNumber(9),
                                               document.findBlockByNumber(14)};
             const auto ranges = [&] {
@@ -531,7 +538,8 @@ public:
             document.setPlainText(QStringLiteral("plain text line\n").repeated(32));
             PaneHighlighter highlighter(&document);
             highlighter.attach();
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            // Runs the highlighter's queued first pass.
+            QCoreApplication::sendPostedEvents();
             auto block = document.findBlockByNumber(4);
             QTextLayout::FormatRange word;
             word.start = block.position() + 2;
@@ -592,15 +600,14 @@ public:
 
 int main(int argc, char **argv)
 {
-    QTemporaryDir data;
-    if (!data.isValid()) return 2;
-    qputenv("XDG_DATA_HOME", data.path().toUtf8());
-    qputenv("XDG_CONFIG_HOME", (data.path() + "/config").toUtf8());
-    qputenv("XDG_CACHE_HOME", (data.path() + "/cache").toUtf8());
     QApplication application(argc, argv);
     // The English catalog supplies the plural forms these checks read.
     branch_truce::installTranslations(application);
     QCoreApplication::setApplicationName("BranchTruceSyntaxHighlightingTests");
-    if (QGuiApplication::platformName() != QStringLiteral("offscreen")) return 2;
+    if (QGuiApplication::platformName() != QStringLiteral("offscreen")) {
+        std::cerr << "run with QT_QPA_PLATFORM=offscreen, not " << QGuiApplication::platformName().toStdString()
+                  << '\n';
+        return 2;
+    }
     return SyntaxHighlightingTests{}.run();
 }

@@ -1,5 +1,6 @@
 // The desktop entry point selects the native appearance and opens repository or Git mergetool sessions.
 #include "AppPaths.h"
+#include "Appearance.h"
 #include "Application.h"
 #include "StartupReport.h"
 #include "Translations.h"
@@ -23,19 +24,6 @@
 #include <unistd.h>
 
 namespace {
-// The KDE style takes its colours from the user's KDE colour scheme. Fusion
-// stands in where that style is not installed. QT_QUICK_CONTROLS_STYLE wins.
-void selectControlsStyle(const QQmlEngine &engine)
-{
-    if (!qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) return;
-    const auto paths = engine.importPathList();
-    const bool kdeStyle = std::any_of(paths.cbegin(), paths.cend(), [](const QString &path) {
-        return QFileInfo::exists(path + QStringLiteral("/org/kde/desktop/qmldir"));
-    });
-    QQuickStyle::setStyle(kdeStyle ? QStringLiteral("org.kde.desktop") : QStringLiteral("Fusion"));
-    if (kdeStyle) QQuickStyle::setFallbackStyle(QStringLiteral("Fusion"));
-}
-
 // SIGTERM, SIGINT and SIGHUP end the event loop instead of the process, so the
 // session closes its launcher socket and stops its Git processes in order. The
 // handler only writes to a pipe; the event loop reads it.
@@ -82,13 +70,7 @@ int main(int argc, char *argv[])
     QCoreApplication::setOrganizationDomain(QStringLiteral("canpicasoft.com"));
     // Matches the installed desktop entry so Plasma shows its name and icon.
     QGuiApplication::setDesktopFileName(QStringLiteral(BRANCH_TRUCE_APP_ID));
-    // Off Plasma the icon theme is hicolor or none, so icon.name falls back to Breeze.
-    QIcon::setFallbackThemeName(QStringLiteral("breeze"));
-    // Platforms such as offscreen or vnc name no icon theme. With no desktop
-    // named either, Kirigami then swaps in a bundled theme and search path that
-    // distro builds lack. Naming hicolor, as Qt does on xcb and Wayland, keeps
-    // the system path, so the Breeze fallback still applies.
-    if (QIcon::themeName().isEmpty()) QIcon::setThemeName(QStringLiteral("hicolor"));
+    branch_truce::selectIconThemes();
     // An installed icon wins. Isolated launches and the build tree have none, so the
     // bundled symbol keeps the window and its taskbar entry from going blank.
     auto applicationIcon = QIcon::fromTheme(QStringLiteral(BRANCH_TRUCE_APP_ID));
@@ -145,7 +127,7 @@ int main(int argc, char *argv[])
                                        git.environment,
                                        branch_truce::mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"))});
     QQmlApplicationEngine engine;
-    selectControlsStyle(engine);
+    branch_truce::selectControlsStyle(engine);
     engine.setInitialProperties(session.windowProperties());
     engine.loadFromModule(QStringLiteral("BranchTruce"), QStringLiteral("Main"));
     if (engine.rootObjects().isEmpty()) {

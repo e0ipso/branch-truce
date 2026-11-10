@@ -1,6 +1,8 @@
 #include "TestHarness.h"
 #include "session/ConflictCapture.h"
 #include <functional>
+#include <initializer_list>
+#include <string>
 
 using namespace branch_truce;
 
@@ -139,6 +141,23 @@ int main()
         CHECK(!captureFile(conflict({1, 2}), context, "session"));
         CHECK(!captureFile(conflict({3}), context, "session"));
     });
+
+    // Git reports one entry per stage, numbered 1 to 3. An index entry listed twice, or a stage
+    // number outside that range, is not a conflict the app can attribute, so nothing is captured.
+    struct Stages {
+        const char *name;
+        std::initializer_list<unsigned int> stages;
+    };
+    for (const auto &[name, stages] : std::initializer_list<Stages>{{"stage 2 twice", {1, 2, 2, 3}},
+                                                                    {"stage 3 twice", {2, 3, 3}},
+                                                                    {"stage 1 twice", {1, 1, 2, 3}},
+                                                                    {"stage 0", {0, 2, 3}},
+                                                                    {"stage 4", {2, 3, 4}}}) {
+        suite.run(std::string("a conflict with ") + name + " is not captured", [stages] {
+            const auto context = repository(git::RepositoryOperation::Merge);
+            CHECK(!captureFile(conflict(stages), context, "session"));
+        });
+    }
 
     suite.run("a stage whose path, object ID or mode disagrees with its source is not captured", [] {
         const auto context = repository(git::RepositoryOperation::Merge);

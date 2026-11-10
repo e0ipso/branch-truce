@@ -26,7 +26,7 @@ Run from the checkout root:
 git --version
 ./tools/prepare-worktree.sh desktop
 cmake --build build/desktop --parallel 2
-ctest --test-dir build/desktop --output-on-failure -V -R '^(git\.|app\.startup-routes$)'
+ctest --test-dir build/desktop --output-on-failure -V -R '^(git\.|app\.startup-routes\.)'
 ```
 
 Each executable takes `--filter <text>` to run only the cases whose name
