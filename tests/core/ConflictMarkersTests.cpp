@@ -197,5 +197,19 @@ int main()
               earlierTextIsContentOnlyInsideABaseRegion);
     suite.run("scanMarkers closes a base ending in a separator line where right text follows",
               aBaseEndingInASeparatorLineClosesWhereRightTextFollows);
+    suite.run("ambiguous copied-region admission keeps unproved separators outstanding", [] {
+        const std::string text = "<<<<<<< ours\nleft\n||||||| base\nbase\n=======\n=======\nright\n>>>>>>> theirs\n";
+        const std::string earlier = "base\n=======\n";
+        const std::string right = "right\n";
+        const auto proven = scanMarkers(text, {.sources = RegionSources{earlier, right, {}}});
+        CHECK(proven.blocks.size() == 1 && proven.orphans.empty());
+        const auto refused = scanMarkers(text, {.sources = RegionSources{earlier, right, {}}, .analysisBudget = 0});
+        CHECK(refused.blocks.size() == 1 && refused.orphans.size() == 1 && refused.count() > proven.count());
+        std::string many = "<<<<<<< ours\nleft\n||||||| base\nbase\n";
+        for (int i = 0; i < 1000; ++i) many += "=======\n";
+        many += "right\n>>>>>>> theirs\n";
+        const auto bounded = scanMarkers(many, {.sources = RegionSources{earlier, right, {}}, .analysisBudget = 64});
+        CHECK(bounded.blocks.size() == 1 && bounded.orphans.size() == 999);
+    });
     return suite.report();
 }

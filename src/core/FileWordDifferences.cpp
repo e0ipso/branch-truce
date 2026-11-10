@@ -66,6 +66,7 @@ public:
 
     [[nodiscard]] FileWordDifferences finish()
     {
+        if (refused_) return {{}, {}, WordDifferenceState::ResourceLimit};
         for (auto &[side, ranges] : found_.sources) ranges = mergeRanges(std::move(ranges));
         found_.result = mergeRanges(std::move(found_.result));
         std::erase_if(found_.sources, [](const auto &entry) { return entry.second.empty(); });
@@ -73,13 +74,24 @@ public:
     }
 
 private:
+    WordDifferences compare(std::string_view left, std::string_view right)
+    {
+        if (refused_ || left.size() > inputBytes_ || right.size() > inputBytes_ - left.size()) {
+            refused_ = true;
+            return {{}, {}, WordDifferenceState::ResourceLimit};
+        }
+        inputBytes_ -= left.size() + right.size();
+        auto words = wordDifferences(left, right, budget_);
+        refused_ = words.state != WordDifferenceState::Computed;
+        return words;
+    }
     void addCompetingPair(const ChoiceTarget &ours, const ChoiceTarget &theirs, std::string_view left,
                           std::string_view right)
     {
         const auto l = ours.source.range;
         const auto r = theirs.source.range;
         if (!validByteRange(left, l) || !validByteRange(right, r)) return;
-        const auto words = wordDifferences(slice(left, l), slice(right, r), budget_);
+        const auto words = compare(slice(left, l), slice(right, r));
         append(found_.sources[SourceSide::Stage2], words.left, l.begin);
         append(found_.sources[SourceSide::Stage3], words.right, r.begin);
         covered_[SourceSide::Stage2].push_back(l);
@@ -91,7 +103,7 @@ private:
         if (!mappedLeft || !mappedRight || mappedLeft->begin == mappedLeft->end
             || mappedRight->begin == mappedRight->end || overlaps(*mappedLeft, *mappedRight))
             return;
-        const auto inResult = wordDifferences(slice(result_, *mappedLeft), slice(result_, *mappedRight), budget_);
+        const auto inResult = compare(slice(result_, *mappedLeft), slice(result_, *mappedRight));
         append(found_.result, inResult.left, mappedLeft->begin);
         append(found_.result, inResult.right, mappedRight->begin);
         resultCovered_.push_back(*mappedLeft);
@@ -101,7 +113,7 @@ private:
     void addPassage(SourceSide side, std::string_view text, const Passage &passage)
     {
         if (!validByteRange(text, passage.source) || !validByteRange(result_, passage.result)) return;
-        const auto words = wordDifferences(slice(text, passage.source), slice(result_, passage.result), budget_);
+        const auto words = compare(slice(text, passage.source), slice(result_, passage.result));
         for (const auto &range : words.left) {
             const ByteRange at{range.begin + passage.source.begin, range.end + passage.source.begin};
             if (!covered(covered_[side], at)) found_.sources[side].push_back(at);
@@ -116,6 +128,8 @@ private:
     const WordDifferenceInputs &inputs_;
     std::string_view result_;
     std::size_t budget_ = kMaxWordDifferenceCells;
+    std::size_t inputBytes_ = 8388608;
+    bool refused_ = false;
     FileWordDifferences found_;
     std::map<SourceSide, std::vector<ByteRange>> covered_;
     std::vector<ByteRange> resultCovered_;

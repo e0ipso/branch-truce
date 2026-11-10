@@ -30,6 +30,7 @@ class ResultEditorAdapter : public QObject, public SelectionGuard {
     QML_ELEMENT
     QML_UNCREATABLE("Owned by the application")
     // Whether the result takes edits; the editor's readOnly binds to the inverse.
+    Q_PROPERTY(bool decorationPending READ decorationPending NOTIFY stateChanged)
     Q_PROPERTY(bool editable READ editable NOTIFY stateChanged)
     Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY stateChanged)
     Q_PROPERTY(bool canPaste READ canPaste NOTIFY stateChanged)
@@ -44,7 +45,7 @@ public:
         int selectionStart = 0;
         int selectionEnd = 0;
     };
-    explicit ResultEditorAdapter(const SessionStore &store, QObject *parent = nullptr);
+    explicit ResultEditorAdapter(const SessionStore &store, RevisionWorkers &workers, QObject *parent = nullptr);
 
     Q_INVOKABLE void attach(QObject *editor);
     // Highlights a read-only source pane with the shown file's syntax.
@@ -58,6 +59,7 @@ public:
     [[nodiscard]] QString fileId() const { return fileId_; }
     [[nodiscard]] bool holdsSelection() const override { return composing(); }
 
+    [[nodiscard]] bool decorationPending() const { return words_.pending(); }
     [[nodiscard]] bool attached() const { return !editor_.isNull(); }
     // Whether the result takes edits: the selected file is supported, its recovery is
     // clear and the editor shows its text losslessly. The editor's readOnly binds to the

@@ -1,7 +1,9 @@
 // Word difference decorations highlight changed words without changing the result text.
 #include "WordDifferenceDecorations.h"
 #include "QtText.h"
+#include "RevisionWorkers.h"
 #include "core/FileWordDifferences.h"
+#include "core/internal/ComputationInput.h"
 #include "highlighting/PaneHighlighter.h"
 #include "session/SessionStore.h"
 #include <QColor>
@@ -66,9 +68,21 @@ QList<std::pair<int, int>> utf16Ranges(std::string_view text, const std::vector<
 }
 }
 
-WordDifferenceDecorations::WordDifferenceDecorations(const SessionStore &store, QObject *parent)
-    : QObject(parent), files_(store)
-{}
+WordDifferenceDecorations::WordDifferenceDecorations(const SessionStore &store, RevisionWorkers &workers,
+                                                     QObject *parent)
+    : QObject(parent), files_(store), workers_(workers)
+{
+    connect(&workers_, &RevisionWorkers::available, this, &WordDifferenceDecorations::refresh, Qt::QueuedConnection);
+    connect(&files_, &SessionStore::fileChanged, this, &WordDifferenceDecorations::refresh);
+    connect(&files_, &SessionStore::replaced, this, &WordDifferenceDecorations::refresh);
+    connect(&files_, &SessionStore::aboutToReplace, this, [this] {
+        ++request_;
+        ranges_.clear();
+        fileId_.clear();
+        mapping_ = nullptr;
+        captures_ = nullptr;
+    });
+}
 
 void WordDifferenceDecorations::attach(QObject *editor, QTextDocument *document)
 {
@@ -101,31 +115,44 @@ void WordDifferenceDecorations::attach(QObject *editor, QTextDocument *document)
 void WordDifferenceDecorations::compute(const QString &fileId)
 {
     const auto *file = files_.file(fileId.toStdString());
-    fileId_ = fileId;
-    revision_ = file ? file->current().id : 0;
-    // A file opens as a placeholder and keeps its id and revision once its
-    // captures load, so the correspondence and captures identify the input.
-    mapping_ = file ? file->correspondence() : nullptr;
-    captures_ = file ? file->snapshots() : nullptr;
-    ranges_.clear();
-    if (!file) return;
-    const auto words = fileWordDifferences(*file);
-    if (const auto *snapshots = file->snapshots()) {
-        for (const auto &[side, ranges] : words.sources) {
-            const auto &source = side == SourceSide::Earlier ? snapshots->earlier
-                : side == SourceSide::Stage2                 ? snapshots->stage2
-                                                             : snapshots->stage3;
-            if (!source) continue;
-            const auto &text = source->worktree.utf8;
-            ranges_[paneName(side)] = {QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size())),
-                                       utf16Ranges(text, ranges)};
-        }
+    if (active_ || !file || !file->correspondence() || !file->snapshots()) return;
+    const auto request = request_;
+    const auto retained = detail::ComputationInput::retainedBytes(*file);
+    if (retained > workers_.admission.maxBytes) {
+        needsCompute_ = false;
+        return;
     }
-    if (const auto *map = file->correspondence(); map && !words.result.empty()) {
-        const auto &text = map->text();
-        ranges_[QStringLiteral("result")] = {QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size())),
-                                             utf16Ranges(text, words.result)};
-    }
+    active_ = workers_.submit(
+        retained, this, true,
+        [file] {
+            return [input = detail::ComputationInput(*file)] {
+                std::map<QString, PaneRanges> ranges;
+                if (!input.editable) return ranges;
+                const auto words = fileWordDifferences(
+                    {*input.snapshots, *input.revision.correspondence, input.choices, input.revision.draft.decisions});
+                for (const auto &[side, found] : words.sources) {
+                    const auto &source = input.snapshots->source(side);
+                    if (!source) continue;
+                    const auto &text = source->worktree.utf8;
+                    ranges[paneName(side)] = {QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size())),
+                                              utf16Ranges(text, found)};
+                }
+                const auto &text = input.revision.correspondence->text();
+                ranges[QStringLiteral("result")] = {QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size())),
+                                                    utf16Ranges(text, words.result)};
+                return ranges;
+            };
+        },
+        [this, request](const auto &computed) {
+            active_ = false;
+            const auto *file = files_.file(targetFileId_.toStdString());
+            if (request == request_ && file && targetFileId_ == fileId_ && file->current().id == revision_
+                && file->correspondence() == mapping_ && file->snapshots() == captures_) {
+                if (const auto *ranges = std::get_if<decltype(ranges_)>(&computed)) ranges_ = *ranges;
+            }
+            refresh();
+        });
+    if (active_) needsCompute_ = false;
 }
 
 QList<QTextLayout::FormatRange> WordDifferenceDecorations::formats(const Pane &pane, const PaneRanges *ranges) const
@@ -186,13 +213,22 @@ QList<QTextLayout::FormatRange> WordDifferenceDecorations::formats(const Pane &p
 
 void WordDifferenceDecorations::refresh()
 {
+    Q_ASSERT(QThread::currentThread() == thread());
     if (refreshing_) return;
     QScopedValueRollback guard(refreshing_, true);
     const auto fileId = targetFileId_;
     const auto *file = files_.file(fileId.toStdString());
     if (!file || fileId != fileId_ || file->current().id != revision_ || file->correspondence() != mapping_
-        || file->snapshots() != captures_)
-        compute(fileId);
+        || file->snapshots() != captures_) {
+        ++request_;
+        fileId_ = fileId;
+        revision_ = file ? file->current().id : 0;
+        mapping_ = file ? file->correspondence() : nullptr;
+        captures_ = file ? file->snapshots() : nullptr;
+        ranges_.clear();
+        needsCompute_ = file && mapping_ && captures_;
+    }
+    if (needsCompute_) compute(fileId);
     panes_.removeIf([](const Pane &pane) { return !pane.editor || !pane.document; });
     for (auto &pane : panes_) {
         auto *highlighter = pane.document->findChild<PaneHighlighter *>(QString(), Qt::FindDirectChildrenOnly);
@@ -209,6 +245,10 @@ void WordDifferenceDecorations::refresh()
             pane.checkedFor = checkedFor;
         }
         highlighter->setDecorations(formats(pane, pane.matches ? &found->second : nullptr));
+    }
+    if (publishedPending_ != pending()) {
+        publishedPending_ = pending();
+        Q_EMIT pendingChanged();
     }
 }
 }

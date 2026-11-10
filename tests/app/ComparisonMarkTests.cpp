@@ -99,7 +99,9 @@ void comparison_scene::addMarkCases(Groups groups)
         // Taking the left side decides every region, and typing in an accepted line marks it manual.
         // The edited region shows its passage colours again; the right's extra line stays ignored.
         const auto revision = [&] { return QString::number(fixture.file().current().id); };
-        CHECK(controller.choices()->previewWholeFile("choices", revision(), ChoicePreviewFlow::Side::LeftSide));
+        CHECK(test_support::previewResult(
+            controller,
+            controller.choices()->previewWholeFile("choices", revision(), ChoicePreviewFlow::Side::LeftSide)));
         CHECK(commandResult(controller, controller.choices()->applyWholeFile()));
         const auto at = static_cast<int>(fixture.text().indexOf("left first"));
         CHECK(commandResult(controller, controller.commands()->editResult("choices", revision(), at, at + 4, "LEFT")));
@@ -148,7 +150,9 @@ void comparison_scene::addMarkCases(Groups groups)
                             test_support::choiceFile("header\nleft first\nshared\ntail\n",
                                                      "header\nright first\nshared\nright extra\ntail\n"));
             const auto revision = [&] { return QString::number(fixture.file().current().id); };
-            CHECK(controller.choices()->previewWholeFile("choices", revision(), ChoicePreviewFlow::Side::LeftSide));
+            CHECK(test_support::previewResult(
+                controller,
+                controller.choices()->previewWholeFile("choices", revision(), ChoicePreviewFlow::Side::LeftSide)));
             CHECK(commandResult(controller, controller.choices()->applyWholeFile()));
             // Line 1 is the header both sides share, so no choice region covers it.
             const auto header = [&](const QString &background, const QString &glyph, const QString &letter) {
@@ -228,9 +232,11 @@ void comparison_scene::addMarkCases(Groups groups)
                     const auto before = fixture.text();
                     const auto &target =
                         test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
-                    CHECK(controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
-                                                              QString::fromStdString(target.source.contributionId),
-                                                              choice.action));
+                    CHECK(test_support::previewResult(
+                        controller,
+                        controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
+                                                            QString::fromStdString(target.source.contributionId),
+                                                            choice.action)));
                     CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
                     CHECK((fixture.text() != before) == choice.resultChanges);
                     if (choice.resultChanges) CHECK(fixture.text().contains(QStringLiteral("\nleft only\n")));
@@ -299,9 +305,11 @@ void comparison_scene::addMarkCases(Groups groups)
         }};
         for (const auto &choice : choices) {
             const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
-            CHECK(controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
-                                                      QString::fromStdString(target.source.contributionId),
-                                                      choice.action));
+            CHECK(test_support::previewResult(
+                controller,
+                controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
+                                                    QString::fromStdString(target.source.contributionId),
+                                                    choice.action)));
             CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
             const auto when = "after " + choice.name.toStdString();
             expectBands(fixture, when, "stage2", choice.left);

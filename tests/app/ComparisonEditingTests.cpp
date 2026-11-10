@@ -242,7 +242,8 @@ void comparison_scene::addEditingCases(Groups groups)
                            FileSession("other", captured.path, {captured.launchResult.text.utf8, {}, 0},
                                        {.snapshots = captured, .initializeChoices = true})));
                        const auto other = controller.store()->file("other")->current();
-                       CHECK(controller.choices()->previewNonConflicting("choices", "1", scope));
+                       CHECK(test_support::previewResult(
+                           controller, controller.choices()->previewNonConflicting("choices", "1", scope)));
                        const auto preview = controller.choices()->nonConflictingPreview();
                        CHECK(preview.value("path").toString() == "choices.txt");
                        CHECK(preview.value("scope").toString()
@@ -283,7 +284,7 @@ void comparison_scene::addEditingCases(Groups groups)
             == Transition::Applied);
         CHECK(QMetaObject::invokeMethod(fixture.window, "chooseWholeFile",
                                         Q_ARG(int, static_cast<int>(ChoicePreviewFlow::Side::RightSide))));
-        CHECK(fixture.object("wholeFileDialog")->property("visible").toBool());
+        settle([&] { return fixture.object("wholeFileDialog")->property("visible").toBool(); });
         CHECK(controller.choices()->wholeFilePreview().value("side").toString() == "Right");
         CHECK(QMetaObject::invokeMethod(fixture.object("wholeFileDialog"), "reject"));
     });
@@ -311,6 +312,7 @@ void comparison_scene::addEditingCases(Groups groups)
                             Q_ARG(int,
                                   operation == 1 ? static_cast<int>(ChoicePreviewFlow::NonConflicting::BothChanges)
                                                  : static_cast<int>(ChoicePreviewFlow::Side::RightSide))));
+                    settle([&] { return !controller.choices()->previewPending(); });
                 };
                 const auto apply = [&] {
                     return operation == 0 ? commandResult(controller, controller.choices()->applyChoice(true))

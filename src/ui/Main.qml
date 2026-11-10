@@ -72,7 +72,7 @@ Kirigami.ApplicationWindow {
                 window.previewRequested = false;
         }
         function onReady(scope: int): void {
-            if (!window.previewRequested)
+            if (!window.previewRequested || !choices.previewReady)
                 return;
             window.previewRequested = false;
             if (scope === ChoicePreviewFlow.Scope.Choice) {

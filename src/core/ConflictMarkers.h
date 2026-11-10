@@ -71,6 +71,8 @@ struct MarkerContext {
     // Known right-side text.
     std::vector<ByteRange> right = {};
     std::optional<RegionSources> sources = {};
+    // Shared character-comparison ceiling for ambiguous copied-region analysis.
+    std::size_t analysisBudget = 4000000;
 };
 
 // The only marker recognizer. A marker line starts with exactly markerSize of

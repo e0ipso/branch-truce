@@ -125,13 +125,16 @@ QJsonValue value(const QVariant &variant)
 }
 // Main's required service objects are the app boundary, also used for discovery.
 struct WindowBinding {
-    QObject *selectedFile, *loader, *commands, *files;
+    QObject *selectedFile, *loader, *commands, *files, *previews, *editor;
     static std::optional<WindowBinding> bind(QQuickWindow *candidate)
     {
         WindowBinding binding{
             candidate->property("selectedFile").value<QObject *>(), candidate->property("loader").value<QObject *>(),
-            candidate->property("commands").value<QObject *>(), candidate->property("files").value<QObject *>()};
-        if (!binding.selectedFile || !binding.loader || !binding.commands || !binding.files) return {};
+            candidate->property("commands").value<QObject *>(),     candidate->property("files").value<QObject *>(),
+            candidate->property("choices").value<QObject *>(),      candidate->property("editor").value<QObject *>()};
+        if (!binding.selectedFile || !binding.loader || !binding.commands || !binding.files || !binding.previews
+            || !binding.editor)
+            return {};
         return binding;
     }
     bool ready() const
@@ -139,7 +142,8 @@ struct WindowBinding {
         const auto recovery = selectedFile->property("recoveryState");
         return recovery.isValid() && !selectedFile->property("path").toString().isEmpty()
             && !loader->property("opening").toBool() && !commands->property("resolutionBusy").toBool()
-            && !selectedFile->property("pendingInput").toBool()
+            && !selectedFile->property("pendingInput").toBool() && !previews->property("previewPending").toBool()
+            && !editor->property("decorationPending").toBool()
             && recovery.toInt() == int(branch_truce::FileStates::RecoveryState::Durable);
     }
 };
@@ -340,6 +344,10 @@ QJsonObject snapshot()
         for (const auto *key : {"path", "status", "unsaved", "undecided", "progress", "decisions", "resultText",
                                 "pendingInput", "recoveryState", "supportDetail"})
             state[key] = value(app->selectedFile->property(key));
+        state["decorationPending"] = value(app->editor->property("decorationPending"));
+        for (const auto *key :
+             {"previewPending", "previewReady", "choicePreview", "nonConflictingPreview", "wholeFilePreview"})
+            state[key] = value(app->previews->property(key));
         if (auto *comparison = app->selectedFile->property("comparison").value<QObject *>()) {
             for (const auto *key : {"passages", "markerBlocks"}) state[key] = value(comparison->property(key));
             // Replay's scene observations retain their names; both read the joined value.

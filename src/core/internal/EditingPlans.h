@@ -47,7 +47,10 @@ inline std::string sourceText(const FileSnapshots &snapshots, const SourceAnchor
 
 ChoicePlan planChoice(const PlanningInput &, MarkerPlanner, const MarkerScan &, RevisionId, const std::string &,
                       ChoiceAction);
+struct BatchLimits {
+    std::size_t targets = 8192, bytes = 33554432, work = 4000000;
+};
 BatchPlan planNonConflicting(const PlanningInput &, const std::vector<NonConflictingTarget> &, RevisionId,
-                             NonConflictingScope);
+                             NonConflictingScope, BatchLimits = {});
 WholeFilePlan planWholeFile(const PlanningInput &, RevisionId, SourceSide);
 }

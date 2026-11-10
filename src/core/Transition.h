@@ -3,6 +3,7 @@
 
 #include "ResourceLimits.h"
 #include <cstddef>
+#include <exception>
 #include <new>
 #include <type_traits>
 
@@ -52,6 +53,10 @@ enum class Transition {
     AmbiguousTarget,
     // The command ran out of memory and changed nothing.
     OutOfMemory,
+    // Finite computation admission was exhausted, with no change.
+    ResourceLimit,
+    // An unexpected algorithm exception, distinct from allocation failure.
+    ComputationFailed,
     // The result would be over a limit of the text envelope (ResourceLimits.h).
     TextTooLarge,
     // The text is not UTF-8 with LF line endings.
@@ -59,6 +64,18 @@ enum class Transition {
     // A preview to apply no longer matches the one the current revision gives.
     PreviewChanged
 };
+
+inline Transition computationFailure(std::exception_ptr error) noexcept
+{
+    try {
+        if (error) std::rethrow_exception(error);
+    } catch (const std::bad_alloc &) {
+        return Transition::OutOfMemory;
+    } catch (...) {
+        return Transition::ComputationFailed;
+    }
+    return Transition::ComputationFailed;
+}
 
 // Allocating commands construct their candidate before publishing it. Only
 // allocation failures are expected; unrelated exceptions remain defects.

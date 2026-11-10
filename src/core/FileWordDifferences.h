@@ -24,6 +24,7 @@ class FileSession;
 struct FileWordDifferences {
     std::map<SourceSide, std::vector<ByteRange>> sources;
     std::vector<ByteRange> result;
+    WordDifferenceState state = WordDifferenceState::Computed;
     bool operator==(const FileWordDifferences &) const = default;
 };
 

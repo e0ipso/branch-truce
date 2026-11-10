@@ -245,6 +245,8 @@ int main(int argc, char **argv)
         CHECK(controller.selection()->select("choices"));
         auto &choices = *controller.choices();
         CHECK(choices.preview(ChoicePreviewFlow::Scope::WholeFile, "choices", "1", ChoicePreviewFlow::Side::RightSide));
+        waitUntil([&] { return !choices.previewPending(); }, "whole-file preview did not settle");
+        CHECK(choices.previewReady());
         CHECK(choices.apply(ChoicePreviewFlow::Scope::WholeFile, false));
         test_support::awaitRecovery(store);
         CHECK(!choices.wholeFilePreview().isEmpty() && store.file("choices")->current().id == 1);

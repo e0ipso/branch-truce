@@ -981,20 +981,25 @@ int main(int argc, char **argv)
         const std::vector<Command> commands{
             {"previewChoice",
              [&](const QString &id, const QString &revision) {
-                 return controller.choices()->previewChoice(id, revision, QStringLiteral("unknown"),
-                                                            ChoicePreviewFlow::Action::Accept);
+                 return test_support::previewResult(
+                     controller,
+                     controller.choices()->previewChoice(id, revision, QStringLiteral("unknown"),
+                                                         ChoicePreviewFlow::Action::Accept));
              },
              stale, QStringLiteral("This file cannot be edited in Branch Truce.")},
             {"previewNonConflicting",
              [&](const QString &id, const QString &revision) {
-                 return controller.choices()->previewNonConflicting(id, revision,
-                                                                    ChoicePreviewFlow::NonConflicting::BothChanges);
+                 return test_support::previewResult(controller,
+                                                    controller.choices()->previewNonConflicting(
+                                                        id, revision, ChoicePreviewFlow::NonConflicting::BothChanges));
              },
              QStringLiteral("The result changed. Preview the batch again."),
              QStringLiteral("This file cannot apply non-conflicting changes.")},
             {"previewWholeFile",
              [&](const QString &id, const QString &revision) {
-                 return controller.choices()->previewWholeFile(id, revision, ChoicePreviewFlow::Side::LeftSide);
+                 return test_support::previewResult(
+                     controller,
+                     controller.choices()->previewWholeFile(id, revision, ChoicePreviewFlow::Side::LeftSide));
              },
              QStringLiteral("The result changed. Inspect a new whole-file preview."),
              QStringLiteral("This file has no editable captured source.")},
@@ -1097,6 +1102,7 @@ int main(int argc, char **argv)
         // A pending preview, so a preview notification would have something to say.
         CHECK(
             controller.choices()->previewWholeFile(session.id, session.revision(), ChoicePreviewFlow::Side::LeftSide));
+        test_support::waitUntil([&] { return !controller.choices()->previewPending(); }, "preview did not settle");
         CHECK(!controller.choices()->wholeFilePreview().isEmpty());
         std::map<std::string, int> emitted;
         const auto count = [&](const char *name, auto *sender, auto signal) {

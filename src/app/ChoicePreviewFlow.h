@@ -11,6 +11,7 @@
 namespace branch_truce {
 class CommandFeedback;
 class ResultEditorAdapter;
+class RevisionWorkers;
 class Selection;
 class SessionModel;
 class SessionStore;
@@ -25,6 +26,7 @@ class ChoicePreviewFlow : public QObject {
     QML_ELEMENT
     QML_UNCREATABLE("Owned by the application")
     // The pending preview of each scope for the dialogs, or empty.
+    Q_PROPERTY(bool previewReady READ previewReady NOTIFY previewPendingChanged)
     Q_PROPERTY(bool previewPending READ previewPending NOTIFY previewPendingChanged)
     Q_PROPERTY(QVariantMap choicePreview READ choicePreview NOTIFY choicePreviewChanged)
     Q_PROPERTY(QVariantMap nonConflictingPreview READ nonConflictingPreview NOTIFY nonConflictingPreviewChanged)
@@ -40,7 +42,8 @@ public:
     Q_ENUM(Side)
     using Option = std::variant<Action, NonConflicting, Side>;
     ChoicePreviewFlow(SessionStore &store, const SessionModel &files, const ResultEditorAdapter &editor,
-                      const Selection &selection, CommandFeedback &feedback, QObject *parent = nullptr);
+                      const Selection &selection, CommandFeedback &feedback, RevisionWorkers &workers,
+                      QObject *parent = nullptr);
 
     Q_INVOKABLE bool previewChoice(const QString &fileId, const QString &revision, const QString &target,
                                    branch_truce::ChoicePreviewFlow::Action action)
@@ -57,6 +60,7 @@ public:
     {
         return preview(Scope::WholeFile, fileId, revision, side);
     }
+    [[nodiscard]] bool previewReady() const { return pendingScope().has_value(); }
     [[nodiscard]] bool previewPending() const { return waiting_; }
     // confirmReplacement allows a replacement of manual work the preview asked to confirm.
     Q_INVOKABLE bool applyChoice(bool confirmReplacement = false) { return apply(Scope::Choice, confirmReplacement); }
@@ -103,6 +107,10 @@ private:
     const ResultEditorAdapter &editor_;
     const Selection &selection_;
     CommandFeedback &feedback_;
+    RevisionWorkers &workers_;
+    RevisionId expected_ = 0;
+    const CorrespondenceMap *mapping_ = nullptr;
+    const FileSnapshots *captures_ = nullptr;
     std::variant<std::monostate, ChoicePreview, NonConflictingPreview, WholeFilePreview> pending_;
     QString fileId_;
     quint64 request_ = 0;

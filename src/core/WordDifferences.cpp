@@ -1,6 +1,7 @@
 // Word comparisons locate changed tokens within corresponding source and result passages.
 #include "WordDifferences.h"
 #include "Correspondence.h"
+#include "ResourceLimits.h"
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
@@ -158,7 +159,8 @@ TokenKind kindOf(char32_t c) noexcept
 }
 
 // The tokens of one line up to `lineEnd`, appended to `result`.
-void lineTokens(std::string_view text, std::size_t at, std::size_t lineEnd, std::vector<Token> &result)
+bool lineTokens(std::string_view text, std::size_t at, std::size_t lineEnd, std::vector<Token> &result,
+                MetadataBudget &budget)
 {
     while (at < lineEnd) {
         const auto first = decode(text, at);
@@ -169,28 +171,32 @@ void lineTokens(std::string_view text, std::size_t at, std::size_t lineEnd, std:
             if (!next.valid || kindOf(next.value) != kind) break;
             end += next.size;
         }
+        // Includes vector growth, match flags, interned IDs and hash nodes.
+        if (!budget.take(1, 128 + 2 * sizeof(Token))) return false;
         result.push_back({{at, end}, kind});
         at = end;
     }
+    return true;
 }
 
-std::vector<Token> tokens(std::string_view text)
+bool tokens(std::string_view text, std::vector<Token> &result, MetadataBudget &budget)
 {
-    std::vector<Token> result;
     std::size_t at = 0;
     while (at < text.size()) {
         const auto lineEnd = std::min(text.find('\n', at), text.size());
-        if (lineEnd - at > kMaxWordDifferenceLineBytes)
+        if (lineEnd - at > kMaxWordDifferenceLineBytes) {
+            if (!budget.take(1, 128 + 2 * sizeof(Token))) return false;
             result.push_back({{at, lineEnd}, TokenKind::Unreported});
-        else
-            lineTokens(text, at, lineEnd, result);
+        } else if (!lineTokens(text, at, lineEnd, result, budget))
+            return false;
         at = lineEnd;
         if (at < text.size()) {
+            if (!budget.take(1, 128 + 2 * sizeof(Token))) return false;
             result.push_back({{at, at + 1}, TokenKind::Unreported});
             ++at;
         }
     }
-    return result;
+    return true;
 }
 
 // Adjacent unmatched, reported tokens as ranges, without blank tokens at
@@ -219,10 +225,14 @@ std::vector<ByteRange> ranges(const std::vector<Token> &all, const std::vector<b
 }
 }
 
-WordDifferences wordDifferences(std::string_view left, std::string_view right, std::size_t &budget)
+WordDifferences wordDifferences(std::string_view left, std::string_view right, std::size_t &budget,
+                                WordDifferenceLimits limits)
 {
-    const auto a = tokens(left);
-    const auto b = tokens(right);
+    const WordDifferences refused{{}, {}, WordDifferenceState::ResourceLimit};
+    if (left.size() > limits.inputBytes || right.size() > limits.inputBytes - left.size()) return refused;
+    MetadataBudget admission{limits.tokens, limits.retainedBytes};
+    std::vector<Token> a, b;
+    if (!tokens(left, a, admission) || !tokens(right, b, admission)) return refused;
     const auto same = [&](std::size_t i, std::size_t j) { return slice(left, a[i].range) == slice(right, b[j].range); };
     std::size_t prefix = 0;
     while (prefix < a.size() && prefix < b.size() && same(prefix, prefix)) ++prefix;
@@ -232,12 +242,12 @@ WordDifferences wordDifferences(std::string_view left, std::string_view right, s
         ++suffix;
     const auto n = a.size() - prefix - suffix;
     const auto m = b.size() - prefix - suffix;
+    if (n && m && (n > kMaxWordDifferencePairCells / m || n * m > budget)) return refused;
     std::vector<bool> leftMatched(a.size(), true);
     std::vector<bool> rightMatched(b.size(), true);
     for (std::size_t i = 0; i < n; ++i) leftMatched[prefix + i] = false;
     for (std::size_t j = 0; j < m; ++j) rightMatched[prefix + j] = false;
     if (n > 0 && m > 0) {
-        if (n > kMaxWordDifferencePairCells / m || n * m > budget) return {};
         budget -= n * m;
         // Interned token ids keep the table loop to integer comparisons.
         std::unordered_map<std::string_view, std::uint32_t> ids;

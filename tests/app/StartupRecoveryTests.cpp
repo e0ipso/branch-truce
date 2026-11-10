@@ -738,9 +738,11 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
             CHECK(!commandResult(controller, controller.commands()->undo(id, QString::number(failed.current().id))));
             CHECK(!commandResult(controller, controller.commands()->redo(id, QString::number(failed.current().id))));
             const auto target = test_support::choiceTarget(failed, SourceSide::Stage2, ChoiceScope::Section);
-            CHECK(!controller.choices()->previewChoice(id, QString::number(failed.current().id),
-                                                       QString::fromStdString(target.source.contributionId),
-                                                       ChoicePreviewFlow::Action::Accept));
+            CHECK(!test_support::previewResult(
+                controller,
+                controller.choices()->previewChoice(id, QString::number(failed.current().id),
+                                                    QString::fromStdString(target.source.contributionId),
+                                                    ChoicePreviewFlow::Action::Accept)));
             const auto preview =
                 previewChoice(failed, failed.current().id, target.source.contributionId, ChoiceAction::Accept);
             CHECK(await(model->applyChoice(failed.id(), preview, true)) == Transition::Blocked);
@@ -757,9 +759,11 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
                                                                   0, "healthy manual edit\n")));
             const auto before = healthy.current().draft;
             const auto healthyTarget = test_support::choiceTarget(healthy, SourceSide::Stage2, ChoiceScope::Line);
-            CHECK(controller.choices()->previewChoice(healthyId, QString::number(healthy.current().id),
-                                                      QString::fromStdString(healthyTarget.source.contributionId),
-                                                      ChoicePreviewFlow::Action::Accept));
+            CHECK(test_support::previewResult(
+                controller,
+                controller.choices()->previewChoice(healthyId, QString::number(healthy.current().id),
+                                                    QString::fromStdString(healthyTarget.source.contributionId),
+                                                    ChoicePreviewFlow::Action::Accept)));
             CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
             const auto chosen = healthy.current().draft;
             CHECK(chosen != before && chosen.text == before.text);
@@ -813,9 +817,11 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
             CHECK(controller.selection()->select(id) && controller.selectedFile()->canEdit());
             CHECK(controller.selectedFile()->comparison()->contributions().isEmpty());
             CHECK(!controller.selectedFile()->comparison()->choiceNotice().isEmpty());
-            CHECK(!controller.choices()->previewChoice(id, QString::number(restored.current().id),
-                                                       QString::fromStdString(target.source.contributionId),
-                                                       ChoicePreviewFlow::Action::Accept));
+            CHECK(!test_support::previewResult(
+                controller,
+                controller.choices()->previewChoice(id, QString::number(restored.current().id),
+                                                    QString::fromStdString(target.source.contributionId),
+                                                    ChoicePreviewFlow::Action::Accept)));
             CHECK(commandResult(controller,
                                 controller.commands()->editResult(id, QString::number(restored.current().id), 0, 0,
                                                                   "legacy manual edit\n")));

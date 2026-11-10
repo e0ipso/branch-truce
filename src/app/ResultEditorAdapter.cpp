@@ -62,9 +62,11 @@ QString envelopeRejection(const QString &text)
 }
 }
 
-ResultEditorAdapter::ResultEditorAdapter(const SessionStore &store, QObject *parent)
-    : QObject(parent), store_(store), words_(store)
-{}
+ResultEditorAdapter::ResultEditorAdapter(const SessionStore &store, RevisionWorkers &workers, QObject *parent)
+    : QObject(parent), store_(store), words_(store, workers)
+{
+    connect(&words_, &WordDifferenceDecorations::pendingChanged, this, &ResultEditorAdapter::stateChanged);
+}
 
 const FileSession *ResultEditorAdapter::shownFile() const { return store_.file(fileId_.toStdString()); }
 

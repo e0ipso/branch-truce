@@ -1,4 +1,5 @@
 #include "core/EditingAssertions.h"
+#include "core/internal/ComputationInput.h"
 
 namespace {
 void fileBatchesApplyOnlyEligibleContributionsAfterConfirmation(NonConflictingScope scope)
@@ -248,6 +249,30 @@ void batchesAndWholeFileReplacementUndoAndRedoInActionOrder()
 int main()
 {
     test_support::Suite suite("BulkEditingTests");
+    suite.run("batch admission refuses aggregate work without partial changes", [] {
+        auto file = test_support::batchFile();
+        const detail::ComputationInput input(file);
+        for (const auto limits : {detail::BatchLimits{0, 33554432, 4000000}, detail::BatchLimits{8192, 1, 4000000},
+                                  detail::BatchLimits{8192, 33554432, 0}}) {
+            const auto refused = detail::planNonConflicting(input.planning(), input.targets, input.revision.id,
+                                                            NonConflictingScope::Both, limits);
+            CHECK(refused.state == Transition::ResourceLimit && refused.changes.empty());
+            CHECK(refused.command().edits.empty() && refused.command().decisions.empty());
+        }
+        std::vector<NonConflictingTarget> many(8193, input.targets.front());
+        CHECK(detail::planNonConflicting(input.planning(), many, 1, NonConflictingScope::Both).state
+              == Transition::ResourceLimit);
+        auto identifiers = input.targets;
+        identifiers.front().source.contributionId.assign(4096, 'x');
+        const auto metadata = detail::planNonConflicting(input.planning(), identifiers, 1, NonConflictingScope::Both,
+                                                         {8192, 8192, 4000000});
+        CHECK(metadata.state == Transition::ResourceLimit && metadata.changes.empty());
+        many.resize(1024);
+        const auto indexed = detail::planNonConflicting(input.planning(), many, 1, NonConflictingScope::Both);
+        CHECK(indexed.state == Transition::ConfirmationRequired && indexed.changes.size() == 1);
+        CHECK(indexed.changes.front().sources.size() == many.size() && indexed.skipped == 0);
+        CHECK(file.current().id == 1);
+    });
     for (const auto scope : {NonConflictingScope::Left, NonConflictingScope::Right, NonConflictingScope::Both})
         suite.run(titled("file batches apply only eligible contributions after confirmation", {name(scope)}),
                   [=] { fileBatchesApplyOnlyEligibleContributionsAfterConfirmation(scope); });
