@@ -97,6 +97,10 @@ foreach(native_check IN ITEMS NativeIntegration DebianPreflight FedoraPackaging 
     set_tests_properties(packaging.${native_check} PROPERTIES TIMEOUT 30)
 endforeach()
 
+# Real ccache relocation, invalidation and fallback on small fixtures; skipped without ccache.
+add_test(NAME packaging.compiler-cache
+    COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/CompilerCache.sh")
+set_tests_properties(packaging.compiler-cache PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
 # Host side of the DEB inspection script against a stub container engine.
 add_test(NAME packaging.artifact-tooling
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ArtifactTooling.sh")

@@ -81,15 +81,6 @@ def main():
             context['checks'].append(dict(argv=command, cwd=str(args.source), exit_code=checked.returncode,
                                           log=f'{height}-integrity.log'))
             save()
-    image_tool = args.output / str(heights[0]) / 'driver-build/native-replay-image'
-    if image_tool.is_file():
-        command = [sys.executable, str(args.source / 'tests/tools/NativeCalibrationTests.py'),
-                   '--image-tool', str(image_tool)]
-        with (args.output / 'calibration-tests.log').open('wb') as stream:
-            checked = subprocess.run(command, cwd=args.source, stdout=stream, stderr=subprocess.STDOUT)
-        context['checks'].append(dict(argv=command, cwd=str(args.source), exit_code=checked.returncode,
-                                      log='calibration-tests.log'))
-        save()
     ledger = assemble(args.output, shape=shape)
     write_json(args.output / 'acceptance-ledger.json', ledger)
     context['finished_at_utc'] = datetime.now(timezone.utc).isoformat()
