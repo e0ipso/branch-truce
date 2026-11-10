@@ -9,8 +9,7 @@
 step() { printf '\n== %s\n' "$*"; }
 pass() { printf 'PASS %s\n' "$*"; }
 fail() {
-    local -n report_failures=$1
     printf 'FAIL %s\n' "${*:2}"
-    report_failures=$((${report_failures:-0} + 1))
+    printf -v "$1" '%d' "$((${!1:-0} + 1))"
 }
 die() { printf 'FAIL %s\n' "$*" >&2; exit 1; }

@@ -493,10 +493,10 @@ expect_only_output $'PASS fine\nok exited 0\nFAIL broken\nPASS after\nbad exited
 
 # Independent accumulators and repeated runs keep their counts under either option set.
 for shell_options in 'set +eu; set +o pipefail' 'set -euo pipefail'; do
-    SCRIPT=$root/tools/lib/report.sh sourced "$shell_options; first=7; second=0; failures=99
+    SCRIPT=$root/tools/lib/report.sh sourced "$shell_options; first=7; report_failures=0; failures=99
         nested() { local first=0; fail first nested; [[ \$first == 1 ]]; }
-        fail first one; fail second two; nested; fail second three
-        [[ \$first == 8 && \$second == 2 && \$failures == 99 ]] && echo independent"
+        fail first one; fail report_failures two; nested; fail report_failures three
+        [[ \$first == 8 && \$report_failures == 2 && \$failures == 99 ]] && echo independent"
     expect_status 0
     expect_only_output $'FAIL one\nFAIL two\nFAIL nested\nFAIL three\nindependent'
 done
