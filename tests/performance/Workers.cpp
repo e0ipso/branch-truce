@@ -12,18 +12,10 @@
 #include <QByteArray>
 #include <QCoreApplication>
 #include <QDir>
-#include <QElapsedTimer>
 #include <QEventLoop>
-#include <QGuiApplication>
-#include <QKeyEvent>
 #include <QProcess>
 #include <QProcessEnvironment>
-#include <QQuickItem>
-#include <QQuickTextDocument>
-#include <QQuickView>
-#include <QTextDocument>
 #include <QTimer>
-#include <QtGlobal>
 
 #include <algorithm>
 #include <csignal>
@@ -169,150 +161,6 @@ int correspondenceWorker(const WorkerArgs &args)
             emitRecord(edit);
         }
     }
-    return 0;
-}
-
-QQuickItem *findItem(QQuickItem *root, const QString &name)
-{
-    if (root->objectName() == name) return root;
-    const auto children = root->childItems();
-    for (auto *child : children) {
-        if (auto *found = findItem(child, name)) return found;
-    }
-    return nullptr;
-}
-
-QByteArray rawText(QQuickItem *item)
-{
-    auto *document = item->property("textDocument").value<QQuickTextDocument *>()->textDocument();
-    return document->toRawText().replace(QChar(0x2029), QChar(u'\n')).toUtf8();
-}
-
-// Loads the text into three editor panes and types one letter at the start of the result.
-int editorWorker(const WorkerArgs &args)
-{
-    if (qgetenv("QT_QPA_PLATFORM").isEmpty()) setenv("QT_QPA_PLATFORM", "offscreen", 0);
-    if (qgetenv("QT_QUICK_BACKEND").isEmpty()) setenv("QT_QUICK_BACKEND", "software", 0);
-    if (qEnvironmentVariable("QT_QPA_PLATFORM") != QLatin1String("offscreen")) {
-        std::cout << "editor worker requires QT_QPA_PLATFORM=offscreen\n";
-        return 2;
-    }
-    const auto &name = args.name;
-    const int budgetMs = std::max(1000, args.timeoutMs - 1000);
-    int argc = args.argc;
-    QGuiApplication app(argc, args.argv);
-    const std::string text = args.mode == "long" ? workloadLongLine(args.bytes, 'x') : workloadFile(args.lines, 2);
-    std::uint64_t lineCount = 0;
-    std::uint64_t maxLine = 0;
-    inspect(text, lineCount, maxLine);
-    const auto byteCount = static_cast<std::uint64_t>(text.size());
-    const auto record = [&](const char *metric) {
-        return baseRecord("editor", name + "-" + metric, metric, byteCount, lineCount, maxLine);
-    };
-    const auto fail = [&](const std::string &outcome, const std::string &detail) {
-        for (const char *metric : {"load", "key"}) {
-            auto failed = record(metric);
-            failed.outcome = outcome;
-            failed.detail = detail;
-            emitRecord(failed);
-        }
-    };
-    QElapsedTimer sceneClock;
-    sceneClock.start();
-    QQuickView view;
-    view.setSource(QUrl(QStringLiteral("qrc:/Editor.qml")));
-    if (view.status() != QQuickView::Ready) {
-        fail("explicit-failure", "editor scene failed to load");
-        return 0;
-    }
-    view.show();
-    app.processEvents();
-    auto *editor = findItem(view.rootObject(), QStringLiteral("result"));
-    auto *sourceA = findItem(view.rootObject(), QStringLiteral("sourceA"));
-    auto *sourceB = findItem(view.rootObject(), QStringLiteral("sourceB"));
-    if (args.startup) {
-        auto startup = baseRecord("editor", "editor-startup", "startup", 0, 0, 0);
-        startup.elapsedMs = static_cast<std::uint64_t>(sceneClock.elapsed());
-        startup.outcome =
-            editor != nullptr && sourceA != nullptr && sourceB != nullptr ? "completed" : "explicit-failure";
-        startup.detail = "offscreen software scene startup, excluded from the envelope";
-        startup.rssKb = vmHwmKb();
-        emitRecord(startup);
-    }
-    if (editor == nullptr || sourceA == nullptr || sourceB == nullptr) {
-        fail("explicit-failure", "result or source pane is missing");
-        return 0;
-    }
-    QElapsedTimer timer;
-    timer.start();
-    const auto qtext = QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
-    editor->setProperty("text", qtext);
-    sourceA->setProperty("text", qtext);
-    sourceB->setProperty("text", qtext);
-    app.processEvents();
-    const auto contentWidth = editor->property("contentWidth").toDouble();
-    const auto contentHeight = editor->property("contentHeight").toDouble();
-    const auto loadMs = static_cast<std::uint64_t>(timer.elapsed());
-    const QByteArray loaded = rawText(editor);
-    const QByteArray generated(text.data(), static_cast<qsizetype>(text.size()));
-    const bool panesMatch = rawText(sourceA) == loaded && rawText(sourceB) == loaded;
-    auto load = record("load");
-    load.elapsedMs = loadMs;
-    load.rssKb = vmHwmKb();
-    std::ostringstream loadDetail;
-    loadDetail << "loaded=" << loaded.size() << " expected=" << generated.size() << " width=" << contentWidth
-               << " height=" << contentHeight;
-    if (loaded != generated || !panesMatch || !(contentWidth > 0.0) || !(contentHeight > 0.0)) {
-        const bool textKept = loaded == generated && panesMatch;
-        load.outcome = textKept ? "explicit-failure" : "truncated";
-        load.detail = loadDetail.str()
-            + (textKept ? " text retained but content width is not positive"
-                        : " text differs from the generated buffer");
-        emitRecord(load);
-        auto key = record("key");
-        key.outcome = "incomplete";
-        key.detail = "skipped after the load was not completed";
-        emitRecord(key);
-        return 0;
-    }
-    load.outcome = "completed";
-    load.detail = "three panes, offscreen software, layout included";
-    emitRecord(load);
-
-    QElapsedTimer cursor;
-    cursor.start();
-    editor->forceActiveFocus();
-    editor->setProperty("cursorPosition", 0);
-    app.processEvents();
-    if (cursor.elapsed() > budgetMs) {
-        auto key = record("key");
-        key.outcome = "unacknowledged";
-        key.detail = "cursor placement exceeded the worker budget";
-        emitRecord(key);
-        return 0;
-    }
-    timer.restart();
-    QKeyEvent press(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier, QStringLiteral("a"));
-    QGuiApplication::sendEvent(editor, &press);
-    app.processEvents();
-    (void)editor->property("contentWidth").toDouble();
-    const auto keyMs = static_cast<std::uint64_t>(timer.elapsed());
-    const QByteArray after = rawText(editor);
-    const QByteArray expected = QByteArray("a") + QByteArray(text.data(), static_cast<qsizetype>(text.size()));
-    auto key = record("key");
-    key.elapsedMs = keyMs;
-    key.rssKb = vmHwmKb();
-    if (after == expected) {
-        key.outcome = "completed";
-        key.detail = "inserted one ASCII letter at the start";
-    } else if (after.size() == loaded.size()) {
-        key.outcome = "unacknowledged";
-        key.detail = "document length did not change";
-    } else {
-        key.outcome = "truncated";
-        key.detail = "document changed but does not contain the full inserted text";
-    }
-    emitRecord(key);
     return 0;
 }
 

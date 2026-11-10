@@ -185,24 +185,15 @@ TextArea still needs application-owned gutters, correspondence, navigation,
 search controls, input scheduling, pending/error presentation and history. Syntax
 highlighting does not establish merge correspondence.
 
-## Reproduce
+## The experiment fixture
 
-Run from the repository root in a desktop build configured as
-[docs/build.md](build.md) describes. The fixture lives in
-`tests/fixtures/editor/` and builds only from `tests/CMakeLists.txt`, with the
-project's shared warning flags.
-
-```sh
-cmake --build build/desktop --target branch_truce_editor_tests --parallel 2
-ctest --test-dir build/desktop -R '^editor\.' --output-on-failure -V
-/usr/lib/qt6/bin/qmllint "$PWD/tests/fixtures/editor/Editor.qml"
-```
-
-CTest registers the fixture as `editor.baseline` and `editor.regression`.
-The fixture links no product target and returns nonzero for
-failed assertions. The acceptance runner requires
-`offscreen` to avoid changing a desktop user's clipboard. Its private clipboard
-is cleared, its owner-only recovery directory is removed, and removal is checked.
+The standalone fixture behind this record, in `tests/fixtures/editor/`, was
+removed: it exercised its own copies of the adapter, recovery sink and position
+mapping rather than the product, so a passing run said nothing about the
+application. The observations below are the record of its last runs. The
+product's editor adapter, input-method handling and recovery are tested in
+`tests/app`, and `performance.workloads` measures loading and typing in the
+real window ([tests/fixtures/performance/README.md](../tests/fixtures/performance/README.md)).
 
 ## Observed contracts
 

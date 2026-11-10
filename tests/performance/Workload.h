@@ -5,6 +5,7 @@
 //
 //   Workload.cpp    the record names, the line format and the helpers below.
 //   Workers.cpp     generates each workload in a worker process and reports its records.
+//   EditorWorker.cpp  the editor workload, in the real window.
 //   Supervisor.cpp  runs the workers, polices their memory and time, and aggregates the repeats.
 //   Report.cpp      writes the evidence report and its tab-separated rows.
 //   WorkloadMeasurements.cpp  holds the gate and evidence profiles and their expectations.
@@ -121,6 +122,8 @@ struct Kind {
 
 // Defined with the workers.
 const Kind *findKind(std::string_view name);
+// The editor worker, which loads the real window, in EditorWorker.cpp.
+int editorWorker(const WorkerArgs &args);
 
 // The record names one run of `spec` must report, in order.
 std::vector<std::string> recordNames(const Spec &spec);
