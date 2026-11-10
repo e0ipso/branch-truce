@@ -372,7 +372,9 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
     # Gate profile classifies outcomes. The evidence profile publishes timings.
-    add_executable(branch_truce_workload_measurements performance/WorkloadMeasurements.cpp)
+    add_executable(branch_truce_workload_measurements performance/WorkloadMeasurements.cpp performance/Workload.cpp
+        performance/Workers.cpp performance/Supervisor.cpp performance/Report.cpp)
+    target_include_directories(branch_truce_workload_measurements PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_workload_measurements PRIVATE branch_truce_core
         branch_truce_storage branch_truce_git Qt6::Quick Qt6::QuickControls2 branch_truce_build_options)
     target_compile_definitions(branch_truce_workload_measurements PRIVATE
