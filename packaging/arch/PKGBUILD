@@ -1,6 +1,6 @@
-# Prepared by package-arch.sh with a checksum of the disposable source archive.
+# Prepared by build-arch.sh with a checksum of the disposable source archive.
 pkgname=branch-truce
-pkgver=${BRANCH_TRUCE_ARCH_PKGVER:?use packaging/scripts/package-arch.sh}
+pkgver=${BRANCH_TRUCE_ARCH_PKGVER:?use packaging/scripts/build-arch.sh}
 pkgrel=1
 pkgdesc='Offline Git merge and rebase text conflict resolver for KDE'
 arch=('x86_64')
@@ -14,7 +14,7 @@ source=('branch-truce.tar.gz')
 # Keep makepkg's native buildflags/strip handling, without a second debug package.
 options=('!debug')
 PKGEXT='.pkg.tar.zst'
-_app_version=${BRANCH_TRUCE_VERSION:?use packaging/scripts/package-arch.sh}
+_app_version=${BRANCH_TRUCE_VERSION:?use packaging/scripts/build-arch.sh}
 
 build() {
     cmake -S "$srcdir/branch-truce" -B "$srcdir/build" -G Ninja \

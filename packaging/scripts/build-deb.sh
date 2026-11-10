@@ -2,7 +2,7 @@
 # Builds the DEB of a format with dpkg-buildpackage. Run it through
 # package-release.sh, inside the format's build image:
 #
-#   package-deb.sh FORMAT VERSION ABSOLUTE-OUTPUT-DIR
+#   build-deb.sh FORMAT VERSION ABSOLUTE-OUTPUT-DIR
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd -- "$here/../.." && pwd)
@@ -11,6 +11,9 @@ source "$here/compiler-cache.sh"
 builder_args "$0" "$@" || exit 2
 format=$1 version=$2 output=$3
 native=$(package_native_version "$format" "$version") || exit 2
+# The changelog's distribution is the release of the build image.
+suite=$(. /etc/os-release && printf '%s' "${VERSION_CODENAME-}")
+[ -n "$suite" ] || { echo 'error: /etc/os-release of the build image has no VERSION_CODENAME' >&2; exit 1; }
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 
@@ -18,7 +21,7 @@ tree=$work/branch-truce-$native
 "$here/stage-source.sh" --from "$root" --to "$tree" packaging/debian
 mv -- "$tree/packaging/debian" "$tree/debian"
 cat > "$tree/debian/changelog" <<CHANGELOG
-branch-truce ($native) resolute; urgency=medium
+branch-truce ($native) $suite; urgency=medium
 
   * Branch Truce $version.
 

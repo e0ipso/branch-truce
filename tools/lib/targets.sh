@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # The validation targets of packaging/validation-targets.tsv: clean OS
-# containers that tools/inspect-artifact.sh and tools/validate-installed-artifact.sh
-# install a release package into. Sourcing defines the functions below; it sets
+# containers that tools/validate-installed-artifact.sh installs a release
+# package into. Sourcing defines the functions below; it sets
 # no shell options and runs nothing. Each prints its result on stdout and
 # returns 0, or prints one "error: ..." line on stderr and returns non-zero.
 #

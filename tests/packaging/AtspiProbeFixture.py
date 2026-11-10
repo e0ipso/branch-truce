@@ -11,7 +11,7 @@ and timeouts finish at once. Modes:
               the wait, wait-match, text, focus and press commands, then prints
               the assertion count
     dump      prints the probe's dump of a tree with the controls that
-              tools/validate-installed-artifact.sh checks
+              tools/installed-checks.sh checks
     text      prints the probe's text output for an editable result holding
               the text that validation types, with Qt's paragraph separator
 """
@@ -193,7 +193,7 @@ def load(path):
 
 
 def application_tree():
-    """The accessible names validate-installed-artifact.sh looks for."""
+    """The accessible names installed-checks.sh looks for."""
     common = ("enabled", "showing")
     return Node("application", "Branch Truce", children=[
         Node("frame", "Branch Truce", common, children=[

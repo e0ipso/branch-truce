@@ -101,10 +101,6 @@ endforeach()
 add_test(NAME packaging.compiler-cache
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/CompilerCache.sh")
 set_tests_properties(packaging.compiler-cache PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
-# Host side of the DEB inspection script against a stub container engine.
-add_test(NAME packaging.artifact-tooling
-    COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ArtifactTooling.sh")
-set_tests_properties(packaging.artifact-tooling PROPERTIES TIMEOUT 120)
 # The CI fixture checks that test stages list every runtime package dependency.
 add_test(NAME packaging.ci-test-stage-depends
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/CiTestStageDepends.sh")

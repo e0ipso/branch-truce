@@ -13,7 +13,7 @@ if __name__ == '__main__':
 import capture_profile  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
-TEMPLATE = HERE.parents[1] / 'tests/acceptance/fidelity-ledger.json'
+TEMPLATE = HERE / 'fidelity-ledger.json'
 
 
 def complete_replay(report, shape):

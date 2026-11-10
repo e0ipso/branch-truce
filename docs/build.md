@@ -365,9 +365,11 @@ To check an install without touching the system or your home, run:
 ./tools/verify-install-prefix.sh --mergetool-tests build/desktop/tests/branch_truce_mergetool_tests
 ```
 
-The script copies the checkout's tracked and untracked non-ignored files into
-a fixture under `${TMPDIR:-/tmp}`, builds and installs a Release prefix, and
-deletes the copied sources and build tree before launching anything. It then:
+The script copies the package build inputs of
+`packaging/scripts/stage-source.sh` (tracked and untracked non-ignored files)
+and `package.json` into a fixture under `${TMPDIR:-/tmp}`, builds and installs
+a Release prefix, and deletes the copied sources and build tree before
+launching anything. It then:
 
 1. Compares the deployed file list with the eight files above and runs
    `desktop-file-validate` and `appstreamcli validate --no-net`.

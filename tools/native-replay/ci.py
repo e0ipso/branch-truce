@@ -35,7 +35,7 @@ def main():
         (args.source / 'tools/native-replay/capture-profile.json', args.output / 'inputs/capture-profile.json'),
         (args.source / 'tools/native-replay/reference-contract.json', args.output / 'inputs/reference-contract.json'),
         (args.source / 'tools/native-replay/reference/provenance.json', args.output / 'inputs/fixture-provenance.json'),
-        (args.source / 'tests/acceptance/fidelity-ledger.json', args.output / 'inputs/fidelity-ledger.json')]:
+        (args.source / 'tools/native-replay/fidelity-ledger.json', args.output / 'inputs/fidelity-ledger.json')]:
         shutil.copy2(source, destination)
         retained[destination.relative_to(args.output).as_posix()] = sha256(destination)
     context = dict(

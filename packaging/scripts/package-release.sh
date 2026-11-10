@@ -4,7 +4,7 @@
 #
 #   package-release.sh --format <id> --version <semver> --output <dir>
 #
-# packaging/formats.tsv names the format's family; package-<family>.sh does the
+# packaging/formats.tsv names the format's family; build-<family>.sh does the
 # build, and the package's own metadata is checked before it is published to
 # <dir> under its release file name. Prints that file's absolute path on the
 # last line. Exit status: 0 built, 1 build or check failed, 2 usage error or
@@ -22,4 +22,4 @@ family=$(format_field "$format" family) || { usage >&2; exit 2; }
 package_filename "$format" "$version" >/dev/null || exit 2
 mkdir -p -- "$output"
 output=$(cd -- "$output" && pwd)
-exec "$here/package-$family.sh" "$format" "$version" "$output"
+exec "$here/build-$family.sh" "$format" "$version" "$output"

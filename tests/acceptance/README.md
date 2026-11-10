@@ -83,7 +83,7 @@ Two journeys cover PRD examples 11 and 15. `a session that ends without the hand
 
 ## Fidelity acceptance ledger and CI evidence
 
-[fidelity-ledger.json](fidelity-ledger.json) records every approved session callout by behavior, requirement, source citation and calibrated region. All outcomes start pending. The native CI runner attaches available originals, snapshots, named-region geometry, exact close-ups, comparison reports and measured residuals in `native/acceptance-ledger.json`. No automatic capture, zero-difference repeat, passing CTest or successful package lifecycle approves a callout.
+[fidelity-ledger.json](../../tools/native-replay/fidelity-ledger.json) records every approved session callout by behavior, requirement, source citation and calibrated region. All outcomes start pending. The native CI runner attaches available originals, snapshots, named-region geometry, exact close-ups, comparison reports and measured residuals in `native/acceptance-ledger.json`. No automatic capture, zero-difference repeat, passing CTest or successful package lifecycle approves a callout.
 
 Every KDE matrix target retains its CTest, warning-free QML lint and native package lifecycle checks. The canonical Kubuntu DEB leg additionally runs the real native replay at 1280x720 and 1280x800, twice per scheme, after a successful build even when CTest fails. Each size keeps its own exit status and raw log. `kde-evidence-<format>` contains the actual producing source/job/environment identities and available failure scenes. The per-callout ledger stays pending independent inspection of all original final PNGs before overlays, differences or close-ups. Every unexplained discrepancy remains outstanding; only the unchanged reference contract's narrow exceptions apply.
 

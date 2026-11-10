@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Optional ccache for the compilation entry points: package-*.sh,
+# Optional ccache for the compilation entry points: build-*.sh,
 # test-desktop.sh, tools/verify-install-prefix.sh and the cache tests.
 #
 # Sourcing defines the functions below. It sets no shell options and runs

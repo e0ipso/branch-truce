@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Install this checkout into a disposable prefix and launch only installed files.
-# The copied sources and build tree are deleted before any launch. Nothing is
-# installed into the system or the caller's home; the fixture is removed on exit.
+# The sources are the package build inputs of packaging/scripts/stage-source.sh
+# and package.json, for the version; they and the build tree are deleted before
+# any launch. Nothing is installed into the system or the caller's home; the
+# fixture is removed on exit.
 #
 # Usage: tools/verify-install-prefix.sh [--mergetool-tests PATH]
 # PATH is a built branch_truce_mergetool_tests binary. When given, it runs
@@ -9,18 +11,19 @@
 # Exit status: 0 passed, 1 a check failed, 2 usage error.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+source "$root/packaging/scripts/cli.sh"
 source "$root/tools/lib/fixture.sh"
+source "$root/tools/lib/report.sh"
 source "$root/packaging/scripts/compiler-cache.sh"
 app_id=com.canpicasoft.branch-truce
-mergetool_tests=
-case "${1:-}" in
-    '') ;;
-    -h|--help) echo "Usage: $0 [--mergetool-tests PATH]"; exit 0 ;;
-    --mergetool-tests)
-        [[ $# -eq 2 && -x "$2" ]] || { echo "Usage: $0 [--mergetool-tests PATH]" >&2; exit 2; }
-        mergetool_tests=$(cd -- "$(dirname -- "$2")" && pwd -P)/$(basename -- "$2") ;;
-    *) echo "Usage: $0 [--mergetool-tests PATH]" >&2; exit 2 ;;
-esac
+usage() { echo "Usage: $0 [--mergetool-tests PATH]"; }
+declare -A options=()
+cli_parse options - 'mergetool-tests=' "$@" || { cli_usage $? usage; exit; }
+mergetool_tests=${options[mergetool-tests]-}
+if [[ -n "$mergetool_tests" ]]; then
+    [[ -x "$mergetool_tests" ]] || { echo "error: $mergetool_tests is not executable" >&2; usage >&2; exit 2; }
+    mergetool_tests=$(cd -- "$(dirname -- "$mergetool_tests")" && pwd -P)/$(basename -- "$mergetool_tests")
+fi
 for tool in cmake c++ make git tar gio desktop-file-validate appstreamcli readelf; do
     command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool" >&2; exit 1; }
 done
@@ -63,27 +66,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-step() { printf '\n== %s\n' "$*"; }
 show() { printf '+'; printf ' %q' "$@"; printf '\n'; }
 run() { show "$@"; "$@"; }
-pass() { printf 'PASS: %s\n' "$*"; }
-# die stops the run at a failed check; fail, in the scripts that keep going,
-# only records one.
-die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-# Bounded wait for a condition; the deadline is in tenths of a second.
-wait_for() {
-    local tenths=$1; shift
-    while ! "$@"; do
-        ((tenths-- > 0)) || return 1
-        sleep 0.1
-    done
-}
 
-step "Copy tracked and untracked non-ignored files outside the checkout"
-mkdir -p -- "$source_dir"
-(cd -- "$root" && git ls-files -z --cached --others --exclude-standard) |
-    while IFS= read -r -d '' file; do [[ -e "$root/$file" ]] && printf '%s\0' "$file"; done |
-    tar -C "$root" --null -T - -cf - | tar -C "$source_dir" -xf -
+step "Copy the package build inputs and package.json outside the checkout"
+"$root/packaging/scripts/stage-source.sh" --tracked --from "$root" --to "$source_dir" package.json
 echo "Copied source: $source_dir (from $root at $(git -C "$root" rev-parse --short HEAD))"
 
 cache_begin install-prefix-Release "$fixture"
@@ -131,13 +118,12 @@ resolved_name=$(isolated sh -c 'command -v branch-truce')
 [[ "$resolved_name" == "$installed" ]] || die "branch-truce resolves to $resolved_name"
 pass "conflicted repository $repo; branch-truce resolves to $resolved_name"
 unmerged() { [[ -n "$(isolated git ls-files -u -- tracked.txt)" ]]; }
-socket_present() { compgen -G "$home/runtime/branch-truce/bt-mt-*" >/dev/null; }
 gui_running() { [[ -n "$(gui_pids)" ]]; }
 no_gui() { [[ -z "$(gui_pids)" ]]; }
 stop_gui() {
     local pid
     for pid in $(gui_pids); do kill -TERM "$pid"; done
-    wait_for 100 no_gui || die "installed GUI did not stop"
+    wait_until 10 no_gui || die "installed GUI did not stop"
 }
 # A blocked launcher still runs, MERGED keeps its launch bytes and Git still
 # reports the path unmerged.
@@ -161,7 +147,7 @@ pass "installed CLI loaded the embedded QML and opened the merge session"
 step "Desktop-entry launch and direct launcher handoff"
 show env -i "${environment[@]}" gio launch "$prefix/share/applications/$app_id.desktop" "$repo"
 isolated gio launch "$prefix/share/applications/$app_id.desktop" "$repo"
-wait_for 300 socket_present || die "desktop-launched GUI did not open a session socket"
+wait_until 30 session_socket_present "$home" || die "desktop-launched GUI did not open a session socket"
 gui_running || die "desktop-launched GUI is not the installed executable"
 pass "desktop entry started $(gui_pids | head -1 | xargs -I{} readlink /proc/{}/exe) with a live session"
 sides="$fixture/sides"
@@ -192,8 +178,8 @@ git_config mergetool.keepBackup false
 show env -i "${environment[@]}" git mergetool --no-prompt --tool=truce -- tracked.txt
 isolated git --no-pager mergetool --no-prompt --tool=truce -- tracked.txt < /dev/null &
 parent=$!
-wait_for 300 gui_running || die "launcher did not start the installed GUI"
-wait_for 300 socket_present || die "spawned GUI did not open a session socket"
+wait_until 30 gui_running || die "launcher did not start the installed GUI"
+wait_until 30 session_socket_present "$home" || die "spawned GUI did not open a session socket"
 expect_blocked "$parent" "git mergetool"
 pass "launcher started $(gui_pids | head -1 | xargs -I{} readlink /proc/{}/exe) and git mergetool is blocking"
 stop_gui

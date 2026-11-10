@@ -66,6 +66,12 @@ expect_death "removal left $work/installed/branch-truce.save" "$stubs
 expect_death 'branch-truce is still installed' "$stubs
     pkg_remove() { :; }; pkg_installed_version() { echo 1.2.3; }
     remove_and_check \"$work/home\" \"$work/payload\""
+# A validator that rejects a file fails the check without the caller's errexit.
+mkdir -p "$work/bin"
+printf '#!/bin/sh\nexit 1\n' > "$work/bin/desktop-file-validate"
+printf '#!/bin/sh\nexit 0\n' > "$work/bin/appstreamcli"
+chmod +x "$work/bin/desktop-file-validate" "$work/bin/appstreamcli"
+expect_death 'the desktop entry does not validate' "PATH=$work/bin:\$PATH; check_desktop_files"
 # The previous package must be an older branch-truce for the same architecture,
 # checked with the adapter's own version order before anything is installed.
 previous="pkg_identity() { echo \"\$IDENTITY\"; }; pkg_older() { [ \"\$1\" = 1.0.0 ] && [ \"\$2\" = 1.2.3 ]; }"

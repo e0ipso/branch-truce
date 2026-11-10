@@ -18,7 +18,7 @@ APP is a case-insensitive part of the accessible application name. Commands:
     focus NAME            ask the object named NAME to take keyboard focus
     press NAME            run the first action of the push button named NAME
 
-SECONDS defaults to 60. tools/validate-installed-artifact.sh runs it inside the
+SECONDS defaults to 60. tools/installed-checks.sh runs it inside the
 validation container, on that container's own D-Bus session. It needs
 python3-gi and gir1.2-atspi-2.0, and the application must expose AT-SPI, for
 example with QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1.

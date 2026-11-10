@@ -1,6 +1,6 @@
 # shellcheck shell=bash
-# Shared steps of the native package builders package-deb.sh, package-rpm.sh
-# and package-arch.sh, which package-release.sh runs. Sourcing defines the
+# Shared steps of the native package builders build-deb.sh, build-rpm.sh
+# and build-arch.sh, which package-release.sh runs. Sourcing defines the
 # functions below (and those of package-info.sh) and runs nothing.
 #
 #   builder_args BUILDER ARGS...            fails with the builders' usage
