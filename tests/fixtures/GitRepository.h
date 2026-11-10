@@ -36,18 +36,19 @@ inline QString gitExecutable() { return QFile::decodeName(QByteArray::fromStdStr
 inline QByteArray runGit(const QProcessEnvironment &environment, const QString &directory, const QStringList &arguments,
                          const QByteArray &input = {}, int expectedExit = 0)
 {
-    QProcess process;
-    process.setProcessEnvironment(environment);
-    process.setWorkingDirectory(directory);
-    process.start(gitExecutable(), QStringList{"--no-pager", "--literal-pathspecs"} + arguments);
-    CHECK(process.waitForStarted(5000));
-    CHECK(process.write(input) == input.size());
-    process.closeWriteChannel();
-    CHECK(process.waitForFinished(15000));
-    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != expectedExit)
-        throw Failure("fixture git " + arguments.join(QLatin1Char(' ')).toStdString() + " exited "
-                      + std::to_string(process.exitCode()) + ": " + process.readAllStandardError().toStdString());
-    return process.readAllStandardOutput();
+    std::vector<std::string> argv{fixtureGit(), "--no-pager", "--literal-pathspecs"};
+    for (const auto &argument : arguments) argv.push_back(QFile::encodeName(argument).toStdString());
+    std::vector<std::string> variables;
+    for (const auto &variable : environment.toStringList())
+        variables.push_back(QFile::encodeName(variable).toStdString());
+    const auto output =
+        readProcess(std::move(argv), variables, QFile::encodeName(directory).toStdString(), input.toStdString());
+    if (!output.diagnostic.empty() || output.status < 0 || !WIFEXITED(output.status)
+        || WEXITSTATUS(output.status) != expectedExit)
+        throw Failure("fixture git " + arguments.join(QLatin1Char(' ')).left(512).toStdString() + ": "
+                      + output.diagnostic + " status=" + std::to_string(output.status) + ": "
+                      + output.error.substr(0, 4096));
+    return QByteArray::fromStdString(output.text);
 }
 
 class GitHome {
