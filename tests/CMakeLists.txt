@@ -143,10 +143,16 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     branch_truce_add_unit_test(storage.destination-writer storage/DestinationWriterTests.cpp
         LIBS branch_truce_storage TIMEOUT 30)
 
+    find_package(Qt6 6.6 REQUIRED COMPONENTS Test QuickTest)
     # The app suites build sessions whose default recovery store, mergetool socket and Qt settings
     # live under the XDG directories, so every one runs through with-private-xdg.sh.
     branch_truce_add_unit_test(app.session-model app/SessionModelTests.cpp LIBS branch_truce_controller
+        PRIVATE_XDG LABELS app)
+    # Its process-exit case starts this executable again as the child that exits.
+    branch_truce_add_unit_test(app.session-recovery app/SessionRecoveryTests.cpp LIBS branch_truce_controller
         PRIVATE_XDG TIMEOUT 120 LABELS app)
+    branch_truce_add_unit_test(app.selected-file app/SelectedFileTests.cpp LIBS branch_truce_controller Qt6::Test
+        PRIVATE_XDG LABELS app)
     branch_truce_add_unit_test(app.text-change app/TextChangeTests.cpp LIBS branch_truce_controller
         PRIVATE_XDG LABELS app)
     branch_truce_add_unit_test(app.navigation-targets app/NavigationTargetsTests.cpp LIBS branch_truce_controller
@@ -158,7 +164,6 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     branch_truce_add_unit_test(app.recovery-record app/RecoveryRecordTests.cpp
         LIBS branch_truce_controller branch_truce_storage PRIVATE_XDG LABELS app)
 
-    find_package(Qt6 6.6 REQUIRED COMPONENTS Test QuickTest)
     add_executable(branch_truce_comparison_tests app/ComparisonViewTests.cpp)
     target_include_directories(branch_truce_comparison_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_comparison_tests PRIVATE branch_truce_controller branch_truce_uiplugin
