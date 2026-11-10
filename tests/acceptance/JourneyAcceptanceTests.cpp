@@ -43,6 +43,7 @@ int main(int argc, char **argv)
     journey::addReviewJourneys(suite);
     journey::addHandoffJourneys(suite);
     journey::addWindowJourneys(suite);
+    journey::addPlatformJourneys(suite);
     // No argument runs every journey; a group name runs one CTest entry's share.
     std::optional<std::string> group;
     if (arguments.size() == 2) group = arguments.at(1);

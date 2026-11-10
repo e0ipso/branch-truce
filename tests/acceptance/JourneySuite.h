@@ -63,5 +63,6 @@ private:
 void addReviewJourneys(JourneySuite &suite);
 void addHandoffJourneys(JourneySuite &suite);
 void addWindowJourneys(JourneySuite &suite);
+void addPlatformJourneys(JourneySuite &suite);
 
 } // namespace journey
