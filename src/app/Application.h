@@ -52,6 +52,9 @@ public:
         git::GitRunners gitRunners = {};
     };
     explicit Application(Config config, QObject *parent = nullptr);
+    // Stops every running Git process of the session at once, so they end
+    // within one grace period while the collaborators go.
+    ~Application() override;
 
     // Main.qml's required properties, by name.
     [[nodiscard]] QVariantMap windowProperties();
@@ -73,6 +76,8 @@ public:
     [[nodiscard]] SessionLoader *loader() noexcept { return &loader_; }
 
 private:
+    // First, so it outlives every collaborator that runs Git.
+    std::shared_ptr<git::GitProcesses> gitProcesses_;
     SessionStore store_;
     SessionModel files_;
     SessionCoordinator coordinator_;

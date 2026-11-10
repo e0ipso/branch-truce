@@ -3,12 +3,16 @@
 
 #include "git/GitTypes.h"
 #include <QByteArray>
+#include <QDeadlineTimer>
 #include <QHash>
 #include <QList>
 #include <QObject>
 #include <QString>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <optional>
+#include <set>
 
 namespace branch_truce::git {
 
@@ -95,12 +99,34 @@ struct Result {
 // Index reinspection after a mutation has its own shorter bound.
 inline constexpr int kGitRequestDeadlineMs = 30000;
 
+// The running Git processes of one owner, such as a window's session.
+// stopAll() asks every one of them to stop at once, so the adapters destroyed
+// after it wait for them together, within one grace period, instead of one
+// grace period each. Adapters on any thread may share it.
+class GitProcesses {
+public:
+    void stopAll();
+    // For GitAdapter: a started process group, and one that ended.
+    void add(qint64 group);
+    void remove(qint64 group);
+    // How long a destroyed adapter waits after SIGTERM: what is left of the
+    // shared grace period once stopAll() ran, otherwise normalMs.
+    [[nodiscard]] int graceMs(int normalMs) const;
+
+private:
+    mutable std::mutex mutex_;
+    std::set<qint64> groups_;
+    std::optional<QDeadlineTimer> stopping_;
+};
+
 // Which Git runs, the configuration it reads and how long a request may take.
 // The composition root builds it once; requests cannot override any of it.
 struct GitProgram {
     QString executable;
     GitEnvironment environment;
     int deadlineMs = kGitRequestDeadlineMs;
+    // Where its adapters register their processes; none when empty.
+    std::shared_ptr<GitProcesses> processes = {};
 };
 
 // What a consumer of Git requests depends on. Every implementation, fakes

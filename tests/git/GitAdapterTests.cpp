@@ -7,13 +7,17 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <QVersionNumber>
+
+#include <memory>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 #include <iostream>
 #include <memory>
@@ -1070,6 +1074,27 @@ int main(int argc, char **argv)
         CHECK(adapter->start(repo.request(Operation::StageFile, "tracked.txt")));
         test_support::waitUntil([&] { return destroyed; }, "the staging operation did not start");
         CHECK(QFile::exists(repo.path(".terminated")));
+    });
+    suite.run("an owner that stops its Git processes waits one grace period for all of them", [] {
+        Repository repo;
+        // Each stand-in ignores SIGTERM, so only SIGKILL after the grace period ends it.
+        const auto fake = repo.fakeGit(": > .after-add\ntrap '' TERM\n: > .started-$$\nsleep 30\n");
+        auto program = repo.program(fake);
+        program.processes = std::make_shared<GitProcesses>();
+        std::vector<std::unique_ptr<GitAdapter>> adapters;
+        for (int count = 0; count < 3; ++count) {
+            adapters.push_back(std::make_unique<GitAdapter>(program));
+            CHECK(adapters.back()->start(repo.request(Operation::StageFile, "tracked.txt")));
+        }
+        test_support::waitUntil(
+            [&] { return QDir(repo.root()).entryList({".started-*"}, QDir::Files | QDir::Hidden).size() == 3; },
+            "the three staging operations did not start");
+        QElapsedTimer clock;
+        clock.start();
+        program.processes->stopAll();
+        adapters.clear();
+        // An adapter alone waits 500 ms after SIGTERM; three in turn would take 1500 ms.
+        CHECK_LT(clock.elapsed(), 1200);
     });
     suite.run("real Git and a scripted answer keep the same runner contract", [] {
         Repository repo;

@@ -100,6 +100,7 @@ public:
     QString executable;
     GitEnvironment environment;
     int deadlineMs = kGitRequestDeadlineMs;
+    std::shared_ptr<GitProcesses> processes;
     QString directory;
     QString originalObjectDirectory;
     struct stat identity{};

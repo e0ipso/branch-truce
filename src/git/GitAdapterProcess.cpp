@@ -148,8 +148,33 @@ bool detail::secureExecutable(const QString &path, struct stat &identity)
     }
 }
 
+void GitProcesses::stopAll()
+{
+    const std::lock_guard lock(mutex_);
+    if (!stopping_) stopping_ = QDeadlineTimer(killGraceMs);
+    for (const auto group : groups_) ::kill(-static_cast<pid_t>(group), SIGTERM);
+}
+void GitProcesses::add(qint64 group)
+{
+    const std::lock_guard lock(mutex_);
+    groups_.insert(group);
+}
+void GitProcesses::remove(qint64 group)
+{
+    const std::lock_guard lock(mutex_);
+    groups_.erase(group);
+}
+int GitProcesses::graceMs(int normalMs) const
+{
+    const std::lock_guard lock(mutex_);
+    return stopping_ ? static_cast<int>(std::max<qint64>(0, stopping_->remainingTime())) : normalMs;
+}
+
 GitAdapter::State::State(GitAdapter *owner, GitProgram selected)
-    : q(owner), environment(std::move(selected.environment)), deadlineMs(selected.deadlineMs)
+    : q(owner),
+      environment(std::move(selected.environment)),
+      deadlineMs(selected.deadlineMs),
+      processes(std::move(selected.processes))
 {
     if (QDir::isAbsolutePath(selected.executable) && exactPath(selected.executable)) {
         executable = QFileInfo(selected.executable).canonicalFilePath();
@@ -163,6 +188,7 @@ GitAdapter::State::State(GitAdapter *owner, GitProgram selected)
     escalation.setSingleShot(true);
     QObject::connect(&process, &QProcess::started, q, [this] {
         pid = process.processId();
+        if (processes) processes->add(pid);
         observeNativeLaunch();
         if (!nativeLaunchFailed && !phaseInput.isEmpty() && process.write(phaseInput) != phaseInput.size()) {
             stop(Outcome::ProcessFailure, ProblemCode::GitInputNotSent);
@@ -196,6 +222,7 @@ GitAdapter::State::State(GitAdapter *owner, GitProgram selected)
                          drain(true);
                          escalation.stop();
                          signalGroup(SIGKILL); // Terminate descendants in our private session.
+                         if (processes) processes->remove(pid);
                          pid = 0;
                          afterProcess(status == QProcess::NormalExit, code);
                      });
@@ -216,17 +243,20 @@ GitAdapter::State::~State()
     QObject::disconnect(&process, nullptr, q, nullptr);
     // Git removes its lock files, such as the index.lock of an interrupted
     // `git add`, when SIGTERM stops it. SIGKILL follows only when it has not
-    // exited after the grace period, which bounds this wait.
+    // exited after the grace period, which bounds this wait. Once the owner
+    // stopped all its processes, that period is shared and only what is left
+    // of it is waited for.
     if (process.state() != QProcess::NotRunning) {
         signalGroup(SIGTERM);
         process.terminate();
-        if (!process.waitForFinished(killGraceMs)) {
+        if (!process.waitForFinished(processes ? processes->graceMs(killGraceMs) : killGraceMs)) {
             signalGroup(SIGKILL);
             process.kill();
             process.waitForFinished(killGraceMs);
         }
     }
     signalGroup(SIGKILL); // Descendants left in the private session.
+    if (processes && pid > 0) processes->remove(pid);
     closeLaunchPipe();
 }
 void GitAdapter::State::signalGroup(int signal)
