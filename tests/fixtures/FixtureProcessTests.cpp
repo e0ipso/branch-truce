@@ -30,7 +30,7 @@ int childMode(const std::string &mode)
                 ::close(STDOUT_FILENO);
                 ::close(STDERR_FILENO);
             }
-            ::write(ready[1], "r", 1);
+            if (mode != "ignored") ::write(ready[1], "r", 1);
             while (true) ::pause();
         }
         ::close(ready[1]);
