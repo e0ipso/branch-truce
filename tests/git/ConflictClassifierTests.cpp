@@ -407,11 +407,12 @@ int main(int argc, char **argv)
         mergeStopped(repo);
         int discoveries = 0;
         // The second discovery is the recheck after every source was read.
-        ConflictClassifier classifier(intercepted(repo.program(), [&](const Request &request) -> std::optional<Result> {
-            if (request.operation == Operation::DiscoverRepository && ++discoveries == 2)
-                repo.git({"config", "core.autocrlf", "true"});
-            return std::nullopt;
-        }));
+        ConflictClassifier classifier(
+            test_support::ScriptedGit::runners(repo.program(), [&](const Request &request) -> std::optional<Result> {
+                if (request.operation == Operation::DiscoverRepository && ++discoveries == 2)
+                    repo.git({"config", "core.autocrlf", "true"});
+                return std::nullopt;
+            }));
         const auto result = run(classifier, {repo.root(), 71, 93});
         CHECK_EQ(discoveries, 2);
         CHECK_EQ(result.outcome, Outcome::Success);
@@ -424,14 +425,15 @@ int main(int argc, char **argv)
     suite.run("a source over the Git read limit is a load failure that names the limit", [] {
         Repository repo;
         mergeStopped(repo);
-        ConflictClassifier classifier(intercepted(repo.program(), [](const Request &request) -> std::optional<Result> {
-            if (request.operation != Operation::MaterializeSource) return std::nullopt;
-            Result limited;
-            limited.outcome = Outcome::OutputLimit;
-            limited.outputIncomplete = true;
-            limited.problem = {ProblemCode::GitOutputLimit, {QStringLiteral("1")}};
-            return limited;
-        }));
+        ConflictClassifier classifier(
+            test_support::ScriptedGit::runners(repo.program(), [](const Request &request) -> std::optional<Result> {
+                if (request.operation != Operation::MaterializeSource) return std::nullopt;
+                Result limited;
+                limited.outcome = Outcome::OutputLimit;
+                limited.outputIncomplete = true;
+                limited.problem = {ProblemCode::GitOutputLimit, {QStringLiteral("1")}};
+                return limited;
+            }));
         const auto result = run(classifier, {repo.root(), 71, 93});
         CHECK_EQ(result.outcome, Outcome::Success);
         CHECK_EQ(result.conflicts.size(), 1);
@@ -444,13 +446,14 @@ int main(int argc, char **argv)
     suite.run("a discovery that times out offers nothing", [] {
         Repository repo;
         mergeStopped(repo);
-        ConflictClassifier classifier(intercepted(repo.program(), [](const Request &request) -> std::optional<Result> {
-            if (request.operation != Operation::DiscoverRepository) return std::nullopt;
-            Result late;
-            late.outcome = Outcome::TimedOut;
-            late.problem = {ProblemCode::GitDeadline, {QStringLiteral("30")}};
-            return late;
-        }));
+        ConflictClassifier classifier(
+            test_support::ScriptedGit::runners(repo.program(), [](const Request &request) -> std::optional<Result> {
+                if (request.operation != Operation::DiscoverRepository) return std::nullopt;
+                Result late;
+                late.outcome = Outcome::TimedOut;
+                late.problem = {ProblemCode::GitDeadline, {QStringLiteral("30")}};
+                return late;
+            }));
         const auto result = run(classifier, {repo.root(), 71, 93});
         CHECK_EQ(result.outcome, Outcome::TimedOut);
         CHECK(hasProblem(result.problem, ProblemCode::GitDeadline));

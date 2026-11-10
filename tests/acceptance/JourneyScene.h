@@ -92,10 +92,7 @@ public:
 private:
     test_support::OfflineGit git_;
     QTemporaryDir recovery_;
-    // Under a long TMPDIR a QTemporaryDir would push the socket path past its length limit, and the
-    // session would fall back to the shared /tmp/branch-truce-<uid>. A short base under /tmp keeps
-    // it private.
-    QTemporaryDir runtime_{QStringLiteral("/tmp/bt-run-XXXXXX")};
+    test_support::RuntimeDirectory runtime_;
 };
 
 // A selected file's progress, from SelectedFile::progress().

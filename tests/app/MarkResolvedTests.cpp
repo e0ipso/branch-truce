@@ -402,7 +402,8 @@ int main(int argc, char **argv)
         Repository repo;
         ScopedEnvironment environment(repo.environment);
         // git add exits non-zero without touching the index.
-        const auto refused = [](const git::Request &) {
+        const auto refused = [](const git::Request &request) -> std::optional<git::Result> {
+            if (request.operation != git::Operation::StageFile) return std::nullopt;
             git::Result result;
             result.outcome = git::Outcome::ExitFailure;
             result.mutation = git::Mutation::ObservedUnchanged;
@@ -412,8 +413,7 @@ int main(int argc, char **argv)
         };
         Application controller{[&] {
             auto config = test_support::windowConfig();
-            config.gitRunners =
-                test_support::ScriptedGitRunner::runners(git::Operation::StageFile, refused, gitOnPath());
+            config.gitRunners = test_support::ScriptedGit::runners(config.git, refused);
             return config;
         }()};
         openController(controller, repo);
@@ -581,7 +581,8 @@ int main(int argc, char **argv)
         ScopedEnvironment environment(repo.environment);
         const Problem diagnostic(ProblemCode::GitDeadline, {QStringLiteral("30")});
         // Git add hangs past the adapter's deadline: the index may or may not have changed.
-        const auto timedOut = [diagnostic](const git::Request &) {
+        const auto timedOut = [diagnostic](const git::Request &request) -> std::optional<git::Result> {
+            if (request.operation != git::Operation::StageFile) return std::nullopt;
             git::Result result;
             result.outcome = git::Outcome::TimedOut;
             result.mutation = git::Mutation::Uncertain;
@@ -590,8 +591,7 @@ int main(int argc, char **argv)
         };
         Application controller{[&] {
             auto config = test_support::windowConfig();
-            config.gitRunners =
-                test_support::ScriptedGitRunner::runners(git::Operation::StageFile, timedOut, gitOnPath());
+            config.gitRunners = test_support::ScriptedGit::runners(config.git, timedOut);
             return config;
         }()};
         openController(controller, repo);
