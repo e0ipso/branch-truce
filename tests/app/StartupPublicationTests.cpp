@@ -57,7 +57,8 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
                     const auto &restored = openedFile(controller);
                     CHECK(controller.store()->recoveryDirectory() == location && restored.current().draft == latest);
                     CHECK(!controller.store()->hasRecoveryFailure(restored.id()));
-                    CHECK(fileRole(controller, restored, SessionModel::RecoveryErrorRole).toString().isEmpty());
+                    CHECK(
+                        fileRole(*controller.files(), restored, SessionModel::RecoveryErrorRole).toString().isEmpty());
                     CHECK(restored.written() && restored.written()->id == restored.current().id);
                     CHECK(restored.facts().resolved == staging);
                     CHECK(repo.snapshot() == repositoryBefore);
@@ -108,7 +109,8 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
                 Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 const auto &restored = openedFile(controller);
-                const auto diagnostic = fileRole(controller, restored, SessionModel::RecoveryErrorRole).toString();
+                const auto diagnostic =
+                    fileRole(*controller.files(), restored, SessionModel::RecoveryErrorRole).toString();
                 CHECK(controller.store()->hasRecoveryFailure(restored.id()));
                 CHECK(diagnostic.contains("Interrupted publication") && diagnostic.contains("uncertain"));
                 CHECK(!restored.facts().resolved && repo.snapshot() == before);

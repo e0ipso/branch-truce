@@ -380,8 +380,9 @@ int main(int argc, char **argv)
             return !session.controller.commands()->resolutionBusy() && openedFile(session.controller).writeOutcome()
                 && openedFile(session.controller).writeOutcome()->outcome != Outcome::Succeeded;
         });
-        const auto outcome = openedFile(session.controller).writeOutcome()->outcome;
-        CHECK(outcome == Outcome::Failed || outcome == Outcome::Uncertain);
+        // The publisher sees that the destination's permissions changed since the load and refuses
+        // before it writes, so even root, which could write the file, gets a definite failure.
+        CHECK(openedFile(session.controller).writeOutcome()->outcome == Outcome::Failed);
         CHECK(openedFile(session.controller).reviewed() && openedFile(session.controller).checkpoint());
         CHECK(!openedFile(session.controller).facts().resolved && !openedFile(session.controller).staged());
         CHECK(readFile(session.repo.path("tracked.txt")) == session.repo.manual);
@@ -389,29 +390,36 @@ int main(int argc, char **argv)
         CHECK(unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
     });
-    suite.run("an unsupported staging hook leaves the written file unresolved", [] {
-        Session session;
-        const auto hook = session.repo.path(".git/hooks/post-index-change");
-        writeFile(hook, "#!/bin/sh\nexit 1\n");
-        CHECK(QFile::setPermissions(hook, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
-        const auto before = session.repo.snapshot();
-        CHECK(session.controller.commands()->markResolved(session.id, session.revision(), true));
-        waitFor(session.controller, [&] {
-            const auto &file = openedFile(session.controller);
-            return !session.controller.commands()->resolutionBusy() && file.writeOutcome()
-                && file.writeOutcome()->outcome == Outcome::Succeeded && file.stageOutcome();
-        });
-        CHECK(openedFile(session.controller).stageOutcome()->outcome == Outcome::Failed
-              || openedFile(session.controller).stageOutcome()->outcome == Outcome::Uncertain);
-        CHECK(!openedFile(session.controller).facts().resolved);
-        CHECK(openedFile(session.controller).facts().status == FileStatus::StageFailed
-              || openedFile(session.controller).facts().status == FileStatus::OutcomeUncertain);
-        CHECK(readFile(session.repo.path("tracked.txt")) == session.repo.manual);
-        expectUnchanged(session.repo, before, true);
-        CHECK(unmerged(session.repo).contains("tracked.txt"));
-        CHECK(session.controller.feedback()->message().contains(QStringLiteral("unresolved"))
-              || session.controller.selectedFile()->status().contains(QStringLiteral("unresolved"))
-              || session.controller.selectedFile()->status().contains(QStringLiteral("uncertain")));
+    suite.run("staging that Git refuses leaves the written file unresolved", [] {
+        Repository repo;
+        ScopedEnvironment environment(repo.environment);
+        // git add exits non-zero without touching the index.
+        const auto refused = [](const git::Request &) {
+            git::Result result;
+            result.outcome = git::Outcome::ExitFailure;
+            result.mutation = git::Mutation::ObservedUnchanged;
+            result.exitCode = 128;
+            result.diagnostic = QStringLiteral("Git refused to stage the file.");
+            return result;
+        };
+        Application controller{Application::Config{
+            .gitExecutable = gitOnPath(),
+            .recoveryDirectory = newRecoveryDirectory(),
+            .correspondence = {},
+            .sessionGit = test_support::ScriptedGitRunner::runners(git::Operation::StageFile, refused, gitOnPath())}};
+        openController(controller, repo);
+        const auto id = selectTracked(controller);
+        const auto before = repo.snapshot();
+        CHECK(controller.commands()->markResolved(id, revisionOf(openedFile(controller)), true));
+        waitFor(controller, [&] { return !controller.commands()->resolutionBusy(); });
+        const auto &file = openedFile(controller);
+        CHECK(file.writeOutcome() && file.writeOutcome()->outcome == Outcome::Succeeded);
+        CHECK(file.stageOutcome() && file.stageOutcome()->outcome == Outcome::Failed);
+        CHECK_EQ(QString::fromStdString(file.stageOutcome()->detail), QStringLiteral("Git refused to stage the file."));
+        CHECK(file.facts().status == FileStatus::StageFailed && !file.facts().resolved);
+        CHECK(readFile(repo.path("tracked.txt")) == repo.manual);
+        expectUnchanged(repo, before, true);
+        CHECK(unmerged(repo).contains("tracked.txt"));
     });
     suite.run("Mark resolved publishes one unsaved path and leaves the other conflict", [] {
         Session session;

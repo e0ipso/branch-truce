@@ -230,13 +230,12 @@ inline const FileSession &openedFile(Application &controller, const char *path =
     return *selected;
 }
 
-inline QVariant fileRole(Application &controller, const FileSession &file, int role)
+// One role of the file's row in the list the window shows.
+inline QVariant fileRole(const SessionModel &rows, const FileSession &file, int role)
 {
-    auto *model = controller.files();
-    for (int row = 0; row < model->totalFiles(); ++row)
-        if (model->data(model->index(row), SessionModel::FileIdRole).toString().toStdString() == file.id())
-            return model->data(model->index(row), role);
-    throw std::runtime_error("fixture file has no model row");
+    const auto row = rows.rowOf(file.id());
+    if (row < 0) throw std::runtime_error("fixture file has no model row");
+    return rows.data(rows.index(row), role);
 }
 
 // Files whose handoff entry names a blocker.

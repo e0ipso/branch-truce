@@ -90,9 +90,10 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
             CHECK(restored.checkpoint() && restored.checkpoint()->draft == saved);
             CHECK(restored.facts().unsaved && !restored.facts().resolved && restored.facts().needsReview);
             CHECK(!restored.reviewed() && !restored.written() && !restored.staged());
-            CHECK(fileRole(controller, restored, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+            CHECK(fileRole(*controller.files(), restored, SessionModel::RecoveryStateRole)
+                      .value<FileStates::RecoveryState>()
                   == FileStates::RecoveryState::Restored);
-            CHECK(!fileRole(controller, restored, SessionModel::PendingInputRole).toBool());
+            CHECK(!fileRole(*controller.files(), restored, SessionModel::PendingInputRole).toBool());
             CHECK(!controller.store()->hasRecoveryFailures() && !controller.completion()->handoff().clean);
         }
     });
@@ -120,8 +121,9 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         CHECK(restored.current().draft == acknowledged && restored.facts().unsaved);
         CHECK(controller.loader()->detail().contains("Pending input may need repeating"));
         CHECK(!controller.files()->hasPendingRecovery() && !controller.store()->hasRecoveryFailures());
-        CHECK(fileRole(controller, restored, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
-              == FileStates::RecoveryState::Restored);
+        CHECK(
+            fileRole(*controller.files(), restored, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+            == FileStates::RecoveryState::Restored);
     });
     for (const auto &condition : {QString("stale"), QString("corrupt"), QString("missing-payload"),
                                   QString("corrupt-payload"), QString("schema"), QString("locked")}) {
@@ -678,11 +680,12 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
             CHECK(model->hasRecoveryFailure(failed.id()) && !model->hasRecoveryFailure(healthy.id()));
             CHECK(!model->hasPendingRecovery() && !controller.completion()->handoff().clean);
             CHECK(failed.current().draft == recovered && failed.canUndo());
-            CHECK(fileRole(controller, failed, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+            CHECK(fileRole(*controller.files(), failed, SessionModel::RecoveryStateRole)
+                      .value<FileStates::RecoveryState>()
                   == FileStates::RecoveryState::Blocked);
-            CHECK(!fileRole(controller, failed, SessionModel::RecoveryErrorRole).toString().isEmpty());
-            CHECK(!fileRole(controller, failed, SessionModel::PendingInputRole).toBool());
-            CHECK(!fileRole(controller, failed, SessionModel::CanUndoRole).toBool());
+            CHECK(!fileRole(*controller.files(), failed, SessionModel::RecoveryErrorRole).toString().isEmpty());
+            CHECK(!fileRole(*controller.files(), failed, SessionModel::PendingInputRole).toBool());
+            CHECK(!fileRole(*controller.files(), failed, SessionModel::CanUndoRole).toBool());
             const auto id = QString::fromStdString(failed.id());
             CHECK(controller.selection()->select(id) && !controller.selectedFile()->canEdit());
             CHECK(!controller.commands()->editResult(id, QString::number(failed.current().id), 0, 0, "forbidden"));
@@ -716,12 +719,12 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
             CHECK(controller.commands()->redo(healthyId, QString::number(healthy.current().id))
                   && healthy.current().draft == chosen);
             CHECK(controller.commands()->undo(healthyId, QString::number(healthy.current().id)));
-            CHECK(fileRole(controller, healthy, SessionModel::CanUndoRole).toBool());
+            CHECK(fileRole(*controller.files(), healthy, SessionModel::CanUndoRole).toBool());
             const auto repositoryBefore = repo.snapshot();
             checkMutationAdmission(controller, failed, healthy);
             CHECK(repo.snapshot() == repositoryBefore);
             CHECK(model->hasRecoveryFailure(failed.id()) && !model->hasRecoveryFailure(healthy.id()));
-            CHECK(!fileRole(controller, failed, SessionModel::RecoveryErrorRole).toString().isEmpty());
+            CHECK(!fileRole(*controller.files(), failed, SessionModel::RecoveryErrorRole).toString().isEmpty());
         }
     });
     suite.run("earlier recovered drafts retain their decision vocabulary and direct editing", [] {
@@ -815,7 +818,8 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
                     Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                     openController(controller, repo);
                     const auto &restored = openedFile(controller);
-                    const auto diagnostic = fileRole(controller, restored, SessionModel::RecoveryErrorRole).toString();
+                    const auto diagnostic =
+                        fileRole(*controller.files(), restored, SessionModel::RecoveryErrorRole).toString();
                     CHECK(diagnostic.contains("Interrupted " + kind)
                           && diagnostic.contains("uncertain", Qt::CaseInsensitive));
                     CHECK(diagnostic.contains(resultPresent ? "result bytes are present"
@@ -824,7 +828,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
                     CHECK(!restored.facts().resolved && !restored.staged());
                     CHECK(controller.store()->hasRecoveryFailure(restored.id())
                           && !controller.files()->hasPendingRecovery());
-                    CHECK(fileRole(controller, restored, SessionModel::RecoveryStateRole)
+                    CHECK(fileRole(*controller.files(), restored, SessionModel::RecoveryStateRole)
                               .value<FileStates::RecoveryState>()
                           == FileStates::RecoveryState::Blocked);
                     CHECK(controller.store()->editResult(restored.id(), restored.current().id, {{0, 0}, "must inspect"})
