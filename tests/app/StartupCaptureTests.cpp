@@ -218,7 +218,8 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
                 }
                 CHECK(model->replaceDraft(openedFile(controller).id(), 1, {"editable after recovery\n", {}, 0})
                       == Transition::Applied);
-                CHECK(controller.loader()->startupState() == "ready" && repo.snapshot() == before);
+                CHECK(controller.loader()->startupState() == SessionLoader::StartupState::Ready
+                      && repo.snapshot() == before);
             }
         });
     suite.run("merge and rebase captures retain verified sources provenance and the manual launch result", [] {

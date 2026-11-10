@@ -84,7 +84,7 @@ void startup_routes::addLaunchCases(test_support::Suite &suite, const QString &a
     suite.run("a repository without an operation reports no session and no source identities", [&] {
         Repository repo;
         const auto state = repo.launch(application, {repo.root});
-        CHECK(state.value("state") == "no-session" && state.value("files").toArray().isEmpty());
+        CHECK(state.value("state") == "NoSession" && state.value("files").toArray().isEmpty());
         CHECK(!state.value("detail").toString().isEmpty() && state.value("operation").toString().isEmpty());
         CHECK(state.value("stage2").toString().isEmpty() && state.value("stage3").toString().isEmpty());
         // the message says no operation runs, not that one has no files left.
@@ -97,7 +97,7 @@ void startup_routes::addLaunchCases(test_support::Suite &suite, const QString &a
         repo.conflict("merge");
         repo.git({"add", "--", "tracked.txt", "excluded.txt"});
         const auto state = repo.launch(application, {repo.root});
-        CHECK(state.value("state") == "no-session" && state.value("files").toArray().isEmpty());
+        CHECK(state.value("state") == "NoSession" && state.value("files").toArray().isEmpty());
         CHECK(state.value("operation") == "Merge");
         CHECK(state.value("detail").toString()
               == "This operation has no current unmerged files. Return to your Git workflow.");

@@ -388,8 +388,8 @@ QJsonObject inspectReadOnlyPane(Scene &scene, const char *name, const char *head
 
 std::string loaderState(const SessionLoader &loader)
 {
-    return "startup " + loader.startupState().toStdString() + ", " + std::to_string(loader.recoveryChoices().size())
-        + " recovery choices: " + loader.detail().toStdString();
+    return "startup " + QVariant::fromValue(loader.startupState()).toString().toStdString() + ", "
+        + std::to_string(loader.recoveryChoices().size()) + " recovery choices: " + loader.detail().toStdString();
 }
 
 std::unique_ptr<mergetool_fixture::ParentProcess> startMergetool(const Sandbox &sandbox, const Repository &repo,

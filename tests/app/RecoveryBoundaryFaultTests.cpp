@@ -404,7 +404,7 @@ public:
         scoped.emplace(environment);
         controller = std::make_unique<Application>(test_support::windowConfig());
         test_support::openRepository(*controller, root);
-        if (controller->loader()->startupState() != QLatin1String("ready"))
+        if (controller->loader()->startupState() != SessionLoader::StartupState::Ready)
             throw std::runtime_error("controller startup: " + controller->loader()->detail().toStdString());
         CHECK(controller->selection()->select(id));
         auto draft = file().current().draft;

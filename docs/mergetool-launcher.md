@@ -40,8 +40,8 @@ it sends its attach frame, and the session before it reads a connection. The
 session closes a connection that has not sent a complete attach frame within
 5 seconds, and any connection beyond 32 open at once.
 
-When the session cannot listen, the startup state is `ready-without-mergetool`
-instead of `ready`, and the detail starts with "Mergetool attach is
+When the session cannot listen, the startup state is `ReadyWithoutMergetool`
+instead of `Ready`, and the detail starts with "Mergetool attach is
 unavailable:" and the reason. The files stay open in the app. A launcher for
 that worktree exits 1 and Git restores `MERGED`. It reports the unusable
 directory when it cannot keep its inputs there, and otherwise "No Branch Truce

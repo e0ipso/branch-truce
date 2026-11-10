@@ -109,7 +109,7 @@ void openController(Application &controller, const Repository &repo, const QStri
                     bool launcherAlreadyStarted = false)
 {
     startController(controller, repo, preferredFileId);
-    if (controller.loader()->startupState() != "ready")
+    if (controller.loader()->startupState() != SessionLoader::StartupState::Ready)
         throw std::runtime_error("controller startup: " + controller.loader()->detail().toStdString());
     CHECK(controller.mergetoolSession()->listening());
     CHECK(QFileInfo(checkSocketDirectory(repo)).isDir());
@@ -677,7 +677,8 @@ int main(int argc, char **argv)
              controller.feedback()->message());
         CHECK(controller.loader()->chooseRecoverySession(chosen));
         pump([&] { return !controller.loader()->opening(); }, controller.loader()->detail());
-        CHECK(controller.loader()->startupState() == "ready" && controller.loader()->recoveryChoices().isEmpty());
+        CHECK(controller.loader()->startupState() == SessionLoader::StartupState::Ready
+              && controller.loader()->recoveryChoices().isEmpty());
         CHECK(controller.mergetoolSession()->waitingPath() == "tracked.txt");
         const auto id = select(controller, "tracked.txt");
         CHECK(controller.mergetool()->waiting());
@@ -1003,7 +1004,7 @@ int main(int argc, char **argv)
         ScopedEnvironment environment(repo.environment);
         Application controller{test_support::windowConfig()};
         startController(controller, repo);
-        CHECK(controller.loader()->startupState() == QStringLiteral("ready-without-mergetool"));
+        CHECK(controller.loader()->startupState() == SessionLoader::StartupState::ReadyWithoutMergetool);
         CHECK(controller.loader()->detail().startsWith(
             QStringLiteral("Mergetool attach is unavailable: The mergetool socket directory ") + runtime.path()
             + QStringLiteral("/branch-truce is not a directory.")));

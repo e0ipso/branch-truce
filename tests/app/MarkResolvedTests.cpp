@@ -104,7 +104,7 @@ void openController(Application &controller, const Repository &repo)
 {
     const auto before = repo.snapshot();
     test_support::openRepository(controller, repo.root);
-    if (controller.loader()->startupState() != "ready")
+    if (controller.loader()->startupState() != SessionLoader::StartupState::Ready)
         throw std::runtime_error("controller startup: " + controller.loader()->detail().toStdString());
     CHECK(repo.snapshot() == before);
 }
