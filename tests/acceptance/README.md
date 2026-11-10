@@ -69,7 +69,7 @@ Regression journeys outside the PRD table:
 
 Every journey also runs `checkOffline`. It asserts that the journey's guard saw no network command, that the window being checked ran local `rev-parse` and `cat-file` itself, and that no visible text in the scene mentions signing in, logging in, registering, an account, a subscription, a payment or a license key.
 
-PRD examples 4 (whole-file and bulk choices), 11 (crash recovery) and 15 (merge-tool cancellation) are outside this suite's coverage.
+Two journeys cover PRD examples 11 and 15. `a session that ends without the handoff` types into a file, destroys the window without closing it or leaving, as the app ends on a signal, and checks that the next window restores the unsaved draft. `interrupting git mergetool` saves a draft while Git waits on the path, sends SIGINT to the `git mergetool` process group as a terminal's Ctrl+C would, and checks that the waiting state and Leave go away, that Git keeps the conflict and the launch bytes, and that the next window restores the saved draft. Neither kills the test process itself, so a crash that skips every destructor is covered only at the store boundary in `tests/app`. PRD example 4 (whole-file and bulk choices) is outside this suite's coverage.
 
 ## Environment-dependent gaps
 

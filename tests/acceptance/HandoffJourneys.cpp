@@ -10,6 +10,8 @@
 #include <QLockFile>
 #include <QProcess>
 
+#include <csignal>
+
 using namespace branch_truce;
 using test_support::readFile;
 using test_support::settleFor;
@@ -300,6 +302,34 @@ void offlineStartupResumesDraftsAfterClosing(Sandbox &sandbox)
     reopenedWindowRestoresBothDrafts(sandbox, repo, savedText, typedText);
 }
 
+// A window that ends without the handoff, as the app does on SIGTERM or SIGINT, leaves its
+// typed input to the next window.
+void sessionEndedWithoutHandoffRestoresTheDraft(Sandbox &sandbox)
+{
+    Repository repo(GitOperation::Merge, savedAndTypedPaths());
+    const auto launched = repo.snapshot();
+    QString typedText;
+    {
+        Scene scene(sandbox, repo);
+        clickFile(scene, "typed.txt");
+        appendToResult(scene, "typed");
+        typedText = scene.text("resultText");
+        settleFor("the typed input recorded", [&] { return !scene.app().files()->hasPendingRecovery(); });
+        CHECK(scene.app().completion()->outcome().isEmpty());
+        checkOffline(scene);
+    }
+    CHECK(repo.snapshot() == launched);
+    Scene reopened(sandbox, repo);
+    expectContains(reopened.app().loader()->detail(), "Recovered app drafts", "recovery detail");
+    clickFile(reopened, "typed.txt");
+    expectText(reopened.text("resultText"), typedText, "restored unsaved draft");
+    CHECK(!reopened.progress().saved && !reopened.progress().resolved);
+    clickFile(reopened, "saved.txt");
+    expectText(reopened.text("resultText"), QStringLiteral("saved by hand\n"), "untouched file");
+    CHECK(!repo.unmerged("saved.txt").isEmpty() && !repo.unmerged("typed.txt").isEmpty());
+    checkOffline(reopened);
+}
+
 void blockedStartupRestoresTheChosenSession(Sandbox &sandbox)
 {
     Repository repo(GitOperation::Merge, {chosenByHand("shared.txt")});
@@ -468,6 +498,52 @@ void reselectingTheLaunchedPathOffersLeave(Sandbox &sandbox)
     settleFor("leave control gone after leaving", [&] { return !scene.item("leaveMergetool")->isVisible(); });
     checkOffline(scene);
 }
+// An interrupt to the git mergetool process group, as Ctrl+C in its terminal, ends Git and the
+// launcher with a saved draft unresolved. The window drops the waiting state and Leave, Git keeps
+// the conflict and the launch bytes, and the next window restores the saved draft.
+void interruptedMergetoolKeepsTheSavedDraft(Sandbox &sandbox)
+{
+    Repository repo(GitOperation::Merge, {chosenByHand("launched.txt"), chosenByHand("other.txt")});
+    const auto launchBytes = readFile(repo.path("launched.txt"));
+    QString draft;
+    {
+        Scene scene(sandbox, repo);
+        auto &app = scene.app();
+        clickFile(scene, "launched.txt");
+        auto parent = startMergetool(sandbox, repo, {"launched.txt"});
+        waitForGitToLaunch(scene, "launched.txt");
+        settleFor("waiting state on the launched path", [&] {
+            return scene.item("mergetoolHolding")->isVisible() && scene.item("leaveMergetool")->isVisible();
+        });
+        appendToResult(scene, "draft");
+        scene.click("saveDraft");
+        settleFor("saved draft", [&] { return scene.progress().saved; });
+        draft = scene.text("resultText");
+        parent->signalGroup(SIGINT);
+        waitForGitToExit(scene, *parent);
+        CHECK(parent->exitStatus() == QProcess::CrashExit || parent->exitCode() != 0);
+        waitFor(
+            "the window to release the launched path",
+            [&] { return !app.mergetoolSession()->hasWaiter(QByteArrayLiteral("launched.txt")); },
+            mergetoolState(scene));
+        settleFor("waiting state cleared", [&] {
+            return !app.mergetool()->waiting() && !scene.item("mergetoolHolding")->isVisible()
+                && !scene.item("leaveMergetool")->isVisible();
+        });
+        // Git did not receive the draft as a finished result; the window keeps it.
+        CHECK(readFile(repo.path("launched.txt")) == launchBytes);
+        CHECK(!repo.unmerged("launched.txt").isEmpty() && !repo.unmerged("other.txt").isEmpty());
+        expectText(scene.text("resultText"), draft, "draft after the interrupt");
+        CHECK(scene.progress().saved && !scene.progress().resolved);
+        checkOffline(scene);
+    }
+    Scene reopened(sandbox, repo);
+    expectContains(reopened.app().loader()->detail(), "Recovered app drafts", "recovery detail");
+    clickFile(reopened, "launched.txt");
+    expectText(reopened.text("resultText"), draft, "restored saved draft");
+    CHECK(reopened.progress().saved && !reopened.progress().resolved);
+    checkOffline(reopened);
+}
 } // namespace
 
 void addHandoffJourneys(JourneySuite &suite)
@@ -482,12 +558,17 @@ void addHandoffJourneys(JourneySuite &suite)
         newerDraftReturnsToTheStagedResult);
     add("PRD.md:149 offline startup without an account resumes saved and unsaved drafts after closing",
         offlineStartupResumesDraftsAfterClosing);
+    add("PRD.md:147 a session that ends without the handoff, as on a signal, restores its unsaved draft in the next "
+        "window",
+        sessionEndedWithoutHandoffRestoresTheDraft);
     add("a blocked startup lists each recovery session and restores the chosen one in the window",
         blockedStartupRestoresTheChosenSession);
     add("a resolved mergetool handoff drops the waiting text and a path Git has not launched keeps it",
         resolvedHandoffDropsTheWaitingText);
     add("clicking the launched path again after Git attached shows the waiting state and Leave unresolved",
         reselectingTheLaunchedPathOffersLeave);
+    add("PRD.md:155 interrupting git mergetool keeps a saved draft from Git and the next window restores it",
+        interruptedMergetoolKeepsTheSavedDraft);
 }
 
 } // namespace journey
