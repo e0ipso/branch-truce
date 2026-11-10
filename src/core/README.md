@@ -51,8 +51,8 @@ change rebuilds nothing in the engine.
   line endings inside the envelope of ResourceLimits.h, decision orders belong
   to accepted decisions, and commands name registered anchors. Invalid input
   returns a `Transition` or opens the file as unsupported with a
-  `LoadFailure`; exceptions are left for programming errors and
-  `std::bad_alloc`.
+  `LoadFailure`. Invalid launch decisions throw `std::invalid_argument`;
+  editing and preview allocation failures return `Transition::OutOfMemory`.
 - Values are immutable once shared. A `FileSession` is used by one thread at a
   time and may be moved to another thread once, as the load worker does.
   `CorrespondenceMap` and the revisions it belongs to are immutable after they
@@ -63,8 +63,9 @@ change rebuilds nothing in the engine.
   `FileSession::installAlignment`, which keeps it only for the revision it was
   made for. The engine runs no event loop and starts no thread.
 - Work is bounded: no text over the envelope, no alignment over
-  `kMaxAlignmentCells`, and no undo history over `kMaxHistoryBytes`, which
-  counts every revision a publication outcome names.
+  `kMaxAlignmentCells`. History prunes oldest undo entries to
+  `kMaxHistoryEntries` and a `kMaxHistoryBytes` retained text/metadata estimate.
+  Launch, current, redo and publication-held revisions survive byte pressure.
 
 Translate Qt positions, file paths and process results at an adapter boundary
 instead of adding platform dependencies to the engine.

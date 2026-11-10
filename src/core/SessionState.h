@@ -5,6 +5,7 @@
 #include "ConflictMarkers.h"
 #include "Correspondence.h"
 #include "Draft.h"
+#include "EditingCommand.h"
 #include "MarkerResolution.h"
 #include "PublicationState.h"
 #include "RevisionHistory.h"
@@ -18,18 +19,6 @@
 #include <vector>
 
 namespace branch_truce {
-
-// One atomic history entry. Future composition and bulk planners can submit
-// mapped edits and explicit ordered decisions through the same boundary.
-enum class EditingScope { Mapped, WholeFile };
-struct EditingCommand {
-    RevisionId expected = 0;
-    std::vector<ResultAnchor> targets;
-    std::vector<ResultEdit> edits;
-    std::map<std::string, Decision> decisions;
-    EditingScope scope = EditingScope::Mapped;
-    bool operator==(const EditingCommand &) const = default;
-};
 
 // A revision a recovery journal recorded: its id, the id of the revision whose
 // result text it repeats, its draft and its hand-edited anchors and ranges.
@@ -239,7 +228,8 @@ private:
     [[nodiscard]] Transition validateDraft(RevisionId expected, const Draft &draft) const;
     // A fresh revision repeating `revision`'s text, decisions and mapping.
     [[nodiscard]] Revision restored(const Revision &revision) const;
-    [[nodiscard]] Transition validateCommand(const EditingCommand &command, const std::vector<ResultEdit> &edits,
+    [[nodiscard]] Transition validateCommand(const EditingCommand &command,
+                                             const std::vector<const ResultEdit *> &edits,
                                              bool confirmReplacement) const;
     [[nodiscard]] Transition validateTarget(const ResultAnchor &target) const;
     [[nodiscard]] Transition validateEdit(const EditingCommand &command, const ResultEdit &edit,

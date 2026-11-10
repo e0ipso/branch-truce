@@ -8,11 +8,15 @@
 #include <utility>
 
 namespace branch_truce {
-namespace {
-std::size_t textBytes(const Revision &revision) noexcept
+RevisionHistory::Stored::Stored(std::shared_ptr<const Revision> value) noexcept : revision(std::move(value))
 {
-    return revision.draft.text.size() + (revision.correspondence ? revision.correspondence->text().size() : 0);
-}
+    bytes = sizeof(Stored) + sizeof(Revision) + 8 * sizeof(void *) + revision->draft.text.capacity() + 1;
+    for (const auto &[id, decision] : revision->draft.decisions)
+        bytes += sizeof(decltype(revision->draft.decisions)::value_type) + 4 * sizeof(void *) + id.capacity() + 1;
+    if (revision->correspondence) bytes += revision->correspondence->retainedBytes();
+    if (revision->markers)
+        bytes += sizeof(MarkerScan) + revision->markers->blocks.capacity() * sizeof(MarkerRange)
+            + revision->markers->orphans.capacity() * sizeof(MarkerLine);
 }
 
 RevisionHistory::RevisionHistory(Revision launch)
@@ -27,7 +31,7 @@ RevisionHistory::RevisionHistory(Revision launch)
 const Revision *RevisionHistory::find(RevisionId id) const noexcept
 {
     const auto found = revisions_.find(id);
-    return found == revisions_.end() ? nullptr : found->second.get();
+    return found == revisions_.end() ? nullptr : found->second.revision.get();
 }
 
 void RevisionHistory::publish(Revision revision, Step step)
@@ -60,7 +64,7 @@ void RevisionHistory::reopen(const Revision &revision)
     auto found = revisions_.find(revision.id);
     if (found == revisions_.end())
         found = revisions_.emplace(revision.id, std::make_shared<const Revision>(revision)).first;
-    current_ = found->second;
+    current_ = found->second.revision;
     append(revision.id);
     prune();
 }
@@ -77,7 +81,7 @@ void RevisionHistory::replaceCurrent(Revision revision)
 {
     if (revision.id != current_->id) throw std::logic_error("A replacement must keep the current revision id");
     auto stored = std::make_shared<const Revision>(std::move(revision));
-    revisions_.at(stored->id) = stored;
+    revisions_.at(stored->id) = Stored(stored);
     current_ = std::move(stored);
     prune();
 }
@@ -90,22 +94,26 @@ void RevisionHistory::hold(std::vector<RevisionId> ids) noexcept
 
 void RevisionHistory::prune() noexcept
 {
-    const auto reachable = [&](RevisionId id) {
-        return id == launch_ || id == current_->id || std::find(entries_.begin(), entries_.end(), id) != entries_.end()
-            || std::find(held_.begin(), held_.end(), id) != held_.end();
+    for (auto &[id, stored] : revisions_) stored.references = 0;
+    const auto retain = [&](RevisionId id) {
+        if (auto found = revisions_.find(id); found != revisions_.end()) ++found->second.references;
     };
-    const auto total = [&] {
-        std::size_t bytes = 0;
-        for (const auto &[id, revision] : revisions_) bytes += textBytes(*revision);
-        return bytes;
-    };
-    std::erase_if(revisions_, [&](const auto &stored) { return !reachable(stored.first); });
-    // Undo reaches back as far as the size bound allows, never past the cursor.
-    while (cursor_ > 0 && total() > kMaxHistoryBytes) {
-        entries_.erase(entries_.begin());
-        --cursor_;
-        std::erase_if(revisions_, [&](const auto &stored) { return !reachable(stored.first); });
+    retain(launch_);
+    retain(current_->id);
+    for (const auto id : held_) retain(id);
+    for (const auto id : entries_) retain(id);
+    std::size_t bytes = 0;
+    for (const auto &[id, stored] : revisions_)
+        if (stored.references) bytes += stored.bytes;
+    // Remove a prefix once. Counts handle reopened entries that repeat an id.
+    std::size_t dropped = 0;
+    while (dropped < cursor_ && (bytes > kMaxHistoryBytes || entries_.size() - dropped > kMaxHistoryEntries)) {
+        auto &stored = revisions_.find(entries_[dropped++])->second;
+        if (--stored.references == 0) bytes -= stored.bytes;
     }
+    cursor_ -= dropped;
+    entries_.erase(entries_.begin(), entries_.begin() + static_cast<std::ptrdiff_t>(dropped));
+    std::erase_if(revisions_, [](const auto &entry) { return entry.second.references == 0; });
 }
 
 }
