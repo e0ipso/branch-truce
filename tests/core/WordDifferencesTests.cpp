@@ -90,6 +90,31 @@ int main()
         CHECK(stray.left == std::vector<ByteRange>{{1, 2}} && stray.right == std::vector<ByteRange>{{1, 2}});
     });
 
+    suite.run("Unicode symbols stay separate from words, blanks and malformed bytes", [] {
+        // Symbols from BMP and supplementary categories, plus non-Latin punctuation.
+        for (const auto &symbol : {"−", "😀", "😃", "€", "´", "‿", "־", "❨", "❩", "«", "»", "،", "𐄀"}) {
+            for (const auto &neighbor :
+                 {"ab", "café", "éx", "αβ", "аб", "عرب", "漢字", "かな", " \t", "\xc2\xa0", "\xff"}) {
+                const std::string prefix = std::string(neighbor) + "_";
+                const auto left = prefix + symbol + neighbor + "\n";
+                const auto right = prefix + "+" + neighbor + "\n";
+                std::size_t budget = kMaxWordDifferenceCells;
+                const auto found = wordDifferences(left, right, budget);
+                CHECK(found.left
+                      == std::vector<ByteRange>{{prefix.size(), prefix.size() + std::string_view(symbol).size()}});
+                CHECK(found.right == std::vector<ByteRange>{{prefix.size(), prefix.size() + 1}});
+            }
+        }
+        std::size_t budget = kMaxWordDifferenceCells;
+        const auto emoji = wordDifferences("a😀b", "a😃b", budget);
+        CHECK(emoji.left == std::vector<ByteRange>{{1, 5}} && emoji.right == emoji.left);
+        const auto minus = wordDifferences("a−b", "a+b", budget);
+        CHECK(minus.left == std::vector<ByteRange>{{1, 4}} && minus.right == std::vector<ByteRange>{{1, 2}});
+        // Letter and combining-mark changes still decorate the entire word.
+        CHECK(words("café", wordDifferences("café", "cafe", budget).left) == std::vector<std::string>{"café"});
+        CHECK(words("éx", wordDifferences("éx", "èx", budget).left) == std::vector<std::string>{"éx"});
+    });
+
     suite.run("a line over the documented limit gets no word ranges", [] {
         const std::string longLeft(kMaxWordDifferenceLineBytes + 1, 'x');
         const std::string longRight(kMaxWordDifferenceLineBytes + 1, 'y');
