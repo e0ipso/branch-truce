@@ -128,7 +128,7 @@ def application(owned, env, *, app, driver, repo, out, shoot):
         child.close()
         yield client
         client.command('quit')
-        require(process.wait(timeout=10) == 0, 'Application exit failed')
+        require(process.wait_exit(10) == 0, 'Application exit failed')
     except BaseException as error:
         # Keep the actual failing scene even when a semantic/readiness check
         # stops the replay before its normal capture boundary.

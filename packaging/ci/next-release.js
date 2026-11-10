@@ -16,13 +16,13 @@
  * Every path is relative to the checkout it runs in, the current directory:
  * package.json, Git's HEAD and packaging/scripts/native-version.sh.
  *
- * Errors print one line on stderr: usage and configuration errors exit 2,
- * failed checks exit 1.
+ * Diagnostics go to stderr: usage and configuration errors exit 2, failed checks exit 1.
+ * Metadata commands have a 30-second deadline and a 4 MiB combined output limit.
  */
-import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { run } from './metadata-command.js';
 
 const USAGE = 'usage: node packaging/ci/next-release.js [--analyze]';
 
@@ -44,11 +44,12 @@ export async function analyze() {
  * version grammar, accepts VERSION.
  * @param {string} version
  * @param {string} root
- * @returns {boolean}
+ * @param {typeof run} [command]
+ * @returns {Promise<boolean>}
  */
-export function packageable(version, root) {
+export async function packageable(version, root, command = run) {
   try {
-    execFileSync(join(root, 'packaging/scripts/native-version.sh'), ['--style', 'tilde', version], { stdio: 'ignore' });
+    await command(join(root, 'packaging/scripts/native-version.sh'), ['--style', 'tilde', version], { cwd: root, env: process.env });
     return true;
   } catch (error) {
     if (error instanceof Error && 'status' in error && error.status === 2 && 'signal' in error && !error.signal) return false;
@@ -75,10 +76,10 @@ export function packageable(version, root) {
  * revision; a pull request builds packageVersion without publishing. ACCEPTS decides which
  * versions can be packaged. Throws UsageError for an unsupported event and Error otherwise.
  * @param {SelectionInput} input
- * @param {(version: string) => boolean} accepts
- * @returns {Selection}
+ * @param {(version: string) => boolean | Promise<boolean>} accepts
+ * @returns {Promise<Selection>}
  */
-export function select({ event, revision, analyzedRevision, analyzedVersion, packageVersion }, accepts) {
+export async function select({ event, revision, analyzedRevision, analyzedVersion, packageVersion }, accepts) {
   if (event !== 'pull_request' && event !== 'push') throw new UsageError(`Unsupported validation event ${event}`);
   let candidate = '';
   if (event === 'push') {
@@ -88,7 +89,7 @@ export function select({ event, revision, analyzedRevision, analyzedVersion, pac
     candidate = analyzedVersion;
   }
   const version = candidate || packageVersion;
-  if (typeof version !== 'string' || !accepts(version)) throw new Error(`Unsupported native package version ${version}`);
+  if (typeof version !== 'string' || !await accepts(version)) throw new Error(`Unsupported native package version ${version}`);
   return { version, revision, publish: Boolean(candidate) };
 }
 
@@ -96,21 +97,22 @@ export function select({ event, revision, analyzedRevision, analyzedVersion, pac
  * @param {string[]} argv
  * @param {string} root
  * @param {NodeJS.ProcessEnv} env
+ * @param {typeof run} [command]
  */
-async function main(argv, root, env) {
+export async function main(argv, root, env, command = run) {
   if (argv.length === 1 && (argv[0] === '-h' || argv[0] === '--help')) {
     process.stdout.write(`${USAGE}\n`);
   } else if (argv.length === 1 && argv[0] === '--analyze') {
     const version = await analyze();
     if (version) process.stdout.write(`${version}\n`);
   } else if (argv.length === 0) {
-    const selection = select({
+    const selection = await select({
       event: env.BRANCH_TRUCE_CI_EVENT,
-      revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
+      revision: await command('git', ['rev-parse', 'HEAD'], { cwd: root, env }),
       analyzedRevision: env.BRANCH_TRUCE_ANALYZED_REVISION,
       analyzedVersion: env.BRANCH_TRUCE_ANALYZED_VERSION,
       packageVersion: JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version,
-    }, version => packageable(version, root));
+    }, version => packageable(version, root, command));
     process.stdout.write(`${JSON.stringify(selection)}\n`);
   } else {
     throw new UsageError(USAGE);

@@ -4,11 +4,16 @@
 set -euo pipefail
 root=$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)
 required=23.1.3
-case "${1:-}" in -h|--help) echo "Usage: $0 <build-directory-with-compile_commands.json> [jobs]"; exit 0 ;; esac
+usage() { echo "Usage: $0 <build-directory-with-compile_commands.json> [jobs]"; }
+case "$#:${1:-}" in
+    1:-h|1:--help) usage; exit 0 ;;
+    1:*|2:*) ;;
+    *) usage >&2; exit 2 ;;
+esac
 build=${1:-}
 jobs=${2:-2}
 [[ -n "$build" && -f "$build/compile_commands.json" ]] || {
-    echo "Usage: $0 <build-directory-with-compile_commands.json> [jobs]" >&2
+    usage >&2
     exit 2
 }
 [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || { echo "Jobs must be a positive integer." >&2; exit 2; }

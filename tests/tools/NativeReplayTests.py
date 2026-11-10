@@ -1,10 +1,11 @@
 """Fixture integrity, readiness protocol, serialization and resource ownership."""
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
 import io
 import json
 import os
 from pathlib import Path
 import shutil
+import selectors
 import signal
 import socket
 import struct
@@ -24,7 +25,7 @@ import capture_profile
 from ledger import assemble
 from fixture import PATHS, GitError, git, make_fixture, png, reference_bytes, unmerged
 import reports
-from processes import OutputLimitError, OwnedResources, run
+from processes import OutputLimitError, OwnedProcess, OwnedResources, run, stop_group
 from collection import replay_lock
 from desktop import NativeClient, application, await_compositor, private_environment, write_kdeglobals
 from scene import item, verify_line_cue
@@ -162,16 +163,64 @@ class FixtureTests(PrivateBaseTestCase):
 
 
 class ProcessTests(PrivateBaseTestCase):
+    def test_owned_identity_is_observed_then_signalled_then_reaped_once(self):
+        raw = Mock(pid=43210, returncode=None)
+        exited = Mock(si_code=os.CLD_EXITED, si_status=17)
+        events = []
+        def reap():
+            events.append('reap')
+            raw.returncode = 17
+        raw.wait.side_effect = reap
+        with patch('processes.subprocess.Popen', return_value=raw), \
+             patch('processes.os.waitid', return_value=exited) as observe, \
+             patch('processes.os.killpg', side_effect=lambda pid, sig: events.append((pid, sig))):
+            process = OwnedProcess(['command'])
+            self.assertEqual((process.observe(), process.wait_exit(0), process.returncode), (17, 17, None))
+            raw.poll.assert_not_called()
+            raw.wait.assert_not_called()
+            stop_group(process)
+            stop_group(process)
+        self.assertEqual(events, [(43210, signal.SIGTERM), (43210, signal.SIGKILL), 'reap'])
+        raw.wait.assert_called_once_with()
+        self.assertTrue(all(call.args == (os.P_PID, 43210, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                            for call in observe.call_args_list))
+
+    def test_lost_identity_and_failed_signal_never_reap_or_claim_cleanup(self):
+        raw = Mock(pid=43210, returncode=None)
+        for error in (ChildProcessError('already reaped'), PermissionError('signal refused')):
+            with self.subTest(error=error), patch('processes.subprocess.Popen', return_value=raw):
+                process = OwnedProcess(['command'])
+                with patch('processes.os.waitid', side_effect=error if isinstance(error, ChildProcessError) else None), \
+                     patch('processes.os.killpg', side_effect=error) as send, self.assertRaises(type(error)):
+                    stop_group(process)
+                if isinstance(error, ChildProcessError):
+                    send.assert_not_called()
+                raw.wait.assert_not_called()
+                self.assertIsNone(process.returncode)
+
+    def test_run_keeps_the_leader_reserved_through_both_group_signals(self):
+        original = os.killpg
+        signals = []
+        def send(pid, sig):
+            # This fails deterministically with ECHILD if run or cleanup already reaped.
+            os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            signals.append(sig)
+            original(pid, sig)
+        with patch('processes.os.killpg', side_effect=send):
+            self.assertEqual(run([sys.executable, '-c', 'pass']).returncode, 0)
+        self.assertEqual(signals, [signal.SIGTERM, signal.SIGKILL])
+
     def test_capture_preserves_bytes_status_and_stderr(self):
         result = run([sys.executable, '-c', 'import sys; print("€"); print("diagnostic", file=sys.stderr); sys.exit(17)'],
                      env=dict(os.environ))
         self.assertEqual((result.returncode, result.stdout, result.stderr), (17, '€\n'.encode(), b'diagnostic\n'))
 
     def test_timeout_and_output_limits_are_bounded(self):
-        with self.assertRaises(subprocess.TimeoutExpired) as failure:
-            run([sys.executable, '-c', 'import sys,time; print("before timeout", file=sys.stderr, flush=True); time.sleep(60)'],
-                env=dict(os.environ), timeout=0.2)
-        self.assertEqual(failure.exception.stderr, b'before timeout\n')
+        for close in ('', 'os.close(1); os.close(2);'):
+            with self.subTest(close=close), self.assertRaises(subprocess.TimeoutExpired) as failure:
+                run([sys.executable, '-c', 'import os,sys,time; print("before timeout", file=sys.stderr, flush=True); '
+                     + close + 'time.sleep(60)'], env=dict(os.environ), timeout=0.2)
+            self.assertEqual(failure.exception.stderr, b'before timeout\n')
         with self.assertRaises(OutputLimitError):
             run([sys.executable, '-c', 'import os; os.write(1, b"x" * 65536)'], env=dict(os.environ), max_output=1024)
 
@@ -195,7 +244,7 @@ class ProcessTests(PrivateBaseTestCase):
 class ResourceTests(PrivateBaseTestCase):
     def test_nested_owner_finishes_cleanup_before_outer_force_termination(self):
         script = '''
-import json, os, signal, sys
+import json, os, selectors, signal, sys
 from pathlib import Path
 import processes
 from processes import OwnedResources, interrupt, stop_group
@@ -205,9 +254,12 @@ with OwnedResources(base_dir=Path(sys.argv[1])) as owned:
     children = []
     for index in range(2):
         process, _ = owned.spawn([sys.executable, '-c',
-            'import signal; signal.signal(signal.SIGTERM, signal.SIG_IGN); print("ready", flush=True); signal.pause()'],
+            'import signal; signal.signal(signal.SIGTERM, signal.SIG_IGN); signal.alarm(15); print("ready", flush=True); signal.pause()'],
             env=dict(os.environ), log=owned.root / str(index), pipe=True)
-        assert process.stdout.readline() == b'ready\\n'
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            assert selector.select(5), 'nested child did not become ready'
+            assert os.read(process.stdout.fileno(), 128) == b'ready\\n'
         children.append(process.pid)
     Path(sys.argv[2]).write_text(json.dumps(dict(root=str(owned.root), pids=children)))
     os.write(1, b'exceed')
@@ -215,22 +267,14 @@ with OwnedResources(base_dir=Path(sys.argv[1])) as owned:
 '''
         ledger = self.base / 'owned.json'
         env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2] / 'tools/native-replay'))
-        try:
-            with self.assertRaises(OutputLimitError):
-                run([sys.executable, '-B', '-c', script, str(self.base), str(ledger)],
-                    env=env, timeout=30, max_output=1, cleanup_grace=5)
-            owned = json.loads(ledger.read_text())
-            self.assertFalse(Path(owned['root']).exists())
-            for pid in owned['pids']:
-                with self.assertRaises(ProcessLookupError):
-                    os.kill(pid, 0)
-        finally:
-            if ledger.exists():
-                for pid in json.loads(ledger.read_text())['pids']:
-                    try:
-                        os.killpg(pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+        with self.assertRaises(OutputLimitError):
+            run([sys.executable, '-B', '-c', script, str(self.base), str(ledger)],
+                env=env, timeout=30, max_output=1, cleanup_grace=5)
+        owned = json.loads(ledger.read_text())
+        self.assertFalse(Path(owned['root']).exists())
+        for pid in owned['pids']:
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
 
     def test_exited_leader_does_not_hide_a_surviving_child(self):
         unrelated = subprocess.Popen([sys.executable, '-c', 'import signal; signal.pause()'])
@@ -241,11 +285,33 @@ with OwnedResources(base_dir=Path(sys.argv[1])) as owned:
                 'signal.signal(signal.SIGTERM, signal.SIG_IGN) if child == 0 else None; '
                 'os._exit(0) if child else (print("child ready", flush=True), signal.pause())'],
                 env=dict(os.environ), log=owned.root / 'log', pipe=True)
-            self.assertEqual(process.stdout.readline(), b'child ready\n')
-            self.assertEqual(process.wait(timeout=5), 0)
+            with selectors.DefaultSelector() as selector:
+                selector.register(process.stdout, selectors.EVENT_READ)
+                self.assertTrue(selector.select(5), 'child did not become ready')
+                self.assertEqual(os.read(process.stdout.fileno(), 128), b'child ready\n')
+            self.assertEqual(process.wait_exit(5), 0)
+            self.assertIsNone(process.returncode)
+            subprocess.run([sys.executable, '-c', 'pass'], check=True, timeout=5)
+            self.assertEqual(os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT).si_status, 0)
             owned.start_reader(lambda: process.stdout.read())
         self.assertIsNone(unrelated.poll())
         self.assertFalse(any(thread.is_alive() for thread in owned.threads))
+
+    def test_ignored_termination_is_forced_and_observation_does_not_reap(self):
+        with self.owned() as owned:
+            process, _ = owned.spawn([sys.executable, '-c',
+                'import signal; signal.signal(signal.SIGTERM, signal.SIG_IGN); print("ready", flush=True); signal.pause()'],
+                env=dict(os.environ), log=owned.root / 'log', pipe=True)
+            with selectors.DefaultSelector() as selector:
+                selector.register(process.stdout, selectors.EVENT_READ)
+                self.assertTrue(selector.select(5), 'leader did not become ready')
+                self.assertEqual(os.read(process.stdout.fileno(), 128), b'ready\n')
+            self.assertIsNone(process.observe())
+            with self.assertRaises(subprocess.TimeoutExpired):
+                process.wait_exit(0)
+            stop_group(process, grace=0.01)
+            self.assertEqual(process.returncode, -signal.SIGKILL)
+        self.assertFalse(owned.root.exists())
 
     def test_private_directory_lives_under_the_given_base(self):
         with self.owned() as owned:
@@ -293,7 +359,7 @@ with OwnedResources(base_dir=Path(sys.argv[1])) as owned:
             with patch('processes.stop_group', side_effect=stop), self.assertRaisesRegex(RuntimeError, 'stop refused'):
                 owned.close()
             self.assertIsNotNone(first.returncode)
-            self.assertEqual((second.poll(), reader.is_alive(), stream.closed, owned.root.exists()),
+            self.assertEqual((second.observe(), reader.is_alive(), stream.closed, owned.root.exists()),
                              (None, False, False, True))
             evidence = json.loads(receipt.read_text())
             self.assertEqual((evidence['owned_processes_reaped'], evidence['private_root_removed']), (False, False))
@@ -398,6 +464,56 @@ class ReportTests(PrivateBaseTestCase):
             reports.write_text(path, 'next\n')
         self.assertEqual(path.read_text(), 'previous\n')
         self.assertEqual(sorted(p.name for p in self.base.iterdir()), ['ci-context.json'])
+
+
+class CiCommandTests(PrivateBaseTestCase):
+    def test_relative_paths_are_normalized_before_any_child_changes_directory(self):
+        import ci
+        original = Path(__file__).resolve().parents[2]
+        source, build, output = (self.base / name for name in ('source', 'build', 'output'))
+        for relative in ('tools/native-replay/capture-profile.json', 'tools/native-replay/reference-contract.json',
+                         'tools/native-replay/reference/provenance.json', 'tools/native-replay/fidelity-ledger.json'):
+            destination = source / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(original / relative, destination)
+        app = build / 'src/app/branch-truce'
+        app.parent.mkdir(parents=True)
+        app.write_bytes(b'fake executable; never launched')
+        calls = []
+        def invoke(argv, **options):
+            calls.append((argv, options))
+            return subprocess.CompletedProcess(argv, 0 if argv[0] == 'git' else 17, b'fixture-head\n', b'')
+        cwd = Path.cwd()
+        try:
+            os.chdir(self.base)
+            with patch.object(sys, 'argv', ['ci.py', '--source', 'source', '--build', 'build', '--output', 'output']), \
+                 patch('ci.run', side_effect=invoke), patch('ci.assemble', return_value={}), redirect_stdout(io.StringIO()):
+                self.assertEqual(ci.main(), 1)
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(calls[0][0], ['git', '-C', str(source), 'rev-parse', 'HEAD'])
+        self.assertEqual(len(calls), 3, 'a failed capture must not suppress the other height')
+        for argv, options in calls[1:]:
+            self.assertEqual((argv[:2], options['cwd'], options['cleanup_grace']),
+                             ([sys.executable, str(source / 'tools/native-replay/replay.py')], source, 60))
+            for name, expected in (('source', source), ('build', build)):
+                self.assertEqual(argv[argv.index('--' + name) + 1], str(expected))
+            self.assertTrue(Path(argv[argv.index('--output') + 1]).is_relative_to(output))
+        context = json.loads((output / 'ci-context.json').read_text())
+        self.assertEqual((context['source'], context['build']), (str(source), str(build)))
+        self.assertEqual([check['exit_code'] for check in context['checks']], [17, 17])
+
+    def test_help_and_invalid_arguments_do_no_work(self):
+        import ci
+        for arguments, status in [(['--help'], 0), (['--source', 'missing', '--build', 'missing'], 2),
+                                  (['--unknown'], 2)]:
+            with self.subTest(arguments=arguments), patch.object(sys, 'argv', ['ci.py', *arguments]), \
+                 patch('ci.run') as invoke, patch('ci.shutil.copy2') as copy, \
+                 redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as exit:
+                ci.main()
+            self.assertEqual(exit.exception.code, status)
+            invoke.assert_not_called()
+            copy.assert_not_called()
 
 
 class CaptureProfileTests(unittest.TestCase):

@@ -23,28 +23,65 @@ class OutputLimitError(subprocess.SubprocessError):
         self.stdout, self.stderr = map(bytes, output)
 
 
+class OwnedProcess:
+    """Single-threaded session owner. Exit observation never releases the leader's identity.
+
+    Keep the Popen private: its poll/wait/context manager/destructor can reap. Only stop_group
+    reaps, after the final group signal. A retained owner also keeps Popen out of its global
+    destructor cleanup list. Callers must not use waitpid or change SIGCHLD handling.
+    """
+    def __init__(self, argv, **kwargs):
+        self._process = subprocess.Popen(argv, start_new_session=True, **kwargs)
+        self.pid = self._process.pid
+        self.stdout, self.stderr = self._process.stdout, self._process.stderr
+
+    @property
+    def returncode(self):
+        return self._process.returncode
+
+    def observe(self):
+        if self.returncode is not None:
+            return self.returncode
+        status = os.waitid(os.P_PID, self.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        if status is not None:
+            return status.si_status if status.si_code == os.CLD_EXITED else -status.si_status
+        return None
+
+    def wait_exit(self, timeout):
+        deadline = time.monotonic() + timeout
+        while (status := self.observe()) is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(self._process.args, timeout)
+            time.sleep(min(0.01, remaining))
+        return status
+
+
 def stop_group(process, grace=5):
-    """Stop the session created for PROCESS even after its leader has exited; reap the leader."""
+    """Signal only a reserved owned identity; kill descendants before reaping exactly once."""
+    if process.returncode is not None:
+        return
     def send(sig):
+        process.observe()  # ECHILD means ownership was broken: never signal a stale number.
         try:
             os.killpg(process.pid, sig)
         except ProcessLookupError:
             pass
     send(signal.SIGTERM)
     try:
-        process.wait(timeout=grace)
+        process.wait_exit(grace)
     except subprocess.TimeoutExpired:
         pass
-    finally:
-        send(signal.SIGKILL)
-    process.wait(timeout=5)
+    send(signal.SIGKILL)
+    process.wait_exit(5)
+    process._process.wait()  # No more signals after this releases the identity.
 
 
 def run(argv, *, env=None, cwd=None, timeout=30, max_output=4 * 1024 * 1024,
         check=False, log=None, cleanup_grace=5):
     """Capture bounded output; allow a supervising child its cleanup_grace before forced termination."""
-    process = subprocess.Popen(argv, env=env, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, start_new_session=True)
+    process = OwnedProcess(argv, env=env, cwd=cwd, stdin=subprocess.DEVNULL,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     output = [bytearray(), bytearray()]
     deadline = time.monotonic() + timeout
     try:
@@ -64,10 +101,10 @@ def run(argv, *, env=None, cwd=None, timeout=30, max_output=4 * 1024 * 1024,
                         raise OutputLimitError(max_output, output)
                     output[key.data].extend(chunk)
             try:
-                process.wait(timeout=max(0, deadline - time.monotonic()))
+                status = process.wait_exit(max(0, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
                 raise subprocess.TimeoutExpired(argv, timeout, *map(bytes, output)) from None
-        result = subprocess.CompletedProcess(argv, process.returncode, *map(bytes, output))
+        result = subprocess.CompletedProcess(argv, status, *map(bytes, output))
         if check:
             result.check_returncode()
         return result
@@ -98,10 +135,9 @@ class OwnedResources:
 
     def spawn(self, argv, *, env, log, pass_fds=(), pipe=False):
         stream = self.streams.enter_context(Path(log).open('wb'))
-        process = subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL,
-                                   stdout=subprocess.PIPE if pipe else stream,
-                                   stderr=subprocess.STDOUT, start_new_session=True,
-                                   pass_fds=pass_fds)
+        process = OwnedProcess(argv, env=env, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE if pipe else stream,
+                               stderr=subprocess.STDOUT, pass_fds=pass_fds)
         self.processes.append(process)
         if process.stdout:
             self.streams.enter_context(process.stdout)

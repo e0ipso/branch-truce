@@ -37,7 +37,15 @@ deb_at_least() {
 rpm_toolchain() { rpm -q gcc-c++ cmake extra-cmake-modules qt6-qtdeclarative rpm rpm-build redhat-rpm-config; }
 rpm_package_of() { printf '%s\n' "$1"; }
 rpm_installed() { rpm -q --qf '%{VERSION}' "$1" 2>/dev/null; }
-rpm_at_least() { [ "$(OLD="$1" NEW="$2" rpm --eval '%{lua:print(rpm.vercmp(os.getenv("OLD"), os.getenv("NEW")))}')" != -1 ]; }
+rpm_at_least() {
+    local order
+    order=$(OLD="$1" NEW="$2" rpm --eval '%{lua:print(rpm.vercmp(os.getenv("OLD"), os.getenv("NEW")))}') || return 1
+    case "$order" in
+        0|1) return 0 ;;
+        -1) return 1 ;;
+        *) echo "error: invalid RPM comparison: $order" >&2; return 1 ;;
+    esac
+}
 arch_toolchain() { pacman -Q gcc cmake extra-cmake-modules qt6-declarative pacman && makepkg --version; }
 arch_package_of() { printf '%s\n' "$1"; }
 arch_installed() { { pacman -Q "$1" 2>/dev/null || true; } | awk '{ print $2 }'; }

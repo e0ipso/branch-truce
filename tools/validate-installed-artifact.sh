@@ -120,11 +120,16 @@ host_main() {
     inside_command=("$engine" exec "$container" /bin/bash /validate/installed-checks.sh)
 
     local report=$output/$name.validation partial=$output/.$name.validation.partial
-    run_steps "$package" "$name" "$socket" "$output/$name" > >(tee -- "$partial") 2>&1
-    wait "$!"
-    ((${failures:-0} == 0)) || echo "Validation failed: $failures failed checks" | tee -a -- "$partial"
+    local report_status=0 writer
+    run_steps "$package" "$name" "$socket" "$output/$name" > >(tee -- "$partial") 2>&1 || report_status=$?
+    writer=$!
+    wait "$writer" || { echo 'error: report writer failed; partial evidence retained' >&2; return 1; }
+    ((report_status == 0)) || { echo 'error: report generation failed' >&2; return 1; }
+    if ((failures != 0)); then
+        echo "Validation failed: $failures failed checks" | tee -a -- "$partial" || return 1
+    fi
     mv -- "$partial" "$report" || return 1
-    echo "Report: $report"
+    echo "Report: $report" || return 1
     ((${failures:-0} == 0))
 }
 
@@ -148,14 +153,15 @@ inside() {
 # host's Wayland socket, or empty without --wayland; screenshots and the AT-SPI
 # tree are written to PREFIX-LABEL.png and PREFIX.atspi.
 run_steps() {
-    local package=$1 name=$2 socket=$3 prefix=$4 step
+    local package=$1 name=$2 socket=$3 prefix=$4 step digest kernel
+    digest=$(sha256sum < "$package") && kernel=$(uname -r) || return 1
     printf '== Artifact\nfile %s.deb\nsha256 %s\nhost kernel %s\n' "$name" \
-        "$(sha256sum < "$package" | cut -d' ' -f1)" "$(uname -r)"
+        "${digest%% *}" "$kernel" || return 1
     # Nothing else can run without the package, so the result follows at once.
     if inside install "/artifact/$name.deb"; then
         for step in closure layout cli desktop mergetool-leave; do inside "$step"; done
         if [[ -z "$socket" ]]; then
-            printf '\n== Wayland session\nSKIP not requested; Wayland, scaling, theme, input and AT-SPI not exercised\n'
+            printf '\n== Wayland session\nSKIP not requested; Wayland, scaling, theme, input and AT-SPI not exercised\n' || return 1
         else
             wayland_steps "$socket" "$prefix"
         fi
