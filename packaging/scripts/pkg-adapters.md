@@ -12,7 +12,7 @@ no shell options, no global variables, no commands. Names that start with
 Every adapter defines every function, and the functions behave the same in
 every family. [`tests/packaging/PackageAdapters.sh`](../../tests/packaging/PackageAdapters.sh)
 runs one contract suite against all three. A new family needs a new adapter,
-a `package-<family>.sh` builder, its recipe, a `formats.tsv` row, a
+a `build-<family>.sh` builder, its recipe, a `formats.tsv` row, a
 `minimum-versions.tsv` column and its version functions in `../ci/baseline.sh`.
 
 Unless a function says otherwise, it prints its answer on stdout, prints

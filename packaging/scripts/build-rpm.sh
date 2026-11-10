@@ -2,7 +2,7 @@
 # Builds the RPM of a format with rpmbuild. Run it through package-release.sh,
 # inside the format's build image:
 #
-#   package-rpm.sh FORMAT VERSION ABSOLUTE-OUTPUT-DIR
+#   build-rpm.sh FORMAT VERSION ABSOLUTE-OUTPUT-DIR
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd -- "$here/../.." && pwd)

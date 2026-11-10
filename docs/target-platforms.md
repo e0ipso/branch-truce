@@ -209,7 +209,7 @@ spec's initial candidate. Flatpak would need its own design for Git access.
   `BUILD_TESTING=OFF` and `BRANCH_TRUCE_WARNINGS_AS_ERRORS=ON`; tests run
   from development builds and in CI. `control` declares `debhelper-compat`,
   so there is no `compat` file.
-- `packaging/scripts/package-deb.sh` passes the release version to `rules`
+- `packaging/scripts/build-deb.sh` passes the release version to `rules`
   as `BRANCH_TRUCE_VERSION` and writes `debian/changelog` with the native
   version of `packaging/scripts/native-version.sh` and the build image's
   release codename as the distribution.

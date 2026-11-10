@@ -33,7 +33,7 @@ expect_failure 'usage:' bash "$root/packaging/scripts/package-info.sh" --format 
 cp "$root/packaging/formats.tsv" "$work/repo/packaging/"
 for format in kubuntu-deb fedora-rpm arch-pkg; do
     case "$format" in kubuntu-deb) family=deb ;; fedora-rpm) family=rpm ;; arch-pkg) family=arch ;; esac
-    cat > "$work/repo/packaging/scripts/package-$family.sh" <<'STUB'
+    cat > "$work/repo/packaging/scripts/build-$family.sh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$@" > "$NATIVE_DISPATCH_LOG"
@@ -41,7 +41,7 @@ printf '%s\n' "$@" > "$NATIVE_DISPATCH_LOG"
 touch "$3/native-result"
 echo "$3/native-result"
 STUB
-    chmod +x "$work/repo/packaging/scripts/package-$family.sh"
+    chmod +x "$work/repo/packaging/scripts/build-$family.sh"
     export NATIVE_DISPATCH_LOG="$work/dispatch"
     [ "$(bash "$work/repo/packaging/scripts/package-release.sh" --format "$format" --version 1.2.3 --output "$work/out")" = "$work/out/native-result" ] \
         || { echo "FAIL: $format dispatch output" >&2; exit 1; }

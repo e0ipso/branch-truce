@@ -2,7 +2,7 @@
 # Builds the DEB of a format with dpkg-buildpackage. Run it through
 # package-release.sh, inside the format's build image:
 #
-#   package-deb.sh FORMAT VERSION ABSOLUTE-OUTPUT-DIR
+#   build-deb.sh FORMAT VERSION ABSOLUTE-OUTPUT-DIR
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd -- "$here/../.." && pwd)

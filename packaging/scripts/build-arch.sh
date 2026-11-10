@@ -2,7 +2,7 @@
 # Builds the Arch package of a format with makepkg. Run it through
 # package-release.sh, inside the format's build image:
 #
-#   package-arch.sh FORMAT VERSION ABSOLUTE-OUTPUT-DIR
+#   build-arch.sh FORMAT VERSION ABSOLUTE-OUTPUT-DIR
 #
 # Root callers delegate makepkg to the image's unprivileged builder account.
 set -euo pipefail

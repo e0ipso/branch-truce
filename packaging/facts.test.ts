@@ -31,7 +31,7 @@ test('formats.tsv has complete rows whose family scripts and Dockerfiles exist',
     assert.ok(Object.values(format).every((value) => value), `${format.id} has every column`);
     assert.ok(['tilde', 'plain'].includes(format.version_style!), `${format.id} version style`);
     assert.ok(['0', '1'].includes(format.native_fidelity!), `${format.id} native_fidelity`);
-    for (const path of [`packaging/scripts/package-${format.family}.sh`, `packaging/scripts/pkg-${format.family}.sh`,
+    for (const path of [`packaging/scripts/build-${format.family}.sh`, `packaging/scripts/pkg-${format.family}.sh`,
       `packaging/${format.dockerfile}`]) {
       assert.doesNotThrow(() => read(path), `${format.id} needs ${path}`);
     }
