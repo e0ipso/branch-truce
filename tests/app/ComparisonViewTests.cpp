@@ -7,7 +7,7 @@
 #include "fixtures/GitOnPath.h"
 #include "fixtures/GuiState.h"
 #include "fixtures/QuickScene.h"
-#include "fixtures/RecoveryFaults.h"
+#include "fixtures/SyncFaults.h"
 #include "fixtures/WarningCapture.h"
 #include "recovery/RecoveryRestore.h"
 #include "storage/TextFormat.h"
@@ -162,7 +162,12 @@ public:
         CHECK(!recovered->facts().resolved && !controller.files()->hasPendingRecovery());
     }
 
-    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+    // The recovery store syncs through this, so a case can fail one sync.
+    std::shared_ptr<test_support::SyncFaults> faults = std::make_shared<test_support::SyncFaults>();
+    Application controller{Application::Config{.gitExecutable = gitOnPath(),
+                                               .recoveryDirectory = newRecoveryDirectory(),
+                                               .correspondence = {},
+                                               .files = faults}};
     QQmlApplicationEngine engine;
     QQuickWindow *window = nullptr;
 };
@@ -1261,9 +1266,9 @@ public:
             const auto original = fixture.text();
             fixture.select(0, 0);
             {
-                recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+                const test_support::ArmedFault fault(*fixture.faults, test_support::SyncFaults::Point::JournalSync);
                 fixture.key(Qt::Key_A, Qt::NoModifier, "a");
-                CHECK(recovery_faults::failures == 1);
+                CHECK_EQ(fixture.faults->failures.load(), 1);
             }
             settle([&] { return fixture.controller.files()->hasPendingRecovery(); });
             const std::function<QQuickItem *(QQuickItem *)> rowFor = [&](QQuickItem *item) -> QQuickItem * {
@@ -1837,7 +1842,7 @@ public:
                                                             "retry me\n"));
             const auto edited = fixture.file().current().draft;
             {
-                recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+                const test_support::ArmedFault fault(*fixture.faults, test_support::SyncFaults::Point::JournalSync);
                 fixture.click("saveDraft");
             }
             settle([&] {
@@ -3622,9 +3627,9 @@ public:
             settle([&] { return fixture.controller.selectedFile()->unsaved(); });
             auto *discardButton = test_support::fileToolbarControl(fixture.window, "discardUnsaved");
             {
-                recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+                const test_support::ArmedFault fault(*fixture.faults, test_support::SyncFaults::Point::JournalSync);
                 clickItem(fixture, discardButton);
-                CHECK(recovery_faults::failures == 1);
+                CHECK_EQ(fixture.faults->failures.load(), 1);
             }
             settle([&] { return fixture.controller.files()->hasPendingRecovery(); });
             const auto message = fixture.controller.feedback()->message();

@@ -58,19 +58,16 @@ set_tests_properties(lifecycle.hook-installer PROPERTIES TIMEOUT 30)
 set(private_xdg "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/with-private-xdg.sh")
 # One test executable from one source file, registered as one CTest entry with the shared defaults:
 # a 60 s TIMEOUT, the LABELS "unit", and exit status 77 reported as skipped. LIBS are the libraries
-# under test, WRAP the symbols the executable replaces at link time, DEPENDS targets it runs and ARGS
-# the arguments after the executable. PRIVATE_XDG runs it through with-private-xdg.sh. WILL_FAIL
-# marks a case that documents a known defect, so CTest reports it once it starts to pass.
+# under test, DEPENDS targets it runs and ARGS the arguments after the executable. Faults go in
+# through the product's seams, such as storage::FileSystem. PRIVATE_XDG runs it through
+# with-private-xdg.sh. WILL_FAIL marks a case that documents a known defect, so CTest reports it
+# once it starts to pass.
 function(branch_truce_add_unit_test name source)
-    cmake_parse_arguments(PARSE_ARGV 2 unit "PRIVATE_XDG;WILL_FAIL" "TIMEOUT" "LIBS;WRAP;DEPENDS;ARGS;LABELS")
+    cmake_parse_arguments(PARSE_ARGV 2 unit "PRIVATE_XDG;WILL_FAIL" "TIMEOUT" "LIBS;DEPENDS;ARGS;LABELS")
     string(REGEX REPLACE "[.-]" "_" target "branch_truce_${name}_tests")
     add_executable(${target} ${source})
     target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(${target} PRIVATE ${unit_LIBS} branch_truce_build_options)
-    if(unit_WRAP)
-        list(JOIN unit_WRAP ",--wrap=" wrapped)
-        target_link_options(${target} PRIVATE "LINKER:--wrap=${wrapped}")
-    endif()
     if(unit_DEPENDS)
         add_dependencies(${target} ${unit_DEPENDS})
     endif()
@@ -149,7 +146,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # The app suites build sessions whose default recovery store, mergetool socket and Qt settings
     # live under the XDG directories, so every one runs through with-private-xdg.sh.
     branch_truce_add_unit_test(app.session-model app/SessionModelTests.cpp LIBS branch_truce_controller
-        WRAP fsync PRIVATE_XDG TIMEOUT 120 LABELS app)
+        PRIVATE_XDG TIMEOUT 120 LABELS app)
     branch_truce_add_unit_test(app.text-change app/TextChangeTests.cpp LIBS branch_truce_controller
         PRIVATE_XDG LABELS app)
     branch_truce_add_unit_test(app.navigation-targets app/NavigationTargetsTests.cpp LIBS branch_truce_controller
@@ -166,7 +163,6 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_include_directories(branch_truce_comparison_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_comparison_tests PRIVATE branch_truce_controller branch_truce_uiplugin
         Qt6::Widgets Qt6::QuickControls2 Qt6::Network Qt6::Test Qt6::QuickTest branch_truce_build_options)
-    target_link_options(branch_truce_comparison_tests PRIVATE "LINKER:--wrap=fsync")
     # The executable takes "scenes" or "boundary"; with no argument it runs both groups.
     # "display" reruns the result viewport cases on a real display and is not a ctest entry:
     #   QT_QPA_PLATFORM=wayland tests/with-private-xdg.sh build/desktop/tests/branch_truce_comparison_tests display
@@ -264,10 +260,6 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_executable(branch_truce_startup_route_tests app/StartupRouteTests.cpp)
     target_include_directories(branch_truce_startup_route_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_startup_route_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    target_link_options(branch_truce_startup_route_tests PRIVATE "LINKER:--wrap=fsync")
-    # Record the thread of every recovery store read, which every replay starts with.
-    target_link_options(branch_truce_startup_route_tests PRIVATE
-        "LINKER:--wrap=_ZNK12branch_truce7storage13RecoveryStore4readEv")
     add_dependencies(branch_truce_startup_route_tests branch-truce)
     add_test(NAME app.startup-routes COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_startup_route_tests> $<TARGET_FILE:branch-truce>)
     # The timeout must be at least twice the slowest measured run.

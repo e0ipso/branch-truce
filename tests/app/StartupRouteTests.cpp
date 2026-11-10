@@ -5,8 +5,8 @@
 #include "app/Translations.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/GitOnPath.h"
-#include "fixtures/RecoveryFaults.h"
 #include "fixtures/RecoveryJournal.h"
+#include "fixtures/SyncFaults.h"
 #include "mergetool/MergetoolProtocol.h"
 #include "recovery/RecoveryRestore.h"
 #include <QCoreApplication>
@@ -53,38 +53,40 @@ public:
     mutable std::atomic_int failures = 0;
 };
 
-// Every recovery replay starts with RecoveryStore::read, so recording the
-// thread of each read records the thread of each replay.
-namespace store_reads {
-std::mutex mutex;
-bool recording = false;
-std::vector<std::pair<QString, QThread *>> reads;
-void start()
-{
-    const std::lock_guard lock(mutex);
-    reads.clear();
-    recording = true;
-}
-std::vector<std::pair<QString, QThread *>> stop()
-{
-    const std::lock_guard lock(mutex);
-    recording = false;
-    return std::exchange(reads, {});
-}
-}
-
-#define STORE_READ "_ZNK12branch_truce7storage13RecoveryStore4readEv"
-storage::RecoveryRead realRead(const storage::RecoveryStore *store) asm("__real_" STORE_READ);
-storage::RecoveryRead wrapRead(const storage::RecoveryStore *store) asm("__wrap_" STORE_READ);
-storage::RecoveryRead wrapRead(const storage::RecoveryStore *store)
-{
+// Records the thread and the result text of every alignment, so a case can tell on which thread
+// each recovery store was replayed: replay aligns every captured file it restores.
+class RecordingCorrespondence final : public CorrespondenceAlgorithm {
+public:
+    struct Call {
+        std::string result;
+        QThread *thread = nullptr;
+    };
+    [[nodiscard]] std::vector<Passage> compare(std::string_view source, std::string_view result) const override
     {
-        const std::lock_guard lock(store_reads::mutex);
-        if (store_reads::recording) store_reads::reads.emplace_back(store->directory(), QThread::currentThread());
+        {
+            const std::lock_guard lock(mutex_);
+            if (recording_) calls_.push_back({std::string(result), QThread::currentThread()});
+        }
+        return ExactLineCorrespondence{}.compare(source, result);
     }
-    return realRead(store);
-}
-#undef STORE_READ
+    void start() const
+    {
+        const std::lock_guard lock(mutex_);
+        calls_.clear();
+        recording_ = true;
+    }
+    std::vector<Call> stop() const
+    {
+        const std::lock_guard lock(mutex_);
+        recording_ = false;
+        return std::exchange(calls_, {});
+    }
+
+private:
+    mutable std::mutex mutex_;
+    mutable bool recording_ = false;
+    mutable std::vector<Call> calls_;
+};
 
 namespace {
 void writeFile(const QString &path, const QByteArray &bytes)
@@ -1036,20 +1038,31 @@ public:
             }
             const auto firstName = QFileInfo(first).fileName();
             auto *gui = QThread::currentThread();
-            const auto onWorkers = [&](const std::vector<std::pair<QString, QThread *>> &reads) {
-                return !reads.empty() && std::none_of(reads.begin(), reads.end(), [&](const auto &read) {
-                    return read.second == gui || read.second == nullptr;
+            using Calls = std::vector<RecordingCorrespondence::Call>;
+            // The alignments of the files a replay restored with this text.
+            const auto replayed = [](const Calls &calls, const std::function<bool(const std::string &)> &text) {
+                Calls matching;
+                std::copy_if(calls.begin(), calls.end(), std::back_inserter(matching),
+                             [&](const auto &call) { return text(call.result); });
+                return matching;
+            };
+            const auto onWorkers = [&](const Calls &calls) {
+                return !calls.empty() && std::none_of(calls.begin(), calls.end(), [&](const auto &call) {
+                    return call.thread == gui || call.thread == nullptr;
                 });
             };
-            const auto readOf = [](const std::vector<std::pair<QString, QThread *>> &reads, const QString &directory) {
-                return std::any_of(reads.begin(), reads.end(),
-                                   [&](const auto &read) { return read.first == directory; });
+            const auto startingWith = [](const char *prefix) {
+                return [prefix](const std::string &text) { return text.starts_with(prefix); };
             };
 
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            const auto alignments = std::make_shared<const RecordingCorrespondence>();
+            Application controller{Application::Config{.gitExecutable = gitOnPath(),
+                                                       .recoveryDirectory = newRecoveryDirectory(),
+                                                       .correspondence = alignments}};
             openController(controller, repo);
             CHECK(controller.loader()->recoveryChoices().size() == 2);
             const auto own = controller.store()->recoveryDirectory();
+            const auto ownText = openedFile(controller).current().draft.text;
             const auto journal = own + "/journal";
             const auto intact = readFile(journal);
             // A complete line that is no recovery frame makes this window's store unreadable.
@@ -1059,27 +1072,33 @@ public:
                 CHECK(file.open(QIODevice::Append) && file.write(garbage) == garbage.size());
             }
             // The choice is accepted and opens at once; the worker's read refuses it afterwards.
-            store_reads::start();
+            alignments->start();
             CHECK(controller.loader()->chooseRecoverySession(firstName));
             CHECK(controller.loader()->opening());
             waitOpened(controller, "the choice refused by its unreadable store");
-            auto reads = store_reads::stop();
+            auto calls = alignments->stop();
             CHECK(controller.loader()->startupState() == "ready");
             CHECK(controller.feedback()->message().contains("This window's recovery store could not be read"));
             CHECK(controller.store()->recoveryDirectory() == own && controller.loader()->recoveryChoices().size() == 2);
             CHECK(!QFileInfo::exists(first + "/set-aside") && !QFileInfo::exists(second + "/set-aside"));
-            CHECK(reads.size() == 1 && readOf(reads, own) && onWorkers(reads));
+            // Neither matching store was replayed.
+            CHECK(replayed(calls, startingWith("first window\n")).empty());
+            CHECK(replayed(calls, startingWith("second window\n")).empty());
 
             // Readable again, the choice reloads. Every replay on the way, of this
             // window's store and of each matching store, runs on a worker.
             writeFile(journal, intact);
-            store_reads::start();
+            alignments->start();
             CHECK(controller.loader()->chooseRecoverySession(firstName));
             waitOpened(controller, "the chosen recovery session");
-            reads = store_reads::stop();
+            calls = alignments->stop();
             CHECK(controller.loader()->startupState() == "ready" && controller.store()->recoveryDirectory() == first);
             CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
-            CHECK(readOf(reads, own) && readOf(reads, first) && readOf(reads, second) && onWorkers(reads));
+            const auto ownReplay = replayed(calls, [&](const std::string &text) { return text == ownText; });
+            CHECK(
+                std::any_of(ownReplay.begin(), ownReplay.end(), [&](const auto &call) { return call.thread != gui; }));
+            CHECK(onWorkers(replayed(calls, startingWith("first window\n"))));
+            CHECK(onWorkers(replayed(calls, startingWith("second window\n"))));
         });
         suite.run("a chosen session locked during the reload restores no other session in its place", [] {
             Repository repo;
@@ -1939,7 +1958,11 @@ public:
             Repository repo;
             repo.conflict("merge");
             ScopedEnvironment environment(repo.environment);
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            const auto faults = std::make_shared<test_support::SyncFaults>();
+            Application controller{Application::Config{.gitExecutable = gitOnPath(),
+                                                       .recoveryDirectory = newRecoveryDirectory(),
+                                                       .correspondence = {},
+                                                       .files = faults}};
             openController(controller, repo);
             const auto trackedId = QString::fromStdString(openedFile(controller, "tracked.txt").id());
             const auto otherId = QString::fromStdString(openedFile(controller, "excluded.txt").id());
@@ -1955,9 +1978,9 @@ public:
             CHECK(controller.store()->replaceDraft(trackedId.toStdString(), revision().toULongLong(), edited)
                   == Transition::Applied);
             {
-                recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+                const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
                 CHECK(!controller.commands()->discardUnsaved(trackedId, revision()));
-                CHECK(recovery_faults::failures == 1);
+                CHECK_EQ(faults->failures.load(), 1);
             }
             // The other file has no Save, so a message built from it would say
             // the initial result was restored.
@@ -1979,7 +2002,11 @@ public:
             QString request;
             qsizetype records = 0;
             {
-                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+                const auto faults = std::make_shared<test_support::SyncFaults>();
+                Application controller{Application::Config{.gitExecutable = gitOnPath(),
+                                                           .recoveryDirectory = newRecoveryDirectory(),
+                                                           .correspondence = {},
+                                                           .files = faults}};
                 openController(controller, repo);
                 const auto id = QString::fromStdString(openedFile(controller).id());
                 CHECK(controller.selection()->select(id));
@@ -2002,9 +2029,9 @@ public:
                 edited = openedFile(controller).current().draft;
                 const auto revision = QString::number(openedFile(controller).current().id);
                 {
-                    recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+                    const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
                     CHECK(!controller.commands()->saveDraft(id, revision));
-                    CHECK(recovery_faults::failures == 1);
+                    CHECK_EQ(faults->failures.load(), 1);
                 }
                 CHECK(controller.feedback()->message() == "Draft save failed. The edited result is still available.");
                 CHECK(openedFile(controller).current().draft == edited);

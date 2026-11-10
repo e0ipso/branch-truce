@@ -6,8 +6,8 @@
 #include "app/Translations.h"
 #include "fixtures/ApplicationIdentity.h"
 #include "fixtures/ChoiceFile.h"
-#include "fixtures/RecoveryFaults.h"
 #include "fixtures/RecoveryJournal.h"
+#include "fixtures/SyncFaults.h"
 #include "recovery/RecoveryRestore.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -343,7 +343,8 @@ public:
                 [=] {
                     QTemporaryDir directory;
                     CHECK(directory.isValid());
-                    TestSession model(directory.path() + "/recovery");
+                    const auto faults = std::make_shared<test_support::SyncFaults>();
+                    TestSession model(directory.path() + "/recovery", faults);
                     CHECK(model.appendFile(operation == 1 ? test_support::batchFile() : test_support::choiceFile()));
                     const auto before = model.file("choices")->current().draft;
                     const auto target =
@@ -352,11 +353,11 @@ public:
                                                            ChoiceAction::CombineRightFirst);
                     const auto batch = previewNonConflicting(*model.file("choices"), 1);
                     const auto whole = previewWholeFile(*model.file("choices"), 1, SourceSide::Stage3);
-                    recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+                    const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
                     const auto result = operation == 0 ? model.applyChoice("choices", combination, true)
                         : operation == 1               ? model.applyNonConflicting("choices", batch, true)
                                                        : model.applyWholeFile("choices", whole, true);
-                    CHECK(result == Transition::Blocked && recovery_faults::failures == 1);
+                    CHECK(result == Transition::Blocked && faults->failures == 1);
                     CHECK(model.file("choices")->current().id == 1 && model.file("choices")->current().draft == before);
                     CHECK(model.pendingDraft("choices") && *model.pendingDraft("choices") != before);
                     const auto chosen = *model.pendingDraft("choices");
@@ -499,16 +500,17 @@ public:
         suite.run("a failed choice retains its atomic candidate until durable retry", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            TestSession model(directory.path() + "/recovery");
+            const auto faults = std::make_shared<test_support::SyncFaults>();
+            TestSession model(directory.path() + "/recovery", faults);
             CHECK(model.appendFile(test_support::choiceFile()));
             const auto before = model.file("choices")->current().draft;
             const auto target =
                 test_support::choiceTarget(*model.file("choices"), SourceSide::Stage3, ChoiceScope::Section);
             const auto preview =
                 previewChoice(*model.file("choices"), 1, target.source.contributionId, ChoiceAction::ResolveUsingSide);
-            recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+            const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
             CHECK(model.applyChoice("choices", preview, true) == Transition::Blocked);
-            CHECK(recovery_faults::failures == 1 && model.file("choices")->current().draft == before);
+            CHECK(faults->failures == 1 && model.file("choices")->current().draft == before);
             CHECK(model.pendingDraft("choices") && model.pendingDraft("choices")->decisions != before.decisions);
             const auto pending = *model.pendingDraft("choices");
             CHECK(role(model, SessionModel::PendingInputRole).toBool());
@@ -662,12 +664,13 @@ public:
         suite.run("failed recovery retains pending input separately and retries its completed record once", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            TestSession model(directory.path() + "/recovery");
+            const auto faults = std::make_shared<test_support::SyncFaults>();
+            TestSession model(directory.path() + "/recovery", faults);
             CHECK(model.appendFile(recoverableFile()));
             const auto original = model.file("recoverable")->current().draft;
-            recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+            const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
             CHECK(model.replaceDraft("recoverable", 1, unsavedDraft()) == Transition::Blocked);
-            CHECK(recovery_faults::failures == 1 && model.hasPendingRecovery());
+            CHECK(faults->failures == 1 && model.hasPendingRecovery());
             CHECK(model.file("recoverable")->current().id == 1
                   && model.file("recoverable")->current().draft == original);
             CHECK(model.pendingDraft("recoverable") && *model.pendingDraft("recoverable") == unsavedDraft());
@@ -898,7 +901,8 @@ public:
         suite.run("handoff puts each mixed outcome in one category and pending input stays failed until retried", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            TestSession model(directory.path() + "/recovery");
+            const auto faults = std::make_shared<test_support::SyncFaults>();
+            TestSession model(directory.path() + "/recovery", faults);
             auto choices = draft();
             choices.decisions["left"] = {};
             CHECK(model.appendFile(sessionFile("undecided", choices)));
@@ -921,9 +925,9 @@ public:
             CHECK(model.appendFile(FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
             CHECK(model.appendFile(sessionFile("pending")));
             {
-                recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+                const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
                 CHECK(model.replaceDraft("pending", 1, draft("pending input\n")) == Transition::Blocked);
-                CHECK(recovery_faults::failures == 1);
+                CHECK(faults->failures == 1);
             }
             CHECK(model.hasPendingRecovery() && !model.canFinish());
 
@@ -1304,7 +1308,8 @@ public:
         suite.run("manual Save and discard stay distinct from recovery and publication", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            TestSession model(directory.path() + "/recovery");
+            const auto faults = std::make_shared<test_support::SyncFaults>();
+            TestSession model(directory.path() + "/recovery", faults);
             CHECK(model.appendFile(recoverableFile()));
             CHECK(model.replaceDraft("recoverable", 1, savedDraft()) == Transition::Applied);
             CHECK(model.file("recoverable")->facts().unsaved && !model.file("recoverable")->checkpoint());
@@ -1321,9 +1326,9 @@ public:
             CHECK(model.file("recoverable")->facts().unsaved
                   && model.file("recoverable")->checkpoint()->draft == savedDraft());
             {
-                recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+                const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
                 CHECK(model.discardToCheckpoint("recoverable", discardedRevision) == Transition::Blocked);
-                CHECK(recovery_faults::failures == 1);
+                CHECK(faults->failures == 1);
             }
             CHECK(model.hasPendingRecovery() && model.file("recoverable")->current().draft == unsavedDraft());
             CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
@@ -1362,10 +1367,10 @@ public:
                   == Transition::Applied);
             const auto edited = *model.file("recoverable");
             {
-                recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+                const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
                 CHECK(model.recordCheckpoint("recoverable", edited.current().id, Outcome::Succeeded)
                       == Transition::Blocked);
-                CHECK(recovery_faults::failures == 1);
+                CHECK(faults->failures == 1);
             }
             CHECK(model.file("recoverable")->current().id == edited.current().id);
             CHECK(model.file("recoverable")->current().draft == unsavedDraft());
@@ -1398,7 +1403,8 @@ public:
         suite.run("failed Save and discard reuse one transaction and block the session until retry", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            TestSession model(directory.path() + "/recovery");
+            const auto faults = std::make_shared<test_support::SyncFaults>();
+            TestSession model(directory.path() + "/recovery", faults);
             CHECK(model.appendFile(recoverableFile()));
             CHECK(model.appendFile(FileSession("other", "other.txt", draft())));
             CHECK(!model.hasPendingRecovery());
@@ -1413,9 +1419,9 @@ public:
             qsizetype records = 0;
             QString request;
             {
-                recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+                const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
                 CHECK(model.discardToCheckpoint("recoverable", discardedRevision) == Transition::Blocked);
-                CHECK(recovery_faults::failures == 1);
+                CHECK(faults->failures == 1);
             }
             CHECK(model.hasPendingRecovery() && model.file("recoverable")->current().draft == unsavedDraft());
             CHECK(model.pendingDraft("recoverable") && *model.pendingDraft("recoverable") == savedDraft());
@@ -1456,9 +1462,9 @@ public:
             const auto editedRevision = model.file("recoverable")->current().id;
             const auto otherEdited = model.file("other")->current();
             {
-                recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+                const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
                 CHECK(model.recordCheckpoint("recoverable", editedRevision, Outcome::Succeeded) == Transition::Blocked);
-                CHECK(recovery_faults::failures == 1);
+                CHECK(faults->failures == 1);
             }
             CHECK(model.file("recoverable")->current().id == editedRevision);
             CHECK(model.file("recoverable")->current().draft == unsavedDraft());
