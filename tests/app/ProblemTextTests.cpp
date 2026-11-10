@@ -57,6 +57,15 @@ int main(int argc, char **argv)
             Problem(ProblemCode::ClassificationUnsupportedOperation).wrapping(ProblemCode::DiscoveryApplyMailbox);
         CHECK_EQ(problem_text::text(operation),
                  QStringLiteral("Outside app: apply-mailbox (git am) is not a supported rebase"));
+        // Git's own words after an outside-app problem do not repeat the lead either.
+        const auto filter = Problem(ProblemCode::GitFailedWithOutput, {QStringLiteral("fatal: no")})
+                                .wrapping(Problem(ProblemCode::GitFilterPath));
+        CHECK_EQ(problem_text::text(filter),
+                 QStringLiteral("Outside app: filter attributes do not match the requested path: fatal: no"));
+        CHECK_EQ(problem_text::text(
+                     Problem(ProblemCode::ClassificationStageNotEditable, {QStringLiteral("2")}).wrapping(filter)),
+                 QStringLiteral("Outside app: stage 2 cannot be edited: filter attributes do not match the requested "
+                                "path: fatal: no"));
     });
     suite.run("details translate encoded problems where they stand and leave other text alone", [] {
         const auto store = Problem(ProblemCode::RecoveryCommitFailed).encoded();

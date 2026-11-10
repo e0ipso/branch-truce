@@ -519,15 +519,20 @@ QString fill(const QString &sentence, const QStringList &values)
     }
 }
 
+// Whether the sentence starts with "Outside app: ". Git's own output after a
+// problem keeps the lead of the problem it follows.
+bool leads(const Problem &problem)
+{
+    return outsideApp(problem.code) || (wrap(problem.code) == Wrap::Output && problem.cause && leads(*problem.cause));
+}
+
 // The sentence without its "Outside app: " lead.
 QString body(const Problem &problem)
 {
     QStringList values;
     // An argument can hold an encoded problem of its own, such as a store's error.
     for (const auto &argument : problem.arguments) values.push_back(detail(argument));
-    const auto inner = !problem.cause ? QString{}
-        : outsideApp(problem.code)    ? body(*problem.cause)
-                                      : text(*problem.cause);
+    const auto inner = !problem.cause ? QString{} : leads(problem) ? body(*problem.cause) : text(*problem.cause);
     switch (wrap(problem.code)) {
     case Wrap::None: break;
     case Wrap::Argument: return fill(format(problem.code), values << inner);
@@ -544,7 +549,7 @@ QString body(const Problem &problem)
 QString text(const Problem &problem)
 {
     const auto sentence = body(problem);
-    return outsideApp(problem.code) ? Text::tr("Outside app: %1").arg(sentence) : sentence;
+    return leads(problem) ? Text::tr("Outside app: %1").arg(sentence) : sentence;
 }
 
 QString detail(const QString &detail)
