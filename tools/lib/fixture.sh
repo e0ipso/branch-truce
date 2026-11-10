@@ -15,6 +15,9 @@
 #                                          `env -i`: a minimal PATH, HOME, TMPDIR,
 #                                          XDG directories under HOME and Git
 #                                          reading only HOME/gitconfig
+#   fixture_run HOME DIR [NAME=VALUE...] COMMAND...
+#                                          COMMAND in DIR with only fixture_env's
+#                                          environment and the NAME=VALUE pairs
 #   fixture_gitconfig HOME [LAUNCHER]      writes HOME/gitconfig with a commit
 #                                          identity and, with LAUNCHER, the
 #                                          `truce` mergetool that runs it
@@ -23,6 +26,10 @@
 #                                          FILE conflicts
 #   smoke_record_ready OUTPUT              OUTPUT of --smoke-test opened the
 #                                          tracked.txt merge session
+#   session_socket_present HOME            a session of HOME listens for the
+#                                          mergetool in HOME/runtime
+#   wait_until SECONDS COMMAND...          true once COMMAND succeeds, polled
+#                                          for at most SECONDS
 #   installed_files LIST [PREFIX]          the files the package installs, from
 #                                          LIST (packaging/installed-files.txt),
 #                                          below PREFIX (default /usr)
@@ -65,6 +72,14 @@ fixture_env() {
         "XDG_DATA_HOME=$home/data" "XDG_CONFIG_HOME=$home/config" "XDG_CACHE_HOME=$home/cache" \
         "XDG_RUNTIME_DIR=$home/runtime" "GIT_CONFIG_NOSYSTEM=1" "GIT_CONFIG_GLOBAL=$home/gitconfig" \
         "GIT_TERMINAL_PROMPT=0"
+}
+
+fixture_run() {
+    local home=${1-} directory=${2-}
+    shift 2 || return 2
+    local -a environment
+    mapfile -d '' environment < <(fixture_env "$home") && ((${#environment[@]} > 0)) || return 2
+    (cd -- "$directory" && env -i "${environment[@]}" "$@")
 }
 
 fixture_gitconfig() {
@@ -124,12 +139,8 @@ fixture_merge_repo() {
 # _fixture_git HOME REPO ARGS...: Git in REPO with only HOME's private
 # environment and fixed commit dates, so commit ids repeat from run to run.
 _fixture_git() {
-    local home=$1 repo=$2
-    shift 2
-    local -a environment
-    mapfile -d '' environment < <(fixture_env "$home")
-    (cd -- "$repo" && env -i "${environment[@]}" GIT_AUTHOR_DATE=2000-01-01T00:00:00+0000 \
-        GIT_COMMITTER_DATE=2000-01-01T00:00:00+0000 git "$@")
+    fixture_run "$1" "$2" GIT_AUTHOR_DATE=2000-01-01T00:00:00+0000 GIT_COMMITTER_DATE=2000-01-01T00:00:00+0000 \
+        git "${@:3}"
 }
 
 smoke_record_ready() {
@@ -137,6 +148,17 @@ smoke_record_ready() {
     record=$(sed -n 's/^BRANCH_TRUCE_SESSION=//p' <<<"${1-}")
     [[ "$record" == *'"state":"ready"'* && "$record" == *'"operation":"Merge"'* \
         && "$record" == *'"path":"tracked.txt"'* ]]
+}
+
+session_socket_present() { compgen -G "${1-}/runtime/branch-truce/bt-mt-*" >/dev/null; }
+
+wait_until() {
+    local deadline=$((SECONDS + ${1-0}))
+    shift
+    until "$@"; do
+        ((SECONDS < deadline)) || return 1
+        sleep 0.1
+    done
 }
 
 installed_files() {

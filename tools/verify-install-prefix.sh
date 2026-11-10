@@ -68,14 +68,6 @@ trap cleanup EXIT
 
 show() { printf '+'; printf ' %q' "$@"; printf '\n'; }
 run() { show "$@"; "$@"; }
-# Bounded wait for a condition; the deadline is in tenths of a second.
-wait_for() {
-    local tenths=$1; shift
-    while ! "$@"; do
-        ((tenths-- > 0)) || return 1
-        sleep 0.1
-    done
-}
 
 step "Copy the package build inputs and package.json outside the checkout"
 "$root/packaging/scripts/stage-source.sh" --tracked --from "$root" --to "$source_dir" package.json
@@ -126,13 +118,12 @@ resolved_name=$(isolated sh -c 'command -v branch-truce')
 [[ "$resolved_name" == "$installed" ]] || die "branch-truce resolves to $resolved_name"
 pass "conflicted repository $repo; branch-truce resolves to $resolved_name"
 unmerged() { [[ -n "$(isolated git ls-files -u -- tracked.txt)" ]]; }
-socket_present() { compgen -G "$home/runtime/branch-truce/bt-mt-*" >/dev/null; }
 gui_running() { [[ -n "$(gui_pids)" ]]; }
 no_gui() { [[ -z "$(gui_pids)" ]]; }
 stop_gui() {
     local pid
     for pid in $(gui_pids); do kill -TERM "$pid"; done
-    wait_for 100 no_gui || die "installed GUI did not stop"
+    wait_until 10 no_gui || die "installed GUI did not stop"
 }
 # A blocked launcher still runs, MERGED keeps its launch bytes and Git still
 # reports the path unmerged.
@@ -156,7 +147,7 @@ pass "installed CLI loaded the embedded QML and opened the merge session"
 step "Desktop-entry launch and direct launcher handoff"
 show env -i "${environment[@]}" gio launch "$prefix/share/applications/$app_id.desktop" "$repo"
 isolated gio launch "$prefix/share/applications/$app_id.desktop" "$repo"
-wait_for 300 socket_present || die "desktop-launched GUI did not open a session socket"
+wait_until 30 session_socket_present "$home" || die "desktop-launched GUI did not open a session socket"
 gui_running || die "desktop-launched GUI is not the installed executable"
 pass "desktop entry started $(gui_pids | head -1 | xargs -I{} readlink /proc/{}/exe) with a live session"
 sides="$fixture/sides"
@@ -187,8 +178,8 @@ git_config mergetool.keepBackup false
 show env -i "${environment[@]}" git mergetool --no-prompt --tool=truce -- tracked.txt
 isolated git --no-pager mergetool --no-prompt --tool=truce -- tracked.txt < /dev/null &
 parent=$!
-wait_for 300 gui_running || die "launcher did not start the installed GUI"
-wait_for 300 socket_present || die "spawned GUI did not open a session socket"
+wait_until 30 gui_running || die "launcher did not start the installed GUI"
+wait_until 30 session_socket_present "$home" || die "spawned GUI did not open a session socket"
 expect_blocked "$parent" "git mergetool"
 pass "launcher started $(gui_pids | head -1 | xargs -I{} readlink /proc/{}/exe) and git mergetool is blocking"
 stop_gui

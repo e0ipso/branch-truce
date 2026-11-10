@@ -182,7 +182,7 @@ wayland_steps() {
         done
     done
     step 'Editor input and accessibility (scale 1, BreezeLight)'
-    inside gui-start 1 BreezeLight desktop
+    inside gui-start 1 BreezeLight
     if wait_window present 60 && inside wait-ready; then
         "${inside_command[@]}" atspi-dump > "$prefix.atspi" || fail "AT-SPI tree"
         echo "AT-SPI tree: $prefix.atspi ($(wc -l < "$prefix.atspi") lines)"
@@ -241,7 +241,7 @@ shoot() {
 window_run() {
     local prefix=$1 label=$2 scale=$3 scheme=$4
     step "Window $label"
-    inside gui-start "$scale" "$scheme" desktop
+    inside gui-start "$scale" "$scheme"
     if ! wait_window present 60; then
         fail "$label: no window"
     elif inside wait-ready; then

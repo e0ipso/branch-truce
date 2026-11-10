@@ -44,12 +44,8 @@ seed_user_home() {
 # run_app HOME DIRECTORY ARGUMENT...: the installed binary in DIRECTORY with
 # only HOME's private environment, offscreen, with a deadline so a hang fails.
 run_app() {
-    local home=$1 directory=$2
-    shift 2
-    local -a environment
-    mapfile -d '' environment < <(fixture_env "$home")
-    (cd -- "$directory" && env -i "${environment[@]}" QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
-        timeout --kill-after=10 60 "$app_binary" "$@")
+    fixture_run "$1" "$2" QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
+        timeout --kill-after=10 60 "$app_binary" "${@:3}"
 }
 
 # user_files HOME: the checksum of every file in HOME but its runtime directory.

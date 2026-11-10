@@ -32,14 +32,11 @@ wayland_env=(
 
 usage() { echo "Usage: $0 STEP [ARG...]"; }
 
-# private [NAME=VALUE...] COMMAND...: COMMAND with only the private environment
-# of $home, which every application and Git command gets. isolated runs it in $repo.
-private() {
-    local -a base_env
-    mapfile -d '' base_env < <(fixture_env "$home")
-    env -i "${base_env[@]}" "$@"
-}
-isolated() { (cd "$repo" && private "$@"); }
+# private [NAME=VALUE...] COMMAND...: COMMAND in / with only the private
+# environment of $home, which every application and Git command gets. isolated
+# runs it in $repo.
+private() { fixture_run "$home" / "$@"; }
+isolated() { fixture_run "$home" "$repo" "$@"; }
 
 # A fresh home and a repository stopped on one merge conflict in tracked.txt.
 fresh_fixture() {
@@ -56,15 +53,6 @@ gui_pids() {
     done
 }
 
-# wait_until SECONDS COMMAND...: true once COMMAND succeeds within SECONDS.
-wait_until() {
-    local deadline=$((SECONDS + $1)); shift
-    until "$@"; do
-        ((SECONDS < deadline)) || return 1
-        sleep 0.2
-    done
-}
-session_socket() { compgen -G "$home/runtime/branch-truce/bt-mt-*" >/dev/null; }
 no_gui() { [[ -z "$(gui_pids)" ]]; }
 intake_present() { compgen -G "$home/data/branch-truce/mergetool/*/*" >/dev/null; }
 mergetool_done() { [[ -f "$home/mergetool.status" ]]; }
@@ -238,9 +226,9 @@ c_desktop() {
     local exec_line pid
     exec_line=$(sed -n 's/^Exec=//p' "/usr/share/applications/$app_id.desktop")
     echo "Exec=$exec_line"
-    (cd / && private "${offscreen_env[@]}" \
+    (private "${offscreen_env[@]}" \
         setsid gio launch "/usr/share/applications/$app_id.desktop" "$repo" > /tmp/desktop.log 2>&1 < /dev/null &)
-    if wait_until 60 session_socket; then
+    if wait_until 60 session_socket_present "$home"; then
         pid=$(gui_pids | head -1)
         echo "process $(tr '\0' ' ' < "/proc/$pid/cmdline"); executable $(readlink "/proc/$pid/exe")"
         pass "gio launch of $app_id.desktop opened the session and listens for the mergetool"
@@ -259,7 +247,7 @@ c_mergetool_leave() {
     (isolated "${offscreen_env[@]}" setsid bash -c \
         'git mergetool --tool truce --no-prompt tracked.txt > "$0/mergetool.log" 2>&1; echo $? > "$0/mergetool.status"' \
         "$home" < /dev/null &)
-    if wait_until 60 session_socket && wait_until 30 intake_present; then
+    if wait_until 60 session_socket_present "$home" && wait_until 30 intake_present; then
         pass "the launcher started $(tr '\0' ' ' < "/proc/$(gui_pids | head -1)/cmdline")and attached tracked.txt"
     else
         fail "no launcher-started session took the path"
@@ -302,15 +290,13 @@ c_session() {
     fi
 }
 
-# gui-start SCALE SCHEME desktop|direct
+# gui-start SCALE SCHEME: the desktop entry, on Wayland with that scale and Breeze scheme.
 c_gui_start() {
-    local scale=$1 scheme=$2 how=$3
+    local scale=$1 scheme=$2 launch=(gio launch "/usr/share/applications/$app_id.desktop" "$repo")
     fresh_fixture
     { cat "/usr/share/color-schemes/$scheme.colors"; printf '\n[General]\nColorScheme=%s\n' "$scheme"; } \
         > "$home/config/kdeglobals"
-    local launch=(branch-truce "$repo")
-    [[ "$how" == direct ]] || launch=(gio launch "/usr/share/applications/$app_id.desktop" "$repo")
-    (cd / && private "${wayland_env[@]}" "QT_SCALE_FACTOR=$scale" \
+    (private "${wayland_env[@]}" "QT_SCALE_FACTOR=$scale" \
         "DBUS_SESSION_BUS_ADDRESS=$(cat "$home/dbus.address")" \
         setsid "${launch[@]}" > "$home/gui.log" 2>&1 < /dev/null &)
     echo "started ${launch[*]} with QT_SCALE_FACTOR=$scale, colour scheme $scheme"

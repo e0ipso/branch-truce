@@ -381,9 +381,9 @@ $deb_name-scale1.5-BreezeLight.png $deb_name-scale2-BreezeDark.png $deb_name-sca
 $deb_name.atspi $deb_name.validation "
     expected_steps="install /artifact/$deb_name.deb;closure;layout;cli;desktop;mergetool-leave;wayland-minimal;session;"
     for window in '1 BreezeLight' '1 BreezeDark' '1.5 BreezeLight' '1.5 BreezeDark' '2 BreezeLight' '2 BreezeDark'; do
-        expected_steps+="gui-start $window desktop;wait-ready;gui-stop;"
+        expected_steps+="gui-start $window;wait-ready;gui-stop;"
     done
-    expected_steps+="gui-start 1 BreezeLight desktop;wait-ready;atspi-dump;atspi-check;editor-input;gui-stop;"
+    expected_steps+="gui-start 1 BreezeLight;wait-ready;atspi-dump;atspi-check;editor-input;gui-stop;"
     expected_steps+="mergetool-start;mergetool-resolve;gui-stop;"
     [[ "$(steps)" == "$expected_steps" ]] || fail "Wayland steps: $(steps)"
     pass
