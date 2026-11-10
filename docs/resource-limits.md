@@ -106,7 +106,7 @@ median of the three repeat medians must stay within these limits:
 | Typing, one key press to the next frame | 200 ms CPU | 63 to 66 ms alone, 62 to 89 ms with three runs at once, 100 to 106 ms with six at once |
 | Scrolling, one wheel notch to the next frame | 300 ms CPU | 100 to 112 ms alone or three runs at once, 154 to 163 ms with six at once |
 
-The runs use the offscreen platform, the software renderer and the
+These calibration measurements use the offscreen platform, the software renderer and the
 `org.kde.desktop` style on an 8-thread host. For scrolling the load average was
 2.0 to 2.7 alone and with three runs, and reached 9.6 with six. The typing row
 comes from later runs, made while other builds and tests shared the host. Their
@@ -117,9 +117,9 @@ the medians about 1.6 times. The limits hold at that load. On an idle host they
 catch a cost about 3 times the measured typing and scrolling costs, not a
 doubling.
 
-A key press costs about 65 ms of CPU here, under the 100 ms editor keystroke
-budget in the evidence above. The largest parts are the edit itself, about
-10 ms, and its recovery journal commit, about 3 ms. The commit compares the
-journal's `fstat` with what the store last wrote and reads the journal again
-only when they differ, so its cost stays flat through the run: 2.9 ms for the first key and 3.4 ms for the
-eighteenth at a load average of about 4.
+The table records the original development-host calibration, not a new timing
+claim for each build. The current performance gates rerun the real editor and
+worker workloads against their budgets. Command computation and persistence use
+the serial journal worker; these historical synchronous cost breakdowns cannot
+predict current GUI latency. A journal append compares `fstat` with the last
+verified stamp and rereads the journal when it differs.
