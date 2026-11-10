@@ -73,7 +73,7 @@ void comparison_scene::addEditingCases(Groups groups)
         QGuiApplication::clipboard()->clear();
         checkEnabled("paste", "pasteResult", "resultMenuPaste", false);
         CHECK(fixture.controller.store()->appendFile(
-            FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
+            FileSession("outside", "diagram.png", {}, {.support = Support::OutsideApp, .supportDetail = "image content"})));
         CHECK(fixture.controller.selection()->select("outside"));
         CHECK(!fixture.controller.editor()->editable());
         CHECK(fixture.item("resultText")->property("readOnly").toBool());
@@ -172,7 +172,7 @@ void comparison_scene::addEditingCases(Groups groups)
         auto captured = *test_support::batchFile().snapshots();
         captured.path = "other.txt";
         CHECK(fixture.controller.store()->appendFile(FileSession(
-            "other", captured.path, {captured.launchResult.text.utf8, {}, 0}, Support::Supported, {}, captured, true)));
+            "other", captured.path, {captured.launchResult.text.utf8, {}, 0}, {.snapshots = captured, .initializeChoices = true})));
         auto *list = fixture.item("fileList");
         auto *other = test_support::visualButton(
             list, [](QQuickItem *item) { return item->property("fileId").toString() == QStringLiteral("other"); });
@@ -218,8 +218,7 @@ void comparison_scene::addEditingCases(Groups groups)
                        auto captured = *test_support::batchFile().snapshots();
                        captured.path = "other.txt";
                        CHECK(fixture.controller.store()->appendFile(
-                           FileSession("other", captured.path, {captured.launchResult.text.utf8, {}, 0},
-                                       Support::Supported, {}, captured, true)));
+                           FileSession("other", captured.path, {captured.launchResult.text.utf8, {}, 0}, {.snapshots = captured, .initializeChoices = true})));
                        const auto other = fixture.controller.store()->file("other")->current();
                        CHECK(fixture.controller.choices()->previewNonConflicting("choices", "1", scope));
                        const auto preview = fixture.controller.choices()->nonConflictingPreview();

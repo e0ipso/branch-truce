@@ -11,7 +11,7 @@ void comparison_scene::addLayoutCases(Groups groups)
         auto sources = *test_support::batchFile().snapshots();
         sources.path = "src/net/retry.cpp";
         const auto launch = sources.launchResult.text.utf8;
-        Fixture fixture(FileSession("choices", sources.path, {launch, {}, 0}, Support::Supported, {}, sources, true));
+        Fixture fixture(FileSession("choices", sources.path, {launch, {}, 0}, {.snapshots = sources, .initializeChoices = true}));
         const auto before = captureWork(fixture);
         for (const auto height : {720, 800}) {
             fixture.window->resize(1280, height);
@@ -393,8 +393,7 @@ void comparison_scene::addLayoutCases(Groups groups)
         CHECK(encoded.document);
         sources.launchResult.text.bytes = encoded.document->originalBytes.toStdString();
         sources.launchResult.identity.size = encoded.document->originalBytes.size();
-        Fixture fixture(FileSession("choices", "choices.txt", {sources.launchResult.text.utf8, {}, 0},
-                                    Support::Supported, {}, sources, true));
+        Fixture fixture(FileSession("choices", "choices.txt", {sources.launchResult.text.utf8, {}, 0}, {.snapshots = sources, .initializeChoices = true}));
         const auto before = captureWork(fixture);
         CHECK(fixture.controller.selectedFile()->formatDescription() == QStringLiteral("UTF-16 LE with BOM · CRLF"));
         CHECK(fixture.item("fileFacts")
@@ -409,7 +408,7 @@ void comparison_scene::addLayoutCases(Groups groups)
         CHECK(subtitle->property("text").toString() == fixture.controller.loader()->operationDescription());
         CHECK(fixture.item("workflowStatus")->property("text").toString() == QStringLiteral("0 of 1 file resolved"));
         CHECK(fixture.controller.store()->appendFile(
-            FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
+            FileSession("outside", "diagram.png", {}, {.support = Support::OutsideApp, .supportDetail = "image content"})));
         settle([&] {
             return fixture.item("workflowStatus")->property("text").toString()
                 == QStringLiteral("0 of 2 files resolved");

@@ -361,7 +361,7 @@ void insertionsTouchingACompetingChangedRangeStayOutstanding()
     const std::string earlier = "head\nbase\ntail\n";
     captured.earlier = SourceSnapshot{"base", "100644", earlier, test_support::choiceText(earlier), "base", "Earlier"};
     captured.launchResult.text = test_support::choiceText(earlier);
-    FileSession file("choices", captured.path, {earlier, {}, 0}, Support::Supported, {}, captured, true);
+    FileSession file("choices", captured.path, {earlier, {}, 0}, {.snapshots = captured, .initializeChoices = true});
     CHECK(file.nonConflictingTargets().empty());
     const auto before = file.current().draft;
     const auto preview = previewNonConflicting(file, 1);
@@ -380,7 +380,7 @@ void ambiguousRepeatedResultPassagesStayOutstanding()
     const auto earlier = capturedSide(source, SourceSide::Earlier).worktree.utf8;
     auto captured = sourcesOf(source);
     captured.launchResult.text = test_support::choiceText(earlier + earlier);
-    FileSession file("choices", source.path(), {earlier + earlier, {}, 0}, Support::Supported, {}, captured, true);
+    FileSession file("choices", source.path(), {earlier + earlier, {}, 0}, {.snapshots = captured, .initializeChoices = true});
     const auto before = file.current().draft;
     const auto preview = previewNonConflicting(file, 1);
     CHECK(preview.state == Transition::NoChange && preview.changes.empty() && preview.skipped > 0);
@@ -447,7 +447,7 @@ void wholeFileReplacementRetainsRecoveredDecisionsWithoutSourceScopes()
                        0};
     auto captured = sourcesOf(source);
     captured.launchResult.text = test_support::choiceText(legacy.text);
-    FileSession file(source.id(), source.path(), legacy, Support::Supported, {}, captured);
+    FileSession file(source.id(), source.path(), legacy, {.snapshots = captured});
     const auto preview = previewWholeFile(file, 1, SourceSide::Stage3);
     CHECK(preview.state == Transition::ConfirmationRequired && preview.retainedDecisions == legacy.decisions.size());
     CHECK(preview.contributions.empty() && preview.command.decisions.empty());

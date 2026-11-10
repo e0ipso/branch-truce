@@ -144,7 +144,7 @@ FileSession captured(const std::string &text)
     sources.provenance.sessionId = "limits";
     sources.stage2 = SourceSnapshot{"source-object", "100644", text, {text, text, {}}, "source-commit", "Source"};
     sources.launchResult.text = {text, text, {}};
-    return FileSession("limit", sources.path, {text, {}, 0}, Support::Supported, {}, sources);
+    return FileSession("limit", sources.path, {text, {}, 0}, {.snapshots = sources});
 }
 
 FileSession withMarkerSize(const std::string &attribute, std::size_t size)
@@ -161,7 +161,7 @@ FileSession withMarkerSize(const std::string &attribute, std::size_t size)
     sources.stage2 = SourceSnapshot{"left-object", "100644", left, {left, left, {}}, "left-commit", "Left"};
     sources.stage3 = SourceSnapshot{"right-object", "100644", right, {right, right, {}}, "right-commit", "Right"};
     sources.launchResult.text = {result, result, {}};
-    return FileSession("marked", sources.path, {result, {}, 0}, Support::Supported, {}, sources, true);
+    return FileSession("marked", sources.path, {result, {}, 0}, {.snapshots = sources, .initializeChoices = true});
 }
 
 void discardAfterLoadingALargeFileRestoresItsLaunchText()
@@ -300,8 +300,7 @@ FileSession diff3Session(std::shared_ptr<const CorrespondenceAlgorithm> algorith
 {
     auto sources = *test_support::underlinedBaseFile().snapshots();
     const auto text = sources.launchResult.text.utf8;
-    return FileSession("diff3", sources.path, {text, {}, 0}, Support::Supported, {}, sources, true,
-                       std::move(algorithm));
+    return FileSession("diff3", sources.path, {text, {}, 0}, {.snapshots = sources, .initializeChoices = true, .algorithm = std::move(algorithm)});
 }
 
 void theSessionAlignsWithTheAlgorithmItIsGiven()
@@ -407,7 +406,7 @@ void launchTextOutsideTheInvariantIsUnreadable()
     const std::string block = "<<<<<<< ours\r\nleft\r\n=======\r\nright\r\n>>>>>>> theirs\r\n";
     CHECK(FileSession("id", "file", {block, {}, 0}).support() == Support::Unreadable);
     // An adapter's own diagnosis stays in place.
-    CHECK(FileSession("outside", "image.png", {"\xff", {}, 0}, Support::OutsideApp, "binary").supportDetail()
+    CHECK(FileSession("outside", "image.png", {"\xff", {}, 0}, {.support = Support::OutsideApp, .supportDetail = "binary"}).supportDetail()
           == "binary");
 }
 
@@ -415,7 +414,7 @@ void sourceCapturesSurviveEditsHistoryCheckpointsAndStagedDiscards()
 {
     auto input = capturedSources();
     const auto expected = input;
-    FileSession file("id", input.path, draft(input.launchResult.text.utf8), Support::Supported, {}, input);
+    FileSession file("id", input.path, draft(input.launchResult.text.utf8), {.snapshots = input});
     const auto *capture = file.snapshots();
     const auto unchanged = [&] {
         CHECK(capture != nullptr && file.snapshots() == capture);
@@ -470,7 +469,7 @@ void anUnavailableEarlierSourceRemainsDistinctFromACapturedEmptySource()
             earlier.worktree = {};
         }
         const auto expected = captured;
-        FileSession file("id", captured.path, draft(captured.launchResult.text.utf8), Support::Supported, {}, captured);
+        FileSession file("id", captured.path, draft(captured.launchResult.text.utf8), {.snapshots = captured});
         CHECK(file.snapshots() && file.snapshots()->earlier.has_value() == !missing);
         if (!missing) {
             const auto &earlier = engaged(file.snapshots()->earlier);
@@ -483,7 +482,7 @@ void anUnavailableEarlierSourceRemainsDistinctFromACapturedEmptySource()
         CHECK(file.redo(file.current().id) == Transition::Applied);
         CHECK(*file.snapshots() == expected);
     }
-    FileSession uncaptured("id", "outside", {}, Support::OutsideApp, "Missing source");
+    FileSession uncaptured("id", "outside", {}, {.support = Support::OutsideApp, .supportDetail = "Missing source"});
     CHECK(uncaptured.snapshots() == nullptr);
 }
 
@@ -494,8 +493,7 @@ void sourceCapturesRejectADifferentPathOrLaunchResult()
         bool rejected = false;
         try {
             FileSession invalid("id", wrongPath ? "another path" : captured.path,
-                                draft(wrongPath ? captured.launchResult.text.utf8 : "regenerated source"),
-                                Support::Supported, {}, captured);
+                                draft(wrongPath ? captured.launchResult.text.utf8 : "regenerated source"), {.snapshots = captured});
         } catch (const std::invalid_argument &) {
             rejected = true;
         }
@@ -989,12 +987,12 @@ void supportIsAdmittedOnlyThroughTheLaunchChecks()
     CHECK(large.setSupport(Support::LargeFile) == Transition::InvalidOutcome);
     CHECK(large.loadLargeFile() == Transition::Applied && large.correspondence());
     // Text an adapter held back was never checked, so admitting it checks it.
-    FileSession binary("binary", "binary.txt", {"carriage\r\nreturn\n", {}, 0}, Support::OutsideApp, "binary");
+    FileSession binary("binary", "binary.txt", {"carriage\r\nreturn\n", {}, 0}, {.support = Support::OutsideApp, .supportDetail = "binary"});
     CHECK(binary.setSupport(Support::Supported) == Transition::Blocked && binary.support() == Support::OutsideApp);
     // A captured file the adapter held back is aligned when it is admitted.
     auto sources = *test_support::choiceFile().snapshots();
     const auto text = sources.launchResult.text.utf8;
-    FileSession held("choices", sources.path, {text, {}, 0}, Support::OutsideApp, "busy", sources);
+    FileSession held("choices", sources.path, {text, {}, 0}, {.support = Support::OutsideApp, .supportDetail = "busy", .snapshots = sources});
     CHECK(!held.correspondence() && held.choices().empty());
     CHECK(held.setSupport(Support::Supported) == Transition::Applied);
     CHECK(held.support() == Support::Supported && held.supportDetail().empty());
@@ -1005,7 +1003,7 @@ void supportIsAdmittedOnlyThroughTheLaunchChecks()
     CHECK(held.setSupport(Support::Unreadable, "gone") == Transition::Applied);
     CHECK(held.setSupport(Support::Supported) == Transition::Applied && held.canUndo());
     // An untouched capture held back is not admitted once it has outcomes.
-    FileSession saved("choices", sources.path, {text, {}, 0}, Support::OutsideApp, "busy", sources);
+    FileSession saved("choices", sources.path, {text, {}, 0}, {.support = Support::OutsideApp, .supportDetail = "busy", .snapshots = sources});
     CHECK(saved.recordCheckpoint(1, Outcome::Failed, "disk full") == Transition::Applied);
     CHECK(saved.setSupport(Support::Supported) == Transition::Blocked && saved.support() == Support::OutsideApp);
 }
@@ -1106,7 +1104,7 @@ void aFileOverTheLineThresholdWaitsForConfirmation()
     largeSource.provenance.sessionId = "limits";
     largeSource.stage2 = SourceSnapshot{"source-object", "100644", text, {text, text, {}}, "source-commit", "Source"};
     largeSource.launchResult.text = {lines(10), lines(10), {}};
-    CHECK(FileSession("limit", "limit.txt", {lines(10), {}, 0}, Support::Supported, {}, largeSource).support()
+    CHECK(FileSession("limit", "limit.txt", {lines(10), {}, 0}, {.snapshots = largeSource}).support()
           == Support::LargeFile);
     // Without captures there is no correspondence to build, so nothing waits.
     CHECK(FileSession("plain", "plain.txt", {text, {}, 0}).support() == Support::Supported);

@@ -199,7 +199,7 @@ void comparison_scene::addTextCases(Groups groups)
                                          earlier,          test_support::choiceText(earlier),
                                          "earlier-commit", "Common earlier version"};
         const auto launch = sources.launchResult.text.utf8;
-        Fixture fixture(FileSession("choices", sources.path, {launch, {}, 0}, Support::Supported, {}, sources, true));
+        Fixture fixture(FileSession("choices", sources.path, {launch, {}, 0}, {.snapshots = sources, .initializeChoices = true}));
         fixture.click("showEarlier");
         settle([&] { return fixture.item("earlierText")->isVisible(); });
         settlePanes(fixture);

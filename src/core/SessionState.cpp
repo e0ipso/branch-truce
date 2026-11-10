@@ -114,15 +114,14 @@ std::optional<std::size_t> capturedMarkerSize(const FileSnapshots *snapshots)
 }
 }
 
-FileSession::FileSession(std::string id, std::string path, Draft initial, Support support, std::string supportDetail,
-                         std::optional<FileSnapshots> snapshots, bool initializeChoices,
-                         std::shared_ptr<const CorrespondenceAlgorithm> algorithm)
+FileSession::FileSession(std::string id, std::string path, Draft initial, FileLaunch options)
     : id_(std::move(id)),
       path_(std::move(path)),
-      support_(support),
-      supportDetail_(std::move(supportDetail)),
-      algorithm_(algorithm ? std::move(algorithm) : std::make_shared<const ExactLineCorrespondence>())
+      support_(options.support),
+      supportDetail_(std::move(options.supportDetail)),
+      algorithm_(options.algorithm ? std::move(options.algorithm) : std::make_shared<const ExactLineCorrespondence>())
 {
+    auto &snapshots = options.snapshots;
     if (id_.empty() || path_.empty()) throw std::invalid_argument("A file session needs an identity and path");
     if (snapshots) {
         if (snapshots->path != path_ || snapshots->launchResult.text.utf8 != initial.text)
@@ -135,7 +134,7 @@ FileSession::FileSession(std::string id, std::string path, Draft initial, Suppor
         return;
     }
     // Only a file the app edits is aligned: its texts passed every check above.
-    open(launch(1, std::move(initial), support_, std::nullopt, initializeChoices));
+    open(launch(1, std::move(initial), support_, std::nullopt, options.initializeChoices));
 }
 
 std::optional<FileSession::Hold> FileSession::holdFor(std::string_view text, Support support) const

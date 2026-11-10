@@ -99,9 +99,7 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store,
                               "Recovery attempted to replace an acknowledged session.");
                 found = files
                             .insert_or_assign(id,
-                                              FileSession(id, path, record.draft({}), record.support(),
-                                                          record.supportDetail(), record.snapshots(), false,
-                                                          correspondence))
+                                              FileSession(id, path, record.draft({}), {.support = record.support(), .supportDetail = record.supportDetail(), .snapshots = record.snapshots(), .algorithm = correspondence}))
                             .first;
                 requireRecord(found->second.algorithm().identity() == record.alignment(),
                               "Recovery journal was aligned with another correspondence algorithm.");

@@ -210,8 +210,11 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
         result.newFiles.insert(file.id());
         auto snapshots = file.snapshots() ? std::optional<FileSnapshots>(*file.snapshots()) : std::nullopt;
         if (snapshots) snapshots->provenance.sessionId = sessionId;
-        result.files.emplace_back(file.id(), file.path(), file.current().draft, file.support(), file.supportDetail(),
-                                  std::move(snapshots), false, options.correspondence);
+        result.files.emplace_back(file.id(), file.path(), file.current().draft,
+                                  FileLaunch{.support = file.support(),
+                                             .supportDetail = file.supportDetail(),
+                                             .snapshots = std::move(snapshots),
+                                             .algorithm = options.correspondence});
     }
     git::Request request;
     request.operation = git::Operation::DiscoverRepository;

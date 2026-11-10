@@ -375,7 +375,7 @@ FileSession workloadFile()
     sources.earlier =
         SourceSnapshot{"earlier-object",        "100644", earlier, test_support::choiceText(earlier), "earlier-commit",
                        "Common earlier version"};
-    return FileSession("workload", path, {earlier, {}, 0}, Support::Supported, {}, std::move(sources), true);
+    return FileSession("workload", path, {earlier, {}, 0}, {.snapshots = std::move(sources), .initializeChoices = true});
 }
 
 PaneHighlighter *highlighterOf(QQuickItem *editor)

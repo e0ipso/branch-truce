@@ -41,6 +41,22 @@ struct RecordedRevision {
     std::vector<ByteRange> handEditedRanges;
 };
 
+// How a FileSession opens its launch text.
+struct FileLaunch {
+    // The adapter's support decision and its explanation.
+    Support support = Support::Supported;
+    std::string supportDetail = {};
+    // The immutable captures of the sources and the launch result, if any.
+    std::optional<FileSnapshots> snapshots = std::nullopt;
+    // Adds an undecided decision for every choice scope to the launch draft,
+    // as a new load does; recovery replays the decisions it recorded instead.
+    bool initializeChoices = false;
+    // Aligns the captured sources with the result and the two sides with each
+    // other; without one, ExactLineCorrespondence does. This is the engine's
+    // only default alignment.
+    std::shared_ptr<const CorrespondenceAlgorithm> algorithm = {};
+};
+
 // How editResult records an edit.
 struct EditOptions {
     // Deferred leaves the passages provisional for a worker to align (see
@@ -73,12 +89,7 @@ struct EditOptions {
 // the word differences built from them.
 class FileSession {
 public:
-    // `algorithm` aligns the captured sources with the result and the two
-    // sides with each other; without one, ExactLineCorrespondence does. This
-    // is the engine's only default alignment.
-    FileSession(std::string id, std::string path, Draft initial, Support support = Support::Supported,
-                std::string supportDetail = {}, std::optional<FileSnapshots> snapshots = std::nullopt,
-                bool initializeChoices = false, std::shared_ptr<const CorrespondenceAlgorithm> algorithm = {});
+    FileSession(std::string id, std::string path, Draft initial, FileLaunch options = {});
 
     [[nodiscard]] const std::string &id() const noexcept { return id_; }
     [[nodiscard]] const std::string &path() const noexcept { return path_; }

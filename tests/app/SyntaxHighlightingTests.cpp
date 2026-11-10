@@ -45,7 +45,7 @@ FileSession pythonFile(const std::string &id, const std::string &path)
     sources.earlier =
         SourceSnapshot{"earlier-object",        "100644", earlier, test_support::choiceText(earlier), "earlier-commit",
                        "Common earlier version"};
-    return FileSession(id, path, {earlier, {}, 0}, Support::Supported, {}, std::move(sources), true);
+    return FileSession(id, path, {earlier, {}, 0}, {.snapshots = std::move(sources), .initializeChoices = true});
 }
 
 class Fixture {

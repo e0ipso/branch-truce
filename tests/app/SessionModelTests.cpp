@@ -154,7 +154,7 @@ int main(int argc, char **argv)
         CHECK(model.canFinish() && model.resolvedFiles() == 1 && model.finishBlockers().isEmpty());
         CHECK(model.file("first")->publication().staged()->objectId == "verified-object");
         CHECK(model.file("first")->publication().staged()->mode == "100644");
-        CHECK(model.appendFile(FileSession("second", "b", draft(), Support::OutsideApp, "binary")));
+        CHECK(model.appendFile(FileSession("second", "b", draft(), {.support = Support::OutsideApp, .supportDetail = "binary"})));
         CHECK(model.totalFiles() == 2 && model.resolvedFiles() == 1 && !model.canFinish());
         CHECK(role(model, SessionModel::SupportRole, 1).value<FileStates::SupportKind>()
               == FileStates::SupportKind::OutsideApp);
@@ -218,7 +218,7 @@ int main(int argc, char **argv)
         CHECK(model.beginMarkResolved("failed", 1) == Transition::Applied);
         CHECK(model.recordCheckpoint("failed", 1, Outcome::Succeeded) == Transition::Applied);
         CHECK(model.recordWrite("failed", 1, Outcome::Failed, "disk full") == Transition::Applied);
-        CHECK(model.appendFile(FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
+        CHECK(model.appendFile(FileSession("outside", "diagram.png", {}, {.support = Support::OutsideApp, .supportDetail = "image content"})));
         CHECK(model.appendFile(sessionFile("pending")));
         {
             const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
@@ -327,8 +327,8 @@ int main(int argc, char **argv)
         CHECK(model.appendFile(sessionFile("undecided", choices)));
         CHECK(model.appendFile(sessionFile("published")));
         resolve(model, "published");
-        CHECK(model.appendFile(FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
-        CHECK(model.appendFile(FileSession("unreadable", "broken.txt", {}, Support::Unreadable, {})));
+        CHECK(model.appendFile(FileSession("outside", "diagram.png", {}, {.support = Support::OutsideApp, .supportDetail = "image content"})));
+        CHECK(model.appendFile(FileSession("unreadable", "broken.txt", {}, {.support = Support::Unreadable})));
         const std::string bytes = std::string(":literal\t") + static_cast<char>(0xff);
         CHECK(model.appendFile(FileSession("bytes", bytes, draft())));
         const std::vector<std::string> displayOrder{"undecided", "bytes", "published", "outside", "unreadable"};

@@ -41,7 +41,7 @@ choiceFile(const std::string &left = "header\nleft first\nleft second\nbridge\nl
     const auto text = result.value_or(left);
     captured.launchResult.text = choiceText(text);
     const auto path = captured.path;
-    return FileSession("choices", path, {text, {}, 0}, Support::Supported, {}, std::move(captured), true);
+    return FileSession("choices", path, {text, {}, 0}, {.snapshots = std::move(captured), .initializeChoices = true});
 }
 
 inline const branch_truce::ChoiceTarget &choiceTarget(const branch_truce::FileSession &file,
@@ -114,7 +114,7 @@ inline branch_truce::FileSession diff3File(const std::string &left, const std::s
     if (captured)
         sources.earlier = SourceSnapshot{"earlier-object",    "100644",         earlier,
                                          choiceText(earlier), "earlier-commit", "Common earlier version"};
-    return FileSession("choices", sources.path, {std::move(result), {}, 0}, Support::Supported, {}, sources, true);
+    return FileSession("choices", sources.path, {std::move(result), {}, 0}, {.snapshots = sources, .initializeChoices = true});
 }
 
 // What `git merge-file --diff3` writes for three versions, with the labels a merge gives them.
@@ -187,7 +187,7 @@ commonVersionFile(const std::string &left = "header\nleft one\nleft two\nleft th
     sources.earlier = SourceSnapshot{"earlier-object",    "100644",         earlier,
                                      choiceText(earlier), "earlier-commit", "Common earlier version"};
     sources.launchResult.text = choiceText(earlier);
-    return FileSession("choices", sources.path, {earlier, {}, 0}, Support::Supported, {}, sources, true);
+    return FileSession("choices", sources.path, {earlier, {}, 0}, {.snapshots = sources, .initializeChoices = true});
 }
 
 inline branch_truce::FileSession batchFile()

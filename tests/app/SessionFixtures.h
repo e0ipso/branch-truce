@@ -67,8 +67,7 @@ inline FileSession recoverableFile()
                                   "\xef\xbb\xbfmanual launch\r\n",
                                   {SnapshotFormat::Encoding::Utf8, true, SnapshotFormat::Newline::CrLf, true}};
     captured.launchResult.identity = {11, 22, 0100644, 18, 33, 44, 55, 66};
-    return FileSession("recoverable", captured.path, draft(captured.launchResult.text.utf8), Support::Supported, {},
-                       captured);
+    return FileSession("recoverable", captured.path, draft(captured.launchResult.text.utf8), {.snapshots = captured});
 }
 // A supported file of the recoverable session under another identity.
 inline FileSession sessionFile(const std::string &id, Draft value = draft())
@@ -76,7 +75,7 @@ inline FileSession sessionFile(const std::string &id, Draft value = draft())
     auto captured = *recoverableFile().snapshots();
     captured.path = id + ".txt";
     captured.launchResult.text = test_support::choiceText(value.text);
-    return FileSession(id, captured.path, std::move(value), Support::Supported, {}, captured);
+    return FileSession(id, captured.path, std::move(value), {.snapshots = captured});
 }
 // fileId -> handoff entry; every file must appear in exactly one group.
 inline QMap<QString, QVariantMap> handoffEntries(const QVariantMap &summary)
