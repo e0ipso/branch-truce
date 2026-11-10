@@ -37,9 +37,6 @@ inline constexpr Metric kMetrics[] = {
     {"reload", "recovery reload", 500, 2000},
 };
 
-// The Git output guard the Git read workloads and probes are sized against.
-inline constexpr std::uint64_t kGitGuard = 8ull * 1024ull * 1024ull;
-
 // The stall ceiling of a probe whose metric has no budget.
 inline constexpr int kDefaultStallMs = 4000;
 
@@ -146,9 +143,36 @@ void inspect(const std::string &bytes, std::uint64_t &lineCount, std::uint64_t &
 // The middle sample, or nothing without samples.
 std::optional<std::uint64_t> medianOf(std::vector<std::uint64_t> values);
 
+// The directory each run's scratch directory is made in: BRANCH_TRUCE_WORKLOAD_SCRATCH when it
+// names an absolute directory, else /var/tmp, which unlike /tmp is rarely a tmpfs, so a recovery
+// fsync reaches a disk as the application data directory's would.
+std::string scratchBase();
+
 // Runs every spec in its own worker processes and aggregates the repeats. A cleanup failure is
 // left in `problem`.
 std::vector<Aggregate> measure(const std::vector<Spec> &specs, std::string *problem);
+
+// The sizes a run supports under the decision rule, one per product limit in
+// core/ResourceLimits.h. Each is empty when no measured size qualified.
+struct Envelope {
+    std::optional<std::uint64_t> lines; // kLargeFileLines
+    std::optional<std::uint64_t> lineBytes; // kMaxLineBytes
+    std::optional<std::uint64_t> gitReadBytes; // kMaxGitReadBytes
+    std::optional<std::uint64_t> recoveryBytes; // kMaxRecoveryPayloadBytes
+};
+Envelope proposedEnvelope(const std::vector<Aggregate> &results);
+// One line per limit, naming the constant, its value and the envelope's, with whether they agree.
+struct LimitComparison {
+    std::string name;
+    std::uint64_t limit = 0;
+    std::optional<std::uint64_t> measured;
+    bool agrees() const { return measured && *measured == limit; }
+};
+std::vector<LimitComparison> compareWithLimits(const Envelope &envelope);
+
+// The aggregates in a .tsv the evidence profile wrote, each with its median as its only sample.
+// Empty, with the reason in `error`, when the file cannot be read or a row is malformed.
+std::vector<Aggregate> readEvidenceRows(const std::string &path, std::string *error);
 
 // Writes the evidence report to `path` and its rows next to it with a .tsv extension.
 void writeReports(const std::string &path, const std::vector<Aggregate> &results, const std::string &cleanup);

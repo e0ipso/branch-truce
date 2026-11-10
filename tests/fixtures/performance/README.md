@@ -4,7 +4,7 @@
 
 The generator, `tests/fixtures/performance/WorkloadText.h`, builds UTF-8 text with a fixed width of 96 bytes on ordinary lines, a shared `repeat-passage` line every 40 lines, and a `café` line every 100 lines. Correspondence uses three sources. Earlier text is the base. Stage 2, stage 3 and the result each change a different residue class of lines, modulo 25. An adverse long line is one buffer with no newline. The editor loads the same bytes into the result and both source panes of `tests/fixtures/editor/Editor.qml`. Git stores a raw blob with `git hash-object --stdin` and reads it back through `GitAdapter::ReadObject`. Recovery commits that payload through `RecoveryStore::commit`, which fsyncs before it returns.
 
-Scratch directories are `/var/tmp/truce-workload-*`. `/tmp` is tmpfs on the development host, so a recovery fsync there would not represent the ext4 application-data disk.
+Scratch directories are `truce-workload-*` under `/var/tmp`, or under `BRANCH_TRUCE_WORKLOAD_SCRATCH` when it names an absolute directory. `/tmp` is often a tmpfs, where a recovery fsync would not represent the disk the application data lives on. The report names the filesystem the run measured.
 
 ## Commands
 
@@ -27,13 +27,15 @@ The registered check is `performance.workloads`. It runs `--profile gate` under 
 
 A size enters the proposed envelope only when every repeat completed and the median time is within budget. The proposal keeps the largest measured point that qualifies. A size that was not attempted is not claimed. A timeout, resource kill, truncation, unacknowledged edit, explicit failure or fabricated success stays outside the envelope.
 
-Each metric's budget and stall ceiling are in `kMetrics` in `tests/performance/Workload.h`, and the report prints them. The Git proposal also cannot exceed the existing 8 MiB output guard. That guard is not changed by the measurement. The application enforces the resulting envelope: 262144-byte lines, 4194304-byte Git reads, and 8388608-byte recovery payloads. A file over 4000 lines loads only after the user confirms it.
+Each metric's budget and stall ceiling are in `kMetrics` in `tests/performance/Workload.h`, and the report prints them. The Git proposal also cannot exceed the product's Git output limit.
+
+The application enforces the envelope as the constants in `src/core/ResourceLimits.h`: `kMaxLineBytes`, `kMaxGitReadBytes` and `kMaxRecoveryPayloadBytes`, and `kLargeFileLines`, above which a file loads only after the user confirms it. The matrix takes those sizes from the header, so it always measures each limit itself, and each over-limit probe sits one byte past its limit. The report compares the envelope it proposes with each constant, and starts with the source revision it measured. The gate reads `evidence.tsv` and fails when the envelope recorded there differs from any of the four constants, so changing a limit or the evidence without the other fails the build until the evidence is measured again.
 
 Larger sizes in a group are skipped after a smaller size misses its metric's stall ceiling. The process is killed at 1536 MiB resident set or at its wall-clock ceiling. A killed run is not given a latency.
 
 ## What the profiles cover
 
-The evidence profile repeats representative line counts, adverse long lines, Git reads through 8 MiB, and recovery payloads through 8 MiB. It also runs one identical-buffer correspondence control, a Git read above 8 MiB, a Git input above 8 MiB, a recovery commit with a bad digest, and a recovery commit under `RLIMIT_FSIZE`. The gate profile is the small end of that matrix plus the four failure probes.
+The evidence profile repeats representative line counts, adverse long lines, Git reads up to `kMaxGitReadBytes`, and recovery payloads up to `kMaxRecoveryPayloadBytes`. It also runs one identical-buffer correspondence control, a Git read and a Git input one byte over `kMaxGitReadBytes`, a recovery commit with a bad digest, and a recovery commit under `RLIMIT_FSIZE`. The gate profile is the small end of that matrix plus the four failure probes. The committed `evidence.md` predates these sizes: it measured Git reads against an 8 MiB guard and names no source revision.
 
 ## Accepted controller edit with a QML consumer
 

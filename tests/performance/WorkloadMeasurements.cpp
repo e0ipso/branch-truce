@@ -4,6 +4,10 @@
 //
 //   --profile gate      the small end of the matrix and the failure probes; the CTest entry.
 //   --profile evidence  the full matrix, written to --report and a .tsv beside it.
+//
+// Every size that matters to the product comes from core/ResourceLimits.h: the matrix measures
+// each limit itself, and each over-limit probe sits one byte past its limit.
+#include "core/ResourceLimits.h"
 #include "performance/Workload.h"
 
 #include <iostream>
@@ -11,8 +15,11 @@
 #include <vector>
 
 namespace {
+using branch_truce::kLargeFileLines;
+using branch_truce::kMaxGitReadBytes;
+using branch_truce::kMaxLineBytes;
+using branch_truce::kMaxRecoveryPayloadBytes;
 using workload::Aggregate;
-using workload::kGitGuard;
 using workload::Spec;
 
 std::vector<Spec> evidenceProfile()
@@ -22,30 +29,31 @@ std::vector<Spec> evidenceProfile()
                          std::size_t bytes, int timeoutMs, int repeats, bool escalating, bool startup) {
         specs.push_back({group, kind, std::move(name), mode, lines, bytes, timeoutMs, repeats, escalating, startup});
     };
-    for (std::size_t lines : {std::size_t{200}, std::size_t{1000}, std::size_t{2000}, std::size_t{4000},
+    for (std::size_t lines : {std::size_t{200}, std::size_t{1000}, std::size_t{2000}, kLargeFileLines,
                               std::size_t{8000}, std::size_t{16000}})
         add("corr-lines", "correspondence", "correspondence-lines-" + std::to_string(lines), "lines", lines, 0,
             lines >= 8000 ? 45000 : 20000, 3, true, false);
-    for (std::size_t bytes : {std::size_t{4096}, std::size_t{65536}, std::size_t{1048576}, kGitGuard})
+    for (std::size_t bytes : {std::size_t{4096}, std::size_t{65536}, std::size_t{1048576}, kMaxRecoveryPayloadBytes})
         add("corr-long", "correspondence", "correspondence-long-" + std::to_string(bytes), "long", 0, bytes, 20000, 3,
             true, false);
-    add("corr-control", "correspondence", "correspondence-identical-4000", "identical", 4000, 0, 20000, 1, false,
-        false);
+    add("corr-control", "correspondence", "correspondence-identical-" + std::to_string(kLargeFileLines), "identical",
+        kLargeFileLines, 0, 20000, 1, false, false);
     bool firstEditor = true;
-    for (std::size_t lines : {std::size_t{200}, std::size_t{2000}, std::size_t{10000}, std::size_t{20000}}) {
+    for (std::size_t lines :
+         {std::size_t{200}, std::size_t{2000}, kLargeFileLines, std::size_t{10000}, std::size_t{20000}}) {
         add("editor-lines", "editor", "editor-lines-" + std::to_string(lines), "lines", lines, 0, 30000, 3, true,
             firstEditor);
         firstEditor = false;
     }
-    for (std::size_t bytes : {std::size_t{1024}, std::size_t{8192}, std::size_t{65536}, std::size_t{262144},
+    for (std::size_t bytes : {std::size_t{1024}, std::size_t{8192}, std::size_t{65536}, kMaxLineBytes,
                               std::size_t{1048576}, std::size_t{4194304}})
         add("editor-long", "editor", "editor-long-" + std::to_string(bytes), "long", 0, bytes, 30000, 3, true, false);
-    for (std::size_t bytes : {std::size_t{65536}, std::size_t{1048576}, std::size_t{4194304}, kGitGuard})
+    for (std::size_t bytes : {std::size_t{65536}, std::size_t{1048576}, kMaxGitReadBytes})
         add("git-read", "git", "git-read-" + std::to_string(bytes), "read", 0, bytes, 30000, 3, true, false);
-    add("git-probe", "git", "git-read-over-limit", "read", 0, kGitGuard + 4096, 30000, 1, false, false);
-    add("git-probe", "git", "git-input-over-limit", "input", 0, kGitGuard + 1, 20000, 1, false, false);
+    add("git-probe", "git", "git-read-over-limit", "read", 0, kMaxGitReadBytes + 1, 30000, 1, false, false);
+    add("git-probe", "git", "git-input-over-limit", "input", 0, kMaxGitReadBytes + 1, 20000, 1, false, false);
     for (std::size_t bytes :
-         {std::size_t{4096}, std::size_t{65536}, std::size_t{1048576}, std::size_t{4194304}, kGitGuard})
+         {std::size_t{4096}, std::size_t{65536}, std::size_t{1048576}, std::size_t{4194304}, kMaxRecoveryPayloadBytes})
         add("recovery", "recovery", "recovery-" + std::to_string(bytes), "commit", 0, bytes, 30000, 3, true, false);
     add("recovery-probe", "recovery", "recovery-bad-digest", "bad-digest", 0, 64, 20000, 1, false, false);
     add("recovery-probe", "recovery", "recovery-overload", "overload", 0, 1024ull * 1024ull, 20000, 1, false, false);
@@ -64,8 +72,8 @@ std::vector<Spec> gateProfile()
     add("editor-lines", "editor", "editor-lines-200", "lines", 200, 0, 20000, true);
     add("editor-long", "editor", "editor-long-8192", "long", 0, 8192, 20000, false);
     add("git-read", "git", "git-read-65536", "read", 0, 65536, 20000, false);
-    add("git-probe", "git", "git-read-over-limit", "read", 0, kGitGuard + 4096, 30000, false);
-    add("git-probe", "git", "git-input-over-limit", "input", 0, kGitGuard + 1, 20000, false);
+    add("git-probe", "git", "git-read-over-limit", "read", 0, kMaxGitReadBytes + 1, 30000, false);
+    add("git-probe", "git", "git-input-over-limit", "input", 0, kMaxGitReadBytes + 1, 20000, false);
     add("recovery", "recovery", "recovery-65536", "commit", 0, 65536, 20000, false);
     add("recovery-probe", "recovery", "recovery-bad-digest", "bad-digest", 0, 64, 20000, false);
     add("recovery-probe", "recovery", "recovery-overload", "overload", 0, 1024ull * 1024ull, 20000, false);
@@ -79,30 +87,62 @@ struct Expectation {
     std::string detail;
 };
 
-int expect(const std::vector<Aggregate> &results, const std::vector<Expectation> &expectations)
-{
+struct Tally {
     int tests = 0;
-    int assertions = 0;
     int failures = 0;
-    for (const auto &expected : expectations) {
+    void pass(const std::string &name)
+    {
         ++tests;
-        ++assertions;
+        std::cout << "PASS " << name << '\n';
+    }
+    void fail(const std::string &name, const std::string &why)
+    {
+        ++tests;
+        ++failures;
+        std::cerr << "FAIL " << name << ' ' << why << '\n';
+    }
+};
+
+// The recorded evidence must support exactly the limits the product ships: a change to either
+// side fails here until the evidence is measured again and the limit re-derived from it.
+void expectRecordedEnvelope(Tally &tally)
+{
+#ifdef BRANCH_TRUCE_EVIDENCE_TSV
+    std::string error;
+    const auto rows = workload::readEvidenceRows(BRANCH_TRUCE_EVIDENCE_TSV, &error);
+    if (rows.empty()) {
+        tally.fail("recorded envelope", error);
+        return;
+    }
+    for (const auto &limit : workload::compareWithLimits(workload::proposedEnvelope(rows))) {
+        const auto name = "recorded envelope matches " + limit.name;
+        if (limit.agrees())
+            tally.pass(name);
+        else
+            tally.fail(name,
+                       "limit " + std::to_string(limit.limit) + " recorded "
+                           + (limit.measured ? std::to_string(*limit.measured) : std::string("none")));
+    }
+#else
+    tally.fail("recorded envelope", "built without BRANCH_TRUCE_EVIDENCE_TSV");
+#endif
+}
+
+void expect(Tally &tally, const std::vector<Aggregate> &results, const std::vector<Expectation> &expectations)
+{
+    for (const auto &expected : expectations) {
         const Aggregate *found = nullptr;
         for (const auto &item : results)
             if (item.name == expected.name) found = &item;
         if (found == nullptr || found->outcome != expected.outcome
             || (!expected.detail.empty() && found->detail.find(expected.detail) == std::string::npos)) {
-            ++failures;
-            std::cerr << "FAIL " << expected.name << " expected " << expected.outcome;
-            if (!expected.detail.empty()) std::cerr << " detail " << expected.detail;
-            std::cerr << " actual " << (found == nullptr ? "missing" : found->outcome + " " + found->detail) << '\n';
+            tally.fail(expected.name,
+                       "expected " + expected.outcome + (expected.detail.empty() ? "" : " detail " + expected.detail)
+                           + " actual " + (found == nullptr ? "missing" : found->outcome + " " + found->detail));
         } else {
-            std::cout << "PASS " << expected.name << '\n';
+            tally.pass(expected.name);
         }
     }
-    std::cout << "RESULT workload-measurements tests=" << tests << " assertions=" << assertions
-              << " failures=" << failures << '\n';
-    return failures == 0 ? 0 : 1;
 }
 
 // Both profiles: an action over a product limit fails explicitly instead of passing truncated.
@@ -163,5 +203,10 @@ int main(int argc, char **argv)
     for (const auto &item : results) {
         if (item.outcome == "fabricated-success") expectations.push_back({item.name, "completed", ""});
     }
-    return expect(results, expectations);
+    Tally tally;
+    expect(tally, results, expectations);
+    if (!evidence) expectRecordedEnvelope(tally);
+    std::cout << "RESULT workload-measurements tests=" << tally.tests << " assertions=" << tally.tests
+              << " failures=" << tally.failures << '\n';
+    return tally.failures == 0 ? 0 : 1;
 }

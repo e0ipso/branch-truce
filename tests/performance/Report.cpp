@@ -1,18 +1,25 @@
 // The evidence report: the host and build the run measured, every aggregate, the proposed
 // envelope under the decision rule, and the outcomes that stay outside it.
+#include "core/ResourceLimits.h"
+#include "fixtures/FixtureGit.h"
 #include "performance/Workload.h"
 
 #include <QtGlobal>
 
 #include <algorithm>
+#include <cstdlib>
 #include <fstream>
 #include <initializer_list>
+#include <sstream>
 #include <sys/utsname.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #ifndef BRANCH_TRUCE_MEASUREMENT_BUILD
 #define BRANCH_TRUCE_MEASUREMENT_BUILD "unspecified"
+#endif
+#ifndef BRANCH_TRUCE_SOURCE_DIR
+#define BRANCH_TRUCE_SOURCE_DIR "."
 #endif
 
 namespace workload {
@@ -90,10 +97,52 @@ std::optional<std::uint64_t> qualifying(const std::vector<Aggregate> &results, c
         const std::uint64_t size = kind == SizeKind::Lines ? item.lines
             : kind == SizeKind::MaxLine                    ? item.maxLine
                                                            : item.bytes;
-        if (capGit && item.bytes > kGitGuard) continue;
+        if (capGit && item.bytes > branch_truce::kMaxGitReadBytes) continue;
         if (!best || size > *best) best = size;
     }
     return best;
+}
+
+// The largest qualifying size of every component the envelope takes its tightest point from.
+struct Components {
+    std::optional<std::uint64_t> corrLines, corrEdit, editorLines, editorKey;
+    std::optional<std::uint64_t> longLoad, longKey, longConstruct, longEdit;
+    std::optional<std::uint64_t> gitRead, recoveryCommit, recoveryReload;
+};
+
+Components components(const std::vector<Aggregate> &results)
+{
+    Components bounds;
+    bounds.corrLines = qualifying(results, "corr-lines", "construct", SizeKind::Lines, false);
+    bounds.corrEdit = qualifying(results, "corr-lines", "edit", SizeKind::Lines, false);
+    bounds.editorLines = qualifying(results, "editor-lines", "load", SizeKind::Lines, false);
+    bounds.editorKey = qualifying(results, "editor-lines", "key", SizeKind::Lines, false);
+    bounds.longLoad = qualifying(results, "editor-long", "load", SizeKind::MaxLine, false);
+    bounds.longKey = qualifying(results, "editor-long", "key", SizeKind::MaxLine, false);
+    bounds.longConstruct = qualifying(results, "corr-long", "construct", SizeKind::MaxLine, false);
+    bounds.longEdit = qualifying(results, "corr-long", "edit", SizeKind::MaxLine, false);
+    bounds.gitRead = qualifying(results, "git-read", "read", SizeKind::Bytes, true);
+    bounds.recoveryCommit = qualifying(results, "recovery", "commit", SizeKind::Bytes, false);
+    bounds.recoveryReload = qualifying(results, "recovery", "reload", SizeKind::Bytes, false);
+    return bounds;
+}
+
+// The tightest of the values, or nothing when any of them is missing.
+std::optional<std::uint64_t> smallest(std::initializer_list<std::optional<std::uint64_t>> values)
+{
+    std::optional<std::uint64_t> best;
+    for (const auto &value : values) {
+        if (!value) return std::nullopt;
+        if (!best || *value < *best) best = value;
+    }
+    return best;
+}
+
+Envelope envelopeOf(const Components &bounds)
+{
+    return {smallest({bounds.corrLines, bounds.corrEdit, bounds.editorLines, bounds.editorKey}),
+            smallest({bounds.longLoad, bounds.longKey, bounds.longConstruct, bounds.longEdit}), bounds.gitRead,
+            smallest({bounds.recoveryCommit, bounds.recoveryReload})};
 }
 
 std::string sizeOrNone(const std::optional<std::uint64_t> &value, const char *unit)
@@ -115,30 +164,100 @@ std::string budgetText()
     }
     return text;
 }
+// The commit the measured binary was built from, marked when the checkout had other changes.
+std::string sourceRevision()
+{
+    const auto &git = test_support::fixtureGit();
+    const auto revision = capture({git, "-C", BRANCH_TRUCE_SOURCE_DIR, "rev-parse", "HEAD"});
+    if (revision.empty()) return "not reported";
+    const auto changes = capture({git, "-C", BRANCH_TRUCE_SOURCE_DIR, "status", "--porcelain"});
+    return revision + (changes.empty() ? "" : " with uncommitted changes");
+}
+
+std::optional<std::uint64_t> number(const std::string &field)
+{
+    if (field == "-" || field.empty()) return std::nullopt;
+    char *end = nullptr;
+    const auto value = std::strtoull(field.c_str(), &end, 10);
+    if (end == nullptr || *end != '\0') return std::nullopt;
+    return value;
+}
 } // namespace
+
+Envelope proposedEnvelope(const std::vector<Aggregate> &results) { return envelopeOf(components(results)); }
+
+std::vector<LimitComparison> compareWithLimits(const Envelope &envelope)
+{
+    return {{"kLargeFileLines", branch_truce::kLargeFileLines, envelope.lines},
+            {"kMaxLineBytes", branch_truce::kMaxLineBytes, envelope.lineBytes},
+            {"kMaxGitReadBytes", branch_truce::kMaxGitReadBytes, envelope.gitReadBytes},
+            {"kMaxRecoveryPayloadBytes", branch_truce::kMaxRecoveryPayloadBytes, envelope.recoveryBytes}};
+}
+
+std::vector<Aggregate> readEvidenceRows(const std::string &path, std::string *error)
+{
+    std::ifstream table(path);
+    if (!table) {
+        *error = "cannot read " + path;
+        return {};
+    }
+    std::vector<Aggregate> rows;
+    std::string line;
+    std::getline(table, line); // The header.
+    while (std::getline(table, line)) {
+        std::vector<std::string> fields;
+        std::istringstream split(line);
+        for (std::string field; std::getline(split, field, '\t');) fields.push_back(field);
+        const auto bytes = fields.size() >= 13 ? number(fields[5]) : std::nullopt;
+        const auto lines = fields.size() >= 13 ? number(fields[6]) : std::nullopt;
+        const auto maxLine = fields.size() >= 13 ? number(fields[7]) : std::nullopt;
+        if (!bytes || !lines || !maxLine) {
+            *error = path + ": malformed row: " + line;
+            return {};
+        }
+        Aggregate row;
+        row.kind = fields[0];
+        row.name = fields[1];
+        row.metric = fields[2];
+        row.group = fields[3];
+        row.outcome = fields[4];
+        row.bytes = *bytes;
+        row.lines = *lines;
+        row.maxLine = *maxLine;
+        if (const auto median = number(fields[10])) row.elapsed.push_back(*median);
+        rows.push_back(row);
+    }
+    if (table.bad() || rows.empty()) {
+        *error = path + " has no rows";
+        return {};
+    }
+    return rows;
+}
 
 void writeReports(const std::string &path, const std::vector<Aggregate> &results, const std::string &cleanup)
 {
     std::ofstream markdown(path);
     utsname system{};
     uname(&system);
-    const auto mount = capture({"/usr/bin/findmnt", "-T", "/var/tmp", "-n", "-o", "FSTYPE,SOURCE"});
+    const auto mount = capture({"findmnt", "-T", scratchBase(), "-n", "-o", "FSTYPE,SOURCE"});
     markdown << "# Workload measurements\n\n";
-    markdown << "Build type " << BRANCH_TRUCE_MEASUREMENT_BUILD << ". Compiler " << __VERSION__ << ". Qt " << qVersion()
-             << ". Git " << capture({"/usr/bin/git", "--version"}) << ".\n\n";
+    markdown << "Source revision " << sourceRevision() << ". Build type " << BRANCH_TRUCE_MEASUREMENT_BUILD
+             << ". Compiler " << __VERSION__ << ". Qt " << qVersion() << ". Git "
+             << capture({test_support::fixtureGit(), "--version"}) << ".\n\n";
     markdown << "Machine " << system.sysname << " " << system.release << " " << system.machine << ", " << cpuModel()
              << ", " << sysconf(_SC_NPROCESSORS_ONLN) << " processors, " << memTotal() << ". Scratch filesystem "
              << (mount.empty() ? "not reported" : mount) << ".\n\n";
     markdown << "Editor samples use QT_QPA_PLATFORM=offscreen and QT_QUICK_BACKEND=software. "
-             << "They are not a Wayland or KDE session. Recovery and Git scratch live under /var/tmp "
-             << "because /tmp is tmpfs on this host.\n\n";
+             << "They are not a Wayland or KDE session. Recovery and Git scratch live under " << scratchBase()
+             << ", on the scratch filesystem named above.\n\n";
     markdown << "## Decision rule\n\n";
     markdown
         << "A completed sample can enter the proposed envelope only when every repeat completed "
         << "and the median elapsed time is within the budget. The proposed size is the largest measured "
         << "point that qualifies. Sizes that were not attempted are not claimed. Timeouts, resource kills, "
         << "truncation, unacknowledged edits, explicit failures and fabricated success stay outside the envelope.\n\n";
-    markdown << "Budgets are " << budgetText() << ". The Git figure cannot exceed the existing 8 MiB output guard.\n\n";
+    markdown << "Budgets are " << budgetText() << ". The Git figure cannot exceed the product's Git output limit, "
+             << branch_truce::kMaxGitReadBytes << " bytes.\n\n";
     markdown << "## Results\n\n";
     markdown << "| Name | Outcome | Bytes | Lines | Max line | Samples | Min ms | Median ms | Max ms | RSS KiB |\n";
     markdown << "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n";
@@ -170,49 +289,39 @@ void writeReports(const std::string &path, const std::vector<Aggregate> &results
               << show(min) << '\t' << show(mid) << '\t' << show(max) << '\t' << item.rssKb << '\t'
               << sanitize(item.detail) << '\n';
     }
-    const auto corrLines = qualifying(results, "corr-lines", "construct", SizeKind::Lines, false);
-    const auto corrEdit = qualifying(results, "corr-lines", "edit", SizeKind::Lines, false);
-    const auto editorLines = qualifying(results, "editor-lines", "load", SizeKind::Lines, false);
-    const auto editorKey = qualifying(results, "editor-lines", "key", SizeKind::Lines, false);
-    const auto longLoad = qualifying(results, "editor-long", "load", SizeKind::MaxLine, false);
-    const auto longKey = qualifying(results, "editor-long", "key", SizeKind::MaxLine, false);
-    const auto longConstruct = qualifying(results, "corr-long", "construct", SizeKind::MaxLine, false);
-    const auto longEdit = qualifying(results, "corr-long", "edit", SizeKind::MaxLine, false);
-    const auto gitRead = qualifying(results, "git-read", "read", SizeKind::Bytes, true);
-    const auto recoveryCommit = qualifying(results, "recovery", "commit", SizeKind::Bytes, false);
-    const auto recoveryReload = qualifying(results, "recovery", "reload", SizeKind::Bytes, false);
-    const auto smallest = [](std::initializer_list<std::optional<std::uint64_t>> values) {
-        std::optional<std::uint64_t> best;
-        for (const auto &value : values) {
-            if (!value) return std::optional<std::uint64_t>{};
-            if (!best || *value < *best) best = value;
-        }
-        return best;
-    };
+    const auto bounds = components(results);
+    const auto envelope = envelopeOf(bounds);
     markdown << "\n## Proposed resource envelope\n\n";
     markdown << "Component bounds before taking the tightest measured point: correspondence construction "
-             << sizeOrNone(corrLines, "lines") << ", correspondence edit " << sizeOrNone(corrEdit, "lines")
-             << ", editor load " << sizeOrNone(editorLines, "lines") << ", editor keystroke "
-             << sizeOrNone(editorKey, "lines") << ", long-line editor load " << sizeOrNone(longLoad, "bytes")
-             << ", long-line editor keystroke " << sizeOrNone(longKey, "bytes")
-             << ", long-line correspondence construction " << sizeOrNone(longConstruct, "bytes")
-             << ", long-line correspondence edit " << sizeOrNone(longEdit, "bytes") << ", Git read "
-             << sizeOrNone(gitRead, "bytes") << ", recovery commit " << sizeOrNone(recoveryCommit, "bytes")
-             << ", recovery reload " << sizeOrNone(recoveryReload, "bytes") << ".\n\n";
+             << sizeOrNone(bounds.corrLines, "lines") << ", correspondence edit "
+             << sizeOrNone(bounds.corrEdit, "lines") << ", editor load " << sizeOrNone(bounds.editorLines, "lines")
+             << ", editor keystroke " << sizeOrNone(bounds.editorKey, "lines") << ", long-line editor load "
+             << sizeOrNone(bounds.longLoad, "bytes") << ", long-line editor keystroke "
+             << sizeOrNone(bounds.longKey, "bytes") << ", long-line correspondence construction "
+             << sizeOrNone(bounds.longConstruct, "bytes") << ", long-line correspondence edit "
+             << sizeOrNone(bounds.longEdit, "bytes") << ", Git read " << sizeOrNone(bounds.gitRead, "bytes")
+             << ", recovery commit " << sizeOrNone(bounds.recoveryCommit, "bytes") << ", recovery reload "
+             << sizeOrNone(bounds.recoveryReload, "bytes") << ".\n\n";
     markdown << "Representative files, three sources, width 96 bytes including the newline: up to "
-             << sizeOrNone(smallest({corrLines, corrEdit, editorLines, editorKey}), "lines") << ".\n\n";
+             << sizeOrNone(envelope.lines, "lines") << ".\n\n";
     markdown << "Adverse long lines, three panes or three sources: up to "
-             << sizeOrNone(smallest({longLoad, longKey, longConstruct, longEdit}), "bytes on the longest line")
-             << ".\n\n";
-    markdown << "Git process output: up to " << sizeOrNone(gitRead, "bytes")
-             << ", and not above the existing 8 MiB guard. The guard was not changed. ";
+             << sizeOrNone(envelope.lineBytes, "bytes on the longest line") << ".\n\n";
+    markdown << "Git process output: up to " << sizeOrNone(envelope.gitReadBytes, "bytes")
+             << ", and not above the product's output limit. ";
     for (const auto &item : results) {
-        if (item.name == "git-read-8388608" && item.outcome != "completed")
-            markdown << "The 8388608-byte blob did not complete: " << item.outcome << ". " << item.detail << ". ";
+        if (item.group == "git-read" && item.outcome != "completed")
+            markdown << "The " << item.bytes << "-byte blob did not complete: " << item.outcome << ". " << item.detail
+                     << ". ";
     }
     markdown << "\n\n";
     markdown << "Recovery acknowledgment, commit through fsync plus a following reload: up to "
-             << sizeOrNone(smallest({recoveryCommit, recoveryReload}), "payload bytes") << ".\n\n";
+             << sizeOrNone(envelope.recoveryBytes, "payload bytes") << ".\n\n";
+    markdown << "Product limits in src/core/ResourceLimits.h against this envelope:\n\n";
+    for (const auto &limit : compareWithLimits(envelope))
+        markdown << "- " << limit.name << " " << limit.limit << ", measured "
+                 << (limit.measured ? std::to_string(*limit.measured) : std::string("none")) << ": "
+                 << (limit.agrees() ? "agrees" : "differs") << "\n";
+    markdown << "\n";
     markdown << "Completed samples over the latency budget stay outside the envelope:\n\n";
     for (const auto &item : results) {
         const auto mid = medianOf(item.elapsed);

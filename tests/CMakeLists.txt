@@ -378,7 +378,9 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_link_libraries(branch_truce_workload_measurements PRIVATE branch_truce_core
         branch_truce_storage branch_truce_git Qt6::Quick Qt6::QuickControls2 branch_truce_build_options)
     target_compile_definitions(branch_truce_workload_measurements PRIVATE
-        "BRANCH_TRUCE_MEASUREMENT_BUILD=\"${CMAKE_BUILD_TYPE}\"")
+        "BRANCH_TRUCE_MEASUREMENT_BUILD=\"${CMAKE_BUILD_TYPE}\""
+        "BRANCH_TRUCE_SOURCE_DIR=\"${PROJECT_SOURCE_DIR}\""
+        "BRANCH_TRUCE_EVIDENCE_TSV=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/performance/evidence.tsv\"")
     qt_add_resources(branch_truce_workload_measurements workload_editor PREFIX "/" BASE "${editor_fixture}"
         FILES "${editor_fixture}/Editor.qml")
     add_test(NAME performance.workloads COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_workload_measurements> --profile gate)

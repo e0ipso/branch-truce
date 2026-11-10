@@ -20,7 +20,7 @@ namespace workload {
 namespace {
 
 constexpr long kRssKillKb = 1536L * 1024L;
-constexpr char kScratchPrefix[] = "/var/tmp/truce-workload-";
+constexpr char kScratchName[] = "/truce-workload-";
 
 std::string selfPath()
 {
@@ -33,14 +33,14 @@ std::string selfPath()
 
 std::string makeScratch()
 {
-    std::string path = std::string(kScratchPrefix) + "XXXXXX";
+    std::string path = scratchBase() + kScratchName + "XXXXXX";
     if (mkdtemp(path.data()) == nullptr) return {};
     return path;
 }
 
 void removeScratch(const std::string &path, std::vector<std::string> *failures)
 {
-    if (path.rfind(kScratchPrefix, 0) != 0) {
+    if (path.rfind(scratchBase() + kScratchName, 0) != 0) {
         failures->push_back(path + " refused");
         return;
     }
@@ -86,7 +86,7 @@ std::vector<Record> runOnce(const Spec &spec, const std::string &executable, std
 {
     const std::string scratch = makeScratch();
     if (scratch.empty()) {
-        *problem = "could not create /var/tmp scratch";
+        *problem = "could not create a scratch directory in " + scratchBase();
         return {};
     }
     std::vector<std::string> args{executable,
@@ -230,6 +230,15 @@ bool nameInSpec(const std::string &name, const Spec &spec)
     return std::find(names.begin(), names.end(), name) != names.end();
 }
 } // namespace
+
+std::string scratchBase()
+{
+    std::error_code error;
+    if (const char *chosen = std::getenv("BRANCH_TRUCE_WORKLOAD_SCRATCH");
+        chosen && chosen[0] == '/' && std::filesystem::is_directory(chosen, error))
+        return chosen;
+    return "/var/tmp";
+}
 
 std::vector<Aggregate> measure(const std::vector<Spec> &specs, std::string *problem)
 {

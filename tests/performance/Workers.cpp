@@ -3,6 +3,7 @@
 // completed.
 #include "core/Correspondence.h"
 #include "core/FileSnapshot.h"
+#include "fixtures/FixtureGit.h"
 #include "fixtures/performance/WorkloadText.h"
 #include "git/GitAdapter.h"
 #include "performance/Workload.h"
@@ -42,6 +43,9 @@ namespace workload {
 namespace {
 
 using test_support::workloadFile;
+
+// The Git the fixtures run; see test_support::fixtureGit().
+QString fixtureGit() { return QString::fromStdString(test_support::fixtureGit()); }
 using test_support::workloadLongLine;
 
 bool covers(const std::vector<branch_truce::Passage> &passages, std::string_view source, std::string_view result)
@@ -347,7 +351,7 @@ bool runGit(const QString &repo, const QString &home, const QStringList &argumen
             QByteArray *output, QString *error)
 {
     QProcess process;
-    process.setProgram(QStringLiteral("/usr/bin/git"));
+    process.setProgram(fixtureGit());
     process.setArguments(arguments);
     process.setWorkingDirectory(repo);
     process.setProcessEnvironment(gitEnvironment(home));
@@ -433,7 +437,7 @@ int gitWorker(const WorkerArgs &args)
     using branch_truce::git::Outcome;
     using branch_truce::git::Request;
     using branch_truce::git::Result;
-    GitAdapter adapter(QStringLiteral("/usr/bin/git"));
+    GitAdapter adapter(fixtureGit());
     Request request;
     request.directory = repo;
     request.sessionGeneration = 1;
