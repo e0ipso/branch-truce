@@ -283,6 +283,32 @@ int main(int argc, char **argv)
         CHECK(selected.passages().isEmpty() && selected.regions().isEmpty() && selected.handEditedLines().isEmpty()
               && selected.choices().isEmpty());
     });
+    suite.run("background alignment refreshes the selected comparison at the same revision", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        TestSession model(directory.path() + "/recovery");
+        CHECK(model.appendFile(test_support::headingFile()));
+        const NoSelectionGuard guard;
+        Selection selection(model.rows, guard);
+        SelectedFile selected(model.rows, selection);
+        CHECK(selection.select(QStringLiteral("choices")));
+        CHECK(model.editResult("choices", 1, {{6, 8}, "S\n"}) == Transition::Applied);
+        const auto *file = model.file("choices");
+        const auto pending = file->pendingAlignment();
+        CHECK(pending && selected.markerOrphans().size() == 1);
+        const auto passages = selected.passages();
+        const auto revision = selected.currentRevision();
+        QSignalSpy comparison(&selected, &SelectedFile::comparisonChanged);
+        CHECK(comparison.isValid());
+        CHECK(model.installAlignment("choices", file->current().id,
+                                     std::make_shared<const CorrespondenceMap>(pending->realigned()))
+              == Transition::Applied);
+        CHECK(selected.currentRevision() == revision);
+        CHECK(selected.passages() != passages && selected.markerOrphans().isEmpty());
+        CHECK(comparison.count() == 1);
+        selected.sync();
+        CHECK(comparison.count() == 1);
+    });
     suite.run("the selected file exposes passage kinds, region ranges, decisions and the file name", [] {
         Application controller{test_support::windowConfig()};
         CHECK(controller.store()->appendFile(viewFile()));

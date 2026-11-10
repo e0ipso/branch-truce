@@ -5,6 +5,7 @@
 #include "TextPositions.h"
 #include <QtQml/qqmlregistration.h>
 #include <map>
+#include <memory>
 
 namespace branch_truce {
 class Selection;
@@ -166,6 +167,7 @@ private:
     QVariantList status_;
     bool reset_ = true;
     QString projectedRevision_;
+    std::shared_ptr<const CorrespondenceMap> projectedCorrespondence_;
     Support projectedSupport_ = Support::Unreadable;
     bool projectedPending_ = false;
     std::map<SourceSide, std::string> sourceTexts_;

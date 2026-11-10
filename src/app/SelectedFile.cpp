@@ -144,11 +144,13 @@ void SelectedFile::sync()
     update(resultText_, file && !held ? utf8(file->current().draft.text) : QString{}, &SelectedFile::resultTextChanged);
     update(decisions_, role(SessionModel::DecisionsRole).toList(), &SelectedFile::decisionsChanged);
     const auto revision = currentRevision();
+    const auto correspondence = file ? file->current().correspondence : nullptr;
     const auto support = file ? file->support() : Support::Unreadable;
     const bool pending = file && files_.store().pendingDraft(file->id());
     if (changedSources || revision != projectedRevision_ || support != projectedSupport_
-        || pending != projectedPending_) {
+        || correspondence != projectedCorrespondence_ || pending != projectedPending_) {
         projectedRevision_ = revision;
+        projectedCorrespondence_ = correspondence;
         projectedSupport_ = support;
         projectedPending_ = pending;
         project(file);
