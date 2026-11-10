@@ -4,7 +4,9 @@
 #include "acceptance/JourneySteps.h"
 #include "acceptance/JourneySuite.h"
 #include "acceptance/WindowChecks.h"
+#include "fixtures/FileToolbar.h"
 #include "fixtures/QuickScene.h"
+#include "fixtures/UiEvidence.h"
 
 #include <QFont>
 #include <QJsonDocument>
@@ -186,9 +188,7 @@ void expectAccessibleNames(Scene &scene)
         auto *control = test_support::fileOverflowControl(name)
             ? test_support::fileToolbarControl(scene.window(), name, Scene::settleMs)
             : scene.item(name);
-        if (test_support::accessibleName(control).isEmpty())
-            throw std::runtime_error(std::string("no accessible name: ") + name);
-        CHECK(!test_support::accessibleName(control).isEmpty());
+        test_support::requireAccessible(control, name);
         if (test_support::fileOverflowControl(name)) test_support::closeFileToolbarMenu(scene.window());
     }
 }
@@ -206,8 +206,7 @@ void expectMenusInside(Scene &scene)
         scene.click(menu);
         for (const auto *entry : entries) {
             auto *item = test_support::waitForLayout(scene.window(), QString::fromLatin1(entry), Scene::settleMs);
-            if (test_support::accessibleName(item).isEmpty())
-                throw std::runtime_error(std::string("no accessible name: ") + entry);
+            test_support::requireAccessible(item, entry);
             const auto rect = item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
             CHECK(QRectF(0, 0, scene.window()->width(), scene.window()->height()).contains(rect));
         }
@@ -381,7 +380,7 @@ void logicalScreenFitsTheWindow(Sandbox &sandbox)
             throw std::runtime_error("text panes " + std::to_string(pane) + " px high at " + size(screen)
                                      + ", less than eight " + std::to_string(lineHeight) + " px lines");
         for (const auto *name : {"saveDraft", "markResolved"}) {
-            auto *toolbar = test_support::visibleItem(scene.window()->contentItem(), "fileToolBar");
+            auto *toolbar = test_support::visualItem(scene.window()->contentItem(), "fileToolBar", true);
             CHECK(test_support::reachableButton(scene.window(), toolbar, QString::fromLatin1(name)));
         }
         expectIdentitiesWhole(scene, *reference.item, screen);
@@ -455,7 +454,7 @@ void selectionShowsTheFirstUndecidedRegion(Sandbox &sandbox)
                 return firstUndecidedInView(scene).empty();
             },
             [&] { return firstUndecidedInView(scene); });
-        untilFramesDrawn(scene.window());
+        test_support::waitForFrames(scene.window(), "the journey scene");
         recordPlacement("after-two-rendered-frames");
         CHECK(firstUndecidedInView(scene).empty());
     }

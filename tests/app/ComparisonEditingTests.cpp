@@ -1,8 +1,15 @@
 // Editing the result in the window: typing, input methods, the shared edit actions and clipboard,
 // previews and confirmations, and Save and discard.
-#include "ComparisonScene.h"
+#include "ComparisonCases.h"
+#include "ComparisonEditor.h"
+#include "ComparisonRecovery.h"
+#include "ComparisonSessionChecks.h"
+#include "ComparisonTextProbes.h"
 #include "fixtures/AppSession.h"
 #include "fixtures/Await.h"
+#include "fixtures/GuiState.h"
+#include "fixtures/SyncFaults.h"
+#include <QClipboard>
 
 using test_support::await;
 using test_support::commandResult;
@@ -13,36 +20,38 @@ void comparison_scene::addEditingCases(Groups groups)
 {
     auto &scenes = groups.scenes;
     scenes.run("native typing and Unicode selection replacement use command-owned undo redo and recovery", [] {
-        Fixture fixture(test_support::choiceFile("left\n", "right\n", "launch \xf0\x9f\x98\x80\n"));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile("left\n", "right\n", "launch \xf0\x9f\x98\x80\n"));
         const auto initial = fixture.file().current();
         auto *editor = fixture.item("resultText");
         auto *document = editor->property("textDocument").value<QQuickTextDocument *>()->textDocument();
         CHECK(!document->isUndoRedoEnabled());
         CHECK(editor->setProperty("cursorPosition", 0));
-        fixture.key(Qt::Key_A, Qt::NoModifier, "a");
+        key(fixture, Qt::Key_A, Qt::NoModifier, "a");
         const auto typed = fixture.file().current();
         CHECK(typed.id == initial.id + 1 && typed.draft.text == "alaunch \xf0\x9f\x98\x80\n");
-        fixture.checkRecovered(typed.draft);
-        fixture.select(8, 10);
-        fixture.key(Qt::Key_E, Qt::NoModifier, QString::fromUtf8("\xc3\xa9"));
+        checkRecovered(*controller.store(), *controller.files(), typed.draft);
+        select(fixture, 8, 10);
+        key(fixture, Qt::Key_E, Qt::NoModifier, QString::fromUtf8("\xc3\xa9"));
         const auto replaced = fixture.file().current();
         CHECK(replaced.id == typed.id + 1 && replaced.draft.text == "alaunch \xc3\xa9\n");
         CHECK(replaced.draft.decisions == initial.draft.decisions
               && fixture.text().toStdString() == replaced.draft.text);
-        fixture.checkRecovered(replaced.draft);
-        fixture.key(Qt::Key_Z, Qt::ControlModifier);
+        checkRecovered(*controller.store(), *controller.files(), replaced.draft);
+        key(fixture, Qt::Key_Z, Qt::ControlModifier);
         CHECK(fixture.file().current().draft == typed.draft && fixture.text().toStdString() == typed.draft.text);
-        fixture.checkRecovered(typed.draft);
-        fixture.key(Qt::Key_Z, Qt::ControlModifier);
+        checkRecovered(*controller.store(), *controller.files(), typed.draft);
+        key(fixture, Qt::Key_Z, Qt::ControlModifier);
         CHECK(fixture.file().current().draft == initial.draft);
-        fixture.key(Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+        key(fixture, Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
         CHECK(fixture.file().current().draft == typed.draft);
-        fixture.key(Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+        key(fixture, Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
         CHECK(fixture.file().current().draft == replaced.draft && !document->isUndoAvailable());
-        fixture.checkRecovered(replaced.draft);
+        checkRecovered(*controller.store(), *controller.files(), replaced.draft);
     });
     scenes.run("shared edit actions follow selection and clipboard state in both controls", [] {
-        Fixture fixture(test_support::choiceFile("left\n", "right\n", "original\n"));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile("left\n", "right\n", "original\n"));
         auto *actions = fixture.object("resultEditActions");
         const auto action = [&](const char *name) {
             auto *result = actions->property(name).value<QObject *>();
@@ -52,43 +61,44 @@ void comparison_scene::addEditingCases(Groups groups)
         const auto checkEnabled = [&](const char *name, const char *button, const char *entry, bool enabled) {
             auto *shared = action(name);
             CHECK(shared->property("enabled").toBool() == enabled);
-            CHECK(fixture.toolbarEnabled(button) == enabled);
+            CHECK(toolbarEnabled(fixture, button) == enabled);
             CHECK(fixture.object(entry)->property("action").value<QObject *>() == shared);
             CHECK(fixture.object(entry)->property("enabled").toBool() == enabled);
         };
         const test_support::ScopedClipboard clipboard;
         QGuiApplication::clipboard()->setText("clipboard");
-        CHECK(fixture.controller.editor()->editable());
+        CHECK(controller.editor()->editable());
         CHECK(!fixture.item("resultText")->property("readOnly").toBool());
         checkEnabled("copy", "copyResult", "resultMenuCopy", false);
         checkEnabled("paste", "pasteResult", "resultMenuPaste", true);
-        fixture.key(Qt::Key_C, Qt::ControlModifier);
+        key(fixture, Qt::Key_C, Qt::ControlModifier);
         CHECK(QGuiApplication::clipboard()->text() == "clipboard");
-        fixture.select(0, 4);
+        select(fixture, 0, 4);
         checkEnabled("copy", "copyResult", "resultMenuCopy", true);
         CHECK(QMetaObject::invokeMethod(fixture.object("resultContextMenu"), "open"));
         settle([&] { return fixture.object("resultContextMenu")->property("opened").toBool(); });
         CHECK(fixture.item("resultMenuCopy")->isEnabled());
         CHECK(QMetaObject::invokeMethod(fixture.object("resultContextMenu"), "close"));
         settle([&] { return !fixture.object("resultContextMenu")->property("visible").toBool(); });
-        fixture.key(Qt::Key_C, Qt::ControlModifier);
+        key(fixture, Qt::Key_C, Qt::ControlModifier);
         CHECK(QGuiApplication::clipboard()->text() == "orig");
-        fixture.select(0, 0);
+        select(fixture, 0, 0);
         checkEnabled("copy", "copyResult", "resultMenuCopy", false);
         QGuiApplication::clipboard()->clear();
         checkEnabled("paste", "pasteResult", "resultMenuPaste", false);
-        CHECK(fixture.controller.store()->appendFile(FileSession(
+        CHECK(controller.store()->appendFile(FileSession(
             "outside", "diagram.png", {}, {.support = Support::OutsideApp, .supportDetail = "image content"})));
-        CHECK(fixture.controller.selection()->select("outside"));
-        CHECK(!fixture.controller.editor()->editable());
+        CHECK(controller.selection()->select("outside"));
+        CHECK(!controller.editor()->editable());
         CHECK(fixture.item("resultText")->property("readOnly").toBool());
         CHECK(!action("paste")->property("enabled").toBool());
-        CHECK(fixture.controller.selection()->select("choices"));
+        CHECK(controller.selection()->select("choices"));
         QGuiApplication::clipboard()->setText("clipboard");
         checkEnabled("paste", "pasteResult", "resultMenuPaste", true);
     });
     scenes.run("the result menu opens from a right click, the Menu key and Shift+F10", [] {
-        Fixture fixture;
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller);
         settlePanes(fixture);
         auto *editor = fixture.item("resultText");
         auto *menu = fixture.object("resultContextMenu");
@@ -122,63 +132,66 @@ void comparison_scene::addEditingCases(Groups groups)
         closeMenu();
     });
     scenes.run("lossless editing gates toolbar menu and native paste together", [] {
-        Fixture fixture(test_support::choiceFile("left\n", "right\n", "line\xe2\x80\xa8separator\n"));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile("left\n", "right\n", "line\xe2\x80\xa8separator\n"));
         const auto before = fixture.file().current();
         const test_support::ScopedClipboard clipboard;
         QGuiApplication::clipboard()->setText("replacement");
-        CHECK(!fixture.controller.editor()->editable());
+        CHECK(!controller.editor()->editable());
         CHECK(fixture.item("resultText")->property("readOnly").toBool());
-        CHECK(!fixture.toolbarEnabled("pasteResult"));
+        CHECK(!toolbarEnabled(fixture, "pasteResult"));
         CHECK(!fixture.object("resultMenuPaste")->property("enabled").toBool());
         CHECK(QMetaObject::invokeMethod(fixture.object("resultContextMenu"), "open"));
         settle([&] { return fixture.object("resultContextMenu")->property("opened").toBool(); });
         CHECK(!fixture.item("resultMenuPaste")->isEnabled());
         CHECK(QMetaObject::invokeMethod(fixture.object("resultContextMenu"), "close"));
         settle([&] { return !fixture.object("resultContextMenu")->property("visible").toBool(); });
-        CHECK(!fixture.controller.editor()->clipboard(ResultEditorAdapter::ClipboardAction::Paste));
-        fixture.key(Qt::Key_V, Qt::ControlModifier);
+        CHECK(!controller.editor()->clipboard(ResultEditorAdapter::ClipboardAction::Paste));
+        key(fixture, Qt::Key_V, Qt::ControlModifier);
         CHECK(fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
     });
     scenes.run("clipboard menus and shortcuts preserve atomic history and recovery", [] {
-        Fixture fixture(test_support::choiceFile("left\n", "right\n", "original\n"));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile("left\n", "right\n", "original\n"));
         const auto initial = fixture.file().current();
         const test_support::ScopedClipboard clipboard;
-        CHECK(fixture.controller.editor()->clipboard(ResultEditorAdapter::ClipboardAction::SelectAll));
-        CHECK(fixture.controller.editor()->clipboard(ResultEditorAdapter::ClipboardAction::Copy));
+        CHECK(controller.editor()->clipboard(ResultEditorAdapter::ClipboardAction::SelectAll));
+        CHECK(controller.editor()->clipboard(ResultEditorAdapter::ClipboardAction::Copy));
         CHECK(QGuiApplication::clipboard()->text() == "original\n" && fixture.file().current().id == initial.id);
         QGuiApplication::clipboard()->setText(QString::fromUtf8("paste\t\xf0\x9f\x98\x80\n"));
-        CHECK(fixture.controller.editor()->clipboard(ResultEditorAdapter::ClipboardAction::Paste));
+        CHECK(controller.editor()->clipboard(ResultEditorAdapter::ClipboardAction::Paste));
         const auto pasted = fixture.file().current();
         CHECK(pasted.id == initial.id + 1 && pasted.draft.text == "paste\t\xf0\x9f\x98\x80\n");
-        fixture.checkRecovered(pasted.draft);
-        fixture.select(0, 5);
-        fixture.key(Qt::Key_C, Qt::ControlModifier);
+        checkRecovered(*controller.store(), *controller.files(), pasted.draft);
+        select(fixture, 0, 5);
+        key(fixture, Qt::Key_C, Qt::ControlModifier);
         CHECK(QGuiApplication::clipboard()->text() == "paste" && fixture.file().current().id == pasted.id);
-        CHECK(fixture.controller.editor()->clipboard(ResultEditorAdapter::ClipboardAction::Cut));
+        CHECK(controller.editor()->clipboard(ResultEditorAdapter::ClipboardAction::Cut));
         const auto cut = fixture.file().current();
         CHECK(cut.id == pasted.id + 1 && cut.draft.text == "\t\xf0\x9f\x98\x80\n");
-        fixture.checkRecovered(cut.draft);
-        fixture.key(Qt::Key_Z, Qt::ControlModifier);
+        checkRecovered(*controller.store(), *controller.files(), cut.draft);
+        key(fixture, Qt::Key_Z, Qt::ControlModifier);
         CHECK(fixture.file().current().draft == pasted.draft);
-        fixture.select(0, 5);
+        select(fixture, 0, 5);
         QGuiApplication::clipboard()->setText("keyboard paste");
-        fixture.key(Qt::Key_V, Qt::ControlModifier);
+        key(fixture, Qt::Key_V, Qt::ControlModifier);
         const auto keyboard = fixture.file().current();
         CHECK(keyboard.draft.text == "keyboard paste\t\xf0\x9f\x98\x80\n");
-        fixture.checkRecovered(keyboard.draft);
-        fixture.key(Qt::Key_Z, Qt::ControlModifier);
+        checkRecovered(*controller.store(), *controller.files(), keyboard.draft);
+        key(fixture, Qt::Key_Z, Qt::ControlModifier);
         CHECK(fixture.file().current().draft == pasted.draft);
-        fixture.key(Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+        key(fixture, Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
         CHECK(fixture.file().current().draft == keyboard.draft);
-        fixture.checkRecovered(keyboard.draft);
+        checkRecovered(*controller.store(), *controller.files(), keyboard.draft);
     });
     scenes.run("a file click refused while composing leaves the list on the selected row", [] {
-        Fixture fixture;
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller);
         auto captured = *test_support::batchFile().snapshots();
         captured.path = "other.txt";
-        CHECK(fixture.controller.store()->appendFile(FileSession("other", captured.path,
-                                                                 {captured.launchResult.text.utf8, {}, 0},
-                                                                 {.snapshots = captured, .initializeChoices = true})));
+        CHECK(
+            controller.store()->appendFile(FileSession("other", captured.path, {captured.launchResult.text.utf8, {}, 0},
+                                                       {.snapshots = captured, .initializeChoices = true})));
         auto *list = fixture.item("fileList");
         auto *other = test_support::visualButton(
             list, [](QQuickItem *item) { return item->property("fileId").toString() == QStringLiteral("other"); });
@@ -188,16 +201,17 @@ void comparison_scene::addEditingCases(Groups groups)
         QCoreApplication::sendEvent(editor, &preedit);
         CHECK(editor->property("inputMethodComposing").toBool());
         CHECK(QMetaObject::invokeMethod(other, "clicked"));
-        CHECK(fixture.controller.selection()->fileId() == QStringLiteral("choices"));
-        CHECK(list->property("currentIndex").toInt() == fixture.controller.selection()->row());
+        CHECK(controller.selection()->fileId() == QStringLiteral("choices"));
+        CHECK(list->property("currentIndex").toInt() == controller.selection()->row());
         QInputMethodEvent commit;
         QCoreApplication::sendEvent(editor, &commit);
         CHECK(QMetaObject::invokeMethod(other, "clicked"));
-        CHECK(fixture.controller.selection()->fileId() == QStringLiteral("other"));
-        CHECK(list->property("currentIndex").toInt() == fixture.controller.selection()->row());
+        CHECK(controller.selection()->fileId() == QStringLiteral("other"));
+        CHECK(list->property("currentIndex").toInt() == controller.selection()->row());
     });
     scenes.run("an input-method preedit stays pending and its commit is one recovered command", [] {
-        Fixture fixture(test_support::choiceFile());
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile());
         const auto before = fixture.file().current();
         auto *editor = fixture.item("resultText");
         CHECK(editor->setProperty("cursorPosition", 0));
@@ -209,8 +223,8 @@ void comparison_scene::addEditingCases(Groups groups)
         QCoreApplication::sendEvent(editor, &commit);
         const auto chosen = fixture.file().current();
         CHECK(chosen.id == before.id + 1 && chosen.draft.text == std::string("\xe3\x81\x8b") + before.draft.text);
-        fixture.checkRecovered(chosen.draft);
-        fixture.key(Qt::Key_Z, Qt::ControlModifier);
+        checkRecovered(*controller.store(), *controller.files(), chosen.draft);
+        key(fixture, Qt::Key_Z, Qt::ControlModifier);
         CHECK(fixture.file().current().draft == before.draft);
     });
     for (const auto &[scopeName, scope] :
@@ -220,15 +234,16 @@ void comparison_scene::addEditingCases(Groups groups)
         scenes.run("batch preview identifies its file and source scope without changing another file "
                        + scopeName.toStdString(),
                    [=] {
-                       Fixture fixture;
+                       Application controller(test_support::windowConfig());
+                       Fixture fixture(controller);
                        auto captured = *test_support::batchFile().snapshots();
                        captured.path = "other.txt";
-                       CHECK(fixture.controller.store()->appendFile(
+                       CHECK(controller.store()->appendFile(
                            FileSession("other", captured.path, {captured.launchResult.text.utf8, {}, 0},
                                        {.snapshots = captured, .initializeChoices = true})));
-                       const auto other = fixture.controller.store()->file("other")->current();
-                       CHECK(fixture.controller.choices()->previewNonConflicting("choices", "1", scope));
-                       const auto preview = fixture.controller.choices()->nonConflictingPreview();
+                       const auto other = controller.store()->file("other")->current();
+                       CHECK(controller.choices()->previewNonConflicting("choices", "1", scope));
+                       const auto preview = controller.choices()->nonConflictingPreview();
                        CHECK(preview.value("path").toString() == "choices.txt");
                        CHECK(preview.value("scope").toString()
                              == (scopeName == "left"        ? "Left"
@@ -240,26 +255,27 @@ void comparison_scene::addEditingCases(Groups groups)
                            CHECK(label.startsWith(scopeName == "right" ? "Right" : "Left")
                                  || (scopeName == "both" && label.startsWith("Right")));
                        }
-                       CHECK(commandResult(fixture.controller, fixture.controller.choices()->applyNonConflicting()));
-                       CHECK(fixture.controller.store()->file("other")->current().id == other.id);
-                       CHECK(fixture.controller.store()->file("other")->current().draft == other.draft);
+                       CHECK(commandResult(controller, controller.choices()->applyNonConflicting()));
+                       CHECK(controller.store()->file("other")->current().id == other.id);
+                       CHECK(controller.store()->file("other")->current().draft == other.draft);
                        const auto replay =
-                           replayRecovery(storage::RecoveryStore(fixture.controller.store()->recoveryDirectory()));
+                           replayRecovery(storage::RecoveryStore(controller.store()->recoveryDirectory()));
                        CHECK(replay.succeeded && replay.files.size() == 2);
                        for (const auto &file : replay.files)
-                           CHECK(file.current().draft == fixture.controller.store()->file(file.id())->current().draft);
+                           CHECK(file.current().draft == controller.store()->file(file.id())->current().draft);
                    });
     }
     scenes.run("an immediately ready replacement opens after cancelling a pending preview", [] {
-        Fixture fixture;
-        auto &store = *fixture.controller.store();
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller);
+        auto &store = *controller.store();
         CHECK(store.typeResult("choices", fixture.file().current().id, {{0, 0}, "typed "}) == Transition::Applied);
         const auto revision = fixture.file().current().id;
         const auto pending = fixture.file().pendingAlignment();
         CHECK(pending);
         CHECK(QMetaObject::invokeMethod(fixture.window, "chooseWholeFile",
                                         Q_ARG(int, static_cast<int>(ChoicePreviewFlow::Side::LeftSide))));
-        CHECK(fixture.controller.choices()->previewPending());
+        CHECK(controller.choices()->previewPending());
         CHECK(!fixture.object("wholeFileDialog")->property("visible").toBool());
         // No event-loop turn delivers the first request's completion before its replacement.
         CHECK(
@@ -268,7 +284,7 @@ void comparison_scene::addEditingCases(Groups groups)
         CHECK(QMetaObject::invokeMethod(fixture.window, "chooseWholeFile",
                                         Q_ARG(int, static_cast<int>(ChoicePreviewFlow::Side::RightSide))));
         CHECK(fixture.object("wholeFileDialog")->property("visible").toBool());
-        CHECK(fixture.controller.choices()->wholeFilePreview().value("side").toString() == "Right");
+        CHECK(controller.choices()->wholeFilePreview().value("side").toString() == "Right");
         CHECK(QMetaObject::invokeMethod(fixture.object("wholeFileDialog"), "reject"));
     });
     for (const int operation : {0, 1, 2}) {
@@ -278,7 +294,8 @@ void comparison_scene::addEditingCases(Groups groups)
                        : operation == 1 ? "file batch"
                                         : "whole file"),
             [=] {
-                Fixture fixture(operation == 1 ? test_support::batchFile() : test_support::choiceFile());
+                Application controller(test_support::windowConfig());
+                Fixture fixture(controller, operation == 1 ? test_support::batchFile() : test_support::choiceFile());
                 const auto before = fixture.file().current();
                 const auto target =
                     test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
@@ -296,11 +313,9 @@ void comparison_scene::addEditingCases(Groups groups)
                                                  : static_cast<int>(ChoicePreviewFlow::Side::RightSide))));
                 };
                 const auto apply = [&] {
-                    return operation == 0
-                        ? commandResult(fixture.controller, fixture.controller.choices()->applyChoice(true))
-                        : operation == 1
-                        ? commandResult(fixture.controller, fixture.controller.choices()->applyNonConflicting())
-                        : commandResult(fixture.controller, fixture.controller.choices()->applyWholeFile());
+                    return operation == 0 ? commandResult(controller, controller.choices()->applyChoice(true))
+                        : operation == 1  ? commandResult(controller, controller.choices()->applyNonConflicting())
+                                          : commandResult(controller, controller.choices()->applyWholeFile());
                 };
                 const auto *dialogName = operation == 0 ? "replacementDialog"
                     : operation == 1                    ? "nonConflictingDialog"
@@ -309,38 +324,42 @@ void comparison_scene::addEditingCases(Groups groups)
                 auto *dialog = fixture.object(dialogName);
                 CHECK(dialog->property("visible").toBool());
                 CHECK(QMetaObject::invokeMethod(dialog, "reject"));
-                CHECK(fixture.controller.choices()->choicePreview().isEmpty()
-                      && fixture.controller.choices()->nonConflictingPreview().isEmpty()
-                      && fixture.controller.choices()->wholeFilePreview().isEmpty());
+                CHECK(controller.choices()->choicePreview().isEmpty()
+                      && controller.choices()->nonConflictingPreview().isEmpty()
+                      && controller.choices()->wholeFilePreview().isEmpty());
                 CHECK(!apply() && fixture.file().current().id == before.id
                       && fixture.file().current().draft == before.draft);
-                fixture.checkRecovered(before.draft);
+                checkRecovered(*controller.store(), *controller.files(), before.draft);
                 open();
-                CHECK(commandResult(fixture.controller,
-                                    fixture.controller.commands()->editResult("choices", QString::number(before.id), 0,
-                                                                              0, "newer manual edit\n")));
+                CHECK(commandResult(controller,
+                                    controller.commands()->editResult("choices", QString::number(before.id), 0, 0,
+                                                                      "newer manual edit\n")));
                 const auto newer = fixture.file().current();
                 // A refused confirmation keeps the dialog open and says why.
                 CHECK(QMetaObject::invokeMethod(dialog, "confirm"));
                 CHECK(dialog->property("visible").toBool() && dialog->property("refused").toBool());
-                CHECK(dialog->property("refusalMessage").toString() == fixture.controller.feedback()->message()
-                      && !fixture.controller.feedback()->message().isEmpty());
+                CHECK(dialog->property("refusalMessage").toString() == controller.feedback()->message()
+                      && !controller.feedback()->message().isEmpty());
                 CHECK(!apply() && fixture.file().current().id == newer.id
                       && fixture.file().current().draft == newer.draft);
-                fixture.checkRecovered(newer.draft);
+                checkRecovered(*controller.store(), *controller.files(), newer.draft);
                 CHECK(QMetaObject::invokeMethod(dialog, "reject"));
             });
     }
     scenes.run("Save and discard controls keep the app baseline and retry a failed Save", [] {
-        Fixture fixture;
+        const auto faults = std::make_shared<test_support::SyncFaults>();
+        auto config = test_support::windowConfig();
+        config.files = faults;
+        Application controller(std::move(config));
+        Fixture fixture(controller);
         auto saved = fixture.file().current().draft;
         saved.text += "saved app draft\n";
         saved.decisions["kept"] = {DecisionValue::Accepted, 4};
-        CHECK(await(fixture.controller.store()->replaceDraft("choices", fixture.file().current().id, saved))
+        CHECK(await(controller.store()->replaceDraft("choices", fixture.file().current().id, saved))
               == Transition::Applied);
-        settle([&] { return fixture.controller.selectedFile()->unsaved(); });
-        fixture.click("saveDraft");
-        CHECK(fixture.controller.feedback()->message() == "Draft saved in Branch Truce; repository file unchanged.");
+        settle([&] { return controller.selectedFile()->unsaved(); });
+        click(fixture, "saveDraft");
+        CHECK(controller.feedback()->message() == "Draft saved in Branch Truce; repository file unchanged.");
         settle([&] { return fixture.item("commandMessage")->isVisible(); });
         CHECK(fixture.item("commandMessage")
                   ->property("text")
@@ -352,7 +371,7 @@ void comparison_scene::addEditingCases(Groups groups)
               && !fixture.file().publication().staged());
         // A restart sees the Save and nothing written; SessionRecoveryTests checks the records themselves.
         {
-            const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.store()->recoveryDirectory()));
+            const auto replay = replayRecovery(storage::RecoveryStore(controller.store()->recoveryDirectory()));
             CHECK(replay.succeeded && replay.files.front().publication().checkpoint()
                   && replay.files.front().revision(*replay.files.front().publication().checkpoint())->draft == saved);
             CHECK(!replay.files.front().publication().written() && !replay.files.front().publication().staged());
@@ -360,51 +379,49 @@ void comparison_scene::addEditingCases(Groups groups)
         auto discarded = saved;
         discarded.text += "discarded edit\n";
         discarded.decisions["kept"] = {DecisionValue::Ignored, {}};
-        CHECK(await(fixture.controller.store()->replaceDraft("choices", fixture.file().current().id, discarded))
+        CHECK(await(controller.store()->replaceDraft("choices", fixture.file().current().id, discarded))
               == Transition::Applied);
-        settle([&] { return fixture.controller.selectedFile()->unsaved(); });
+        settle([&] { return controller.selectedFile()->unsaved(); });
         CHECK(fixture.file().revision(*fixture.file().publication().checkpoint())->draft == saved);
-        fixture.click("discardUnsaved");
+        click(fixture, "discardUnsaved");
         CHECK(fixture.file().current().draft == saved && fixture.file().current().draft != discarded);
         CHECK(fixture.file().current().draft.decisions.at("kept").value == DecisionValue::Accepted);
         CHECK(fixture.text().toStdString() == saved.text);
         CHECK(!fixture.file().facts().unsaved && !fixture.file().publication().written()
               && !fixture.file().publication().staged());
-        const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.store()->recoveryDirectory()));
+        const auto replay = replayRecovery(storage::RecoveryStore(controller.store()->recoveryDirectory()));
         CHECK(replay.succeeded && replay.files.front().current().draft == saved);
         CHECK(replay.files.front().current().draft != discarded && !replay.files.front().publication().written()
               && !replay.files.front().publication().staged());
 
-        CHECK(commandResult(fixture.controller,
-                            fixture.controller.commands()->editResult(
+        CHECK(commandResult(controller,
+                            controller.commands()->editResult(
                                 "choices", QString::number(fixture.file().current().id),
                                 static_cast<int>(QString::fromStdString(saved.text).size()),
                                 static_cast<int>(QString::fromStdString(saved.text).size()), "retry me\n")));
         const auto edited = fixture.file().current().draft;
         {
-            const test_support::ArmedFault fault(*fixture.faults, test_support::SyncFaults::Point::JournalSync);
-            fixture.click("saveDraft");
+            const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
+            click(fixture, "saveDraft");
         }
-        settle([&] {
-            return fixture.controller.selectedFile()->recoveryState() == FileStates::RecoveryState::SaveFailed;
-        });
+        settle([&] { return controller.selectedFile()->recoveryState() == FileStates::RecoveryState::SaveFailed; });
         CHECK(fixture.file().current().draft == edited && fixture.file().facts().unsaved);
         CHECK(fixture.file().revision(*fixture.file().publication().checkpoint())->draft == saved);
         CHECK(fixture.text().toStdString() == edited.text);
         settle([&] { return fixture.item("commandMessage")->isVisible(); });
         CHECK(fixture.item("commandMessage")->property("text").toString().contains("Draft save failed"));
-        CHECK(fixture.controller.feedback()->message() == "Draft save failed. The edited result is still available.");
+        CHECK(controller.feedback()->message() == "Draft save failed. The edited result is still available.");
         CHECK(fixture.item("retrySave")->isVisible());
         CHECK(!fixture.item("saveDraft")->isEnabled());
-        CHECK(!fixture.toolbarEnabled("discardUnsaved"));
-        CHECK(!fixture.toolbarEnabled("undoCommand"));
+        CHECK(!toolbarEnabled(fixture, "discardUnsaved"));
+        CHECK(!toolbarEnabled(fixture, "undoCommand"));
         CHECK(!fixture.file().publication().written() && !fixture.file().publication().staged());
-        fixture.click("retrySave");
-        settle([&] { return !fixture.controller.selectedFile()->unsaved(); });
+        click(fixture, "retrySave");
+        settle([&] { return !controller.selectedFile()->unsaved(); });
         CHECK(fixture.file().publication().checkpoint()
               && fixture.file().revision(*fixture.file().publication().checkpoint())->draft == edited);
         CHECK(!fixture.file().facts().unsaved && !fixture.item("retrySave")->isVisible());
-        CHECK(fixture.controller.selectedFile()->status() == "Draft saved in Branch Truce; repository file unchanged");
+        CHECK(controller.selectedFile()->status() == "Draft saved in Branch Truce; repository file unchanged");
         CHECK(!fixture.file().publication().written() && !fixture.file().publication().staged());
     });
 }

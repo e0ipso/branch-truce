@@ -1,5 +1,6 @@
 // The steps journeys take through the window and the checks they share.
 #include "acceptance/JourneySteps.h"
+#include "fixtures/FileToolbar.h"
 
 #include "fixtures/Files.h"
 #include "fixtures/QuickScene.h"
@@ -249,7 +250,7 @@ void clickOverflowAction(Scene &scene, const char *name)
     auto *toolbar = scene.item("fileToolBar");
     test_support::clickItem(scene.window(), stable(scene, "file toolbar overflow", [&] {
                                 return test_support::visualButton(toolbar, [](QQuickItem *button) {
-                                    return test_support::accessibleName(button) == QStringLiteral("More Actions");
+                                    return test_support::locatorName(button) == QStringLiteral("More Actions");
                                 });
                             }));
     auto *action = scene.object(name);
@@ -413,16 +414,6 @@ std::unique_ptr<mergetool_fixture::ParentProcess> startMergetool(const Sandbox &
                        + paths);
     CHECK(process->waitForStarted(5000));
     return process;
-}
-
-ReadOnlyDirectory::ReadOnlyDirectory(QString path) : path_(std::move(path))
-{
-    CHECK(QFile::setPermissions(path_, QFileDevice::ReadOwner | QFileDevice::ExeOwner));
-}
-
-ReadOnlyDirectory::~ReadOnlyDirectory()
-{
-    QFile::setPermissions(path_, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
 }
 
 } // namespace journey

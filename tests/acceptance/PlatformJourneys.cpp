@@ -5,6 +5,7 @@
 #include "acceptance/JourneySteps.h"
 #include "acceptance/JourneySuite.h"
 #include "acceptance/WindowChecks.h"
+#include "fixtures/FileToolbar.h"
 #include "fixtures/QuickScene.h"
 
 #include <QAccessible>
@@ -124,31 +125,25 @@ void controlsHaveRolesAndTakeKeyboardFocus(Sandbox &sandbox)
     Repository repo(journeyPaths());
     Scene scene(sandbox, repo);
     clickFile(scene, "story.txt");
-    const auto chain = focusChain(scene.window());
-    int buttons = 0;
     for (const auto *name : mainControls) {
-        // A live button, not a toolbar's hidden measurement copy, else a label or view. A control in
-        // the toolbar overflow is checked through its menu entry by the fit journeys.
-        const auto objectName = QString::fromLatin1(name);
-        auto *control = test_support::reachableButton(scene.window(), scene.window()->contentItem(), objectName);
-        if (!control) control = test_support::visibleItem(scene.window()->contentItem(), objectName);
-        if (!control || (test_support::fileOverflowControl(name) && !control->inherits("QQuickAbstractButton")))
-            continue;
-        const auto *face = QAccessible::queryAccessibleInterface(control);
-        if (!face) throw std::runtime_error(std::string(name) + " has no accessible interface");
-        const auto role = face->role();
-        if (!control->inherits("QQuickAbstractButton")) {
-            if (role == QAccessible::NoRole) throw std::runtime_error(std::string(name) + " has no accessible role");
-            continue;
+        const bool overflow = test_support::fileOverflowControl(name);
+        auto *control = overflow ? test_support::fileToolbarControl(scene.window(), name) : scene.item(name);
+        const auto *face = test_support::requireAccessible(control, name);
+        CHECK(control->isVisible());
+        if (control->inherits("QQuickAbstractButton")) {
+            if (!buttonRole(face->role()) && !(overflow && face->role() == QAccessible::MenuItem))
+                throw std::runtime_error(std::string(name) + " has an unexpected accessible button role");
+            if (control->isEnabled()) {
+                if (!overflow && !focusChain(scene.window()).contains(control))
+                    throw std::runtime_error(std::string(name) + " is not in the keyboard focus chain");
+                // Popup entries use the menu's keyboard navigation rather than the window Tab chain.
+                control->forceActiveFocus(Qt::TabFocusReason);
+                test_support::settleFor(std::string(name) + " accessible keyboard focus",
+                                        [&] { return control->hasActiveFocus() && face->state().focused; });
+            }
         }
-        ++buttons;
-        if (!buttonRole(role))
-            throw std::runtime_error(std::string(name) + " is a button with the accessible role "
-                                     + std::to_string(static_cast<int>(role)));
-        if (control->isEnabled() && !chain.contains(control))
-            throw std::runtime_error(std::string(name) + " is not in the keyboard focus chain");
+        if (overflow) test_support::closeFileToolbarMenu(scene.window());
     }
-    CHECK(buttons > 0);
     checkOffline(scene);
 }
 } // namespace

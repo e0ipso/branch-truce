@@ -1,6 +1,11 @@
 // Navigation and scrolling: within-file and file-list navigation, synchronised scrolling, and the
 // cursor and viewport across undo, redo and choices.
-#include "ComparisonScene.h"
+#include "ComparisonCases.h"
+#include "ComparisonEditor.h"
+#include "ComparisonGeometry.h"
+#include "ComparisonNavigationChecks.h"
+#include "ComparisonSessionChecks.h"
+#include "ComparisonTextProbes.h"
 #include "fixtures/AppSession.h"
 #include "fixtures/Await.h"
 
@@ -15,95 +20,104 @@ void comparison_scene::addNavigationCases(Groups groups)
     scenes.run("revision progress, within-file navigation, unfinished files and file-list location", [] {
         const std::string result = "same\nAAA\nmid\nBBB\n";
         const std::string left = "same\nleftA\nmid\nleftB\n";
-        Fixture fixture(test_support::choiceFile(left, result, result));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile(left, result, result));
         const auto revision = fixture.file().current().id;
         CHECK(revision == 1);
         CHECK(fixture.file().facts().undecided == 4);
-        expectProgress(fixture, false, false, false, false, QStringLiteral("1"), {}, {}, {}, 4);
+        expectProgress(*controller.selection(), *controller.selectedFile(), false, false, false, false,
+                       QStringLiteral("1"), {}, {}, {}, 4);
 
-        fixture.select(0, 0);
-        fixture.clickMenuEntry("navigateMenu", "nextDifference");
-        expectNavigation(fixture, QStringLiteral("difference"), QStringLiteral("choices"), QStringLiteral("result"), 0,
-                         2, 5, 9, QStringLiteral("Difference 1 of 2 · result bytes 5-9"));
-        fixture.clickMenuEntry("navigateMenu", "nextDifference");
-        expectNavigation(fixture, QStringLiteral("difference"), QStringLiteral("choices"), QStringLiteral("result"), 1,
-                         2, 13, 17, QStringLiteral("Difference 2 of 2 · result bytes 13-17"));
-        fixture.clickMenuEntry("navigateMenu", "nextDifference");
-        expectNavigation(fixture, QStringLiteral("difference"), QStringLiteral("choices"), QStringLiteral("result"), 0,
-                         2, 5, 9, QStringLiteral("Difference 1 of 2 · result bytes 5-9"));
-        fixture.clickMenuEntry("navigateMenu", "previousDifference");
-        expectNavigation(fixture, QStringLiteral("difference"), QStringLiteral("choices"), QStringLiteral("result"), 1,
-                         2, 13, 17, QStringLiteral("Difference 2 of 2 · result bytes 13-17"));
+        select(fixture, 0, 0);
+        clickMenuEntry(fixture, "navigateMenu", "nextDifference");
+        expectNavigation(fixture, *controller.navigator(), *controller.selection(), QStringLiteral("difference"),
+                         QStringLiteral("choices"), QStringLiteral("result"), 0, 2, 5, 9,
+                         QStringLiteral("Difference 1 of 2 · result bytes 5-9"));
+        clickMenuEntry(fixture, "navigateMenu", "nextDifference");
+        expectNavigation(fixture, *controller.navigator(), *controller.selection(), QStringLiteral("difference"),
+                         QStringLiteral("choices"), QStringLiteral("result"), 1, 2, 13, 17,
+                         QStringLiteral("Difference 2 of 2 · result bytes 13-17"));
+        clickMenuEntry(fixture, "navigateMenu", "nextDifference");
+        expectNavigation(fixture, *controller.navigator(), *controller.selection(), QStringLiteral("difference"),
+                         QStringLiteral("choices"), QStringLiteral("result"), 0, 2, 5, 9,
+                         QStringLiteral("Difference 1 of 2 · result bytes 5-9"));
+        clickMenuEntry(fixture, "navigateMenu", "previousDifference");
+        expectNavigation(fixture, *controller.navigator(), *controller.selection(), QStringLiteral("difference"),
+                         QStringLiteral("choices"), QStringLiteral("result"), 1, 2, 13, 17,
+                         QStringLiteral("Difference 2 of 2 · result bytes 13-17"));
 
         // Contribution decisions remain four, while this markerless draft has no conflicts.
         for (const auto *name : {"nextUndecided", "previousUndecided", "undecidedCounter"})
             CHECK(!fixture.item(name)->isEnabled());
-        CHECK(fixture.controller.selectedFile()->progress().value("conflicts").toInt() == 0);
+        CHECK(controller.selectedFile()->progress().value("conflicts").toInt() == 0);
         // Explicit legacy source-decision callers retain their exact four targets.
-        fixture.select(0, 0);
-        CHECK(fixture.controller.navigator()->navigate(FileNavigator::Mode::Undecided, 1));
-        expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"), QStringLiteral("result"), 0,
-                         4, 5, 9, QStringLiteral("Undecided 1 of 4 · Left · result bytes 5-9"),
-                         QStringLiteral("pick/1/5/11"));
-        CHECK(fixture.controller.navigator()->navigate(FileNavigator::Mode::Undecided, 1));
-        expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"), QStringLiteral("result"), 1,
-                         4, 5, 9, QStringLiteral("Undecided 2 of 4 · Right · result bytes 5-9"),
-                         QStringLiteral("pick/2/5/9"));
-        CHECK(fixture.controller.navigator()->navigate(FileNavigator::Mode::Undecided, 1));
-        expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"), QStringLiteral("result"), 2,
-                         4, 13, 17, QStringLiteral("Undecided 3 of 4 · Left · result bytes 13-17"),
+        select(fixture, 0, 0);
+        CHECK(controller.navigator()->navigate(FileNavigator::Mode::Undecided, 1));
+        expectNavigation(fixture, *controller.navigator(), *controller.selection(), QStringLiteral("undecided"),
+                         QStringLiteral("choices"), QStringLiteral("result"), 0, 4, 5, 9,
+                         QStringLiteral("Undecided 1 of 4 · Left · result bytes 5-9"), QStringLiteral("pick/1/5/11"));
+        CHECK(controller.navigator()->navigate(FileNavigator::Mode::Undecided, 1));
+        expectNavigation(fixture, *controller.navigator(), *controller.selection(), QStringLiteral("undecided"),
+                         QStringLiteral("choices"), QStringLiteral("result"), 1, 4, 5, 9,
+                         QStringLiteral("Undecided 2 of 4 · Right · result bytes 5-9"), QStringLiteral("pick/2/5/9"));
+        CHECK(controller.navigator()->navigate(FileNavigator::Mode::Undecided, 1));
+        expectNavigation(fixture, *controller.navigator(), *controller.selection(), QStringLiteral("undecided"),
+                         QStringLiteral("choices"), QStringLiteral("result"), 2, 4, 13, 17,
+                         QStringLiteral("Undecided 3 of 4 · Left · result bytes 13-17"),
                          QStringLiteral("pick/1/15/21"));
-        CHECK(fixture.controller.navigator()->navigate(FileNavigator::Mode::Undecided, 1));
-        expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"), QStringLiteral("result"), 3,
-                         4, 13, 17, QStringLiteral("Undecided 4 of 4 · Right · result bytes 13-17"),
+        CHECK(controller.navigator()->navigate(FileNavigator::Mode::Undecided, 1));
+        expectNavigation(fixture, *controller.navigator(), *controller.selection(), QStringLiteral("undecided"),
+                         QStringLiteral("choices"), QStringLiteral("result"), 3, 4, 13, 17,
+                         QStringLiteral("Undecided 4 of 4 · Right · result bytes 13-17"),
                          QStringLiteral("pick/2/13/17"));
-        CHECK(fixture.controller.navigator()->navigate(FileNavigator::Mode::Undecided, 1));
-        expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"), QStringLiteral("result"), 0,
-                         4, 5, 9, QStringLiteral("Undecided 1 of 4 · Left · result bytes 5-9"),
-                         QStringLiteral("pick/1/5/11"));
-        CHECK(fixture.controller.navigator()->navigate(FileNavigator::Mode::Undecided, -1));
-        expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"), QStringLiteral("result"), 3,
-                         4, 13, 17, QStringLiteral("Undecided 4 of 4 · Right · result bytes 13-17"),
+        CHECK(controller.navigator()->navigate(FileNavigator::Mode::Undecided, 1));
+        expectNavigation(fixture, *controller.navigator(), *controller.selection(), QStringLiteral("undecided"),
+                         QStringLiteral("choices"), QStringLiteral("result"), 0, 4, 5, 9,
+                         QStringLiteral("Undecided 1 of 4 · Left · result bytes 5-9"), QStringLiteral("pick/1/5/11"));
+        CHECK(controller.navigator()->navigate(FileNavigator::Mode::Undecided, -1));
+        expectNavigation(fixture, *controller.navigator(), *controller.selection(), QStringLiteral("undecided"),
+                         QStringLiteral("choices"), QStringLiteral("result"), 3, 4, 13, 17,
+                         QStringLiteral("Undecided 4 of 4 · Right · result bytes 13-17"),
                          QStringLiteral("pick/2/13/17"));
-        CHECK(fixture.controller.selection()->fileId() == QStringLiteral("choices"));
+        CHECK(controller.selection()->fileId() == QStringLiteral("choices"));
         CHECK(fixture.file().current().id == revision);
         CHECK(fixture.text().toStdString() == result);
 
         CHECK(fixture.item("saveDraft")->isEnabled());
-        fixture.click("saveDraft");
-        CHECK(fixture.controller.feedback()->message()
+        click(fixture, "saveDraft");
+        CHECK(controller.feedback()->message()
               == QStringLiteral("Draft saved in Branch Truce; repository file unchanged."));
         CHECK(fixture.file().publication().checkpoint() && *fixture.file().publication().checkpoint() == revision);
         CHECK(!fixture.file().publication().written() && !fixture.file().publication().staged()
               && !fixture.file().publication().reviewed());
-        expectProgress(fixture, true, false, false, false, QStringLiteral("1"), QStringLiteral("1"), {}, {}, 4);
+        expectProgress(*controller.selection(), *controller.selectedFile(), true, false, false, false,
+                       QStringLiteral("1"), QStringLiteral("1"), {}, {}, 4);
 
         // Progress keeps the review, write and stage revisions separate.
-        CHECK(await(fixture.controller.store()->beginMarkResolved("choices", revision, true)) == Transition::Applied);
+        CHECK(await(controller.store()->beginMarkResolved("choices", revision, true)) == Transition::Applied);
         CHECK(fixture.file().publication().reviewed() && fixture.file().publication().reviewed()->revision == revision);
         CHECK(!fixture.file().publication().written() && !fixture.file().publication().staged()
               && !fixture.file().facts().resolved);
-        expectProgress(fixture, true, true, false, false, QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("1"),
-                       {}, 4);
-        CHECK(await(fixture.controller.store()->recordWrite("choices", revision, Outcome::Succeeded))
-              == Transition::Applied);
-        CHECK(await(fixture.controller.store()->recordStage("choices", revision, Outcome::Succeeded, "verified-object",
-                                                            "100644"))
-              == Transition::Applied);
+        expectProgress(*controller.selection(), *controller.selectedFile(), true, true, false, false,
+                       QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("1"), {}, 4);
+        CHECK(await(controller.store()->recordWrite("choices", revision, Outcome::Succeeded)) == Transition::Applied);
+        CHECK(
+            await(controller.store()->recordStage("choices", revision, Outcome::Succeeded, "verified-object", "100644"))
+            == Transition::Applied);
         CHECK(fixture.file().facts().resolved && fixture.file().publication().staged()->revision == revision);
         CHECK(fixture.text().toStdString() == result);
-        expectProgress(fixture, true, true, true, false, QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("1"),
-                       QStringLiteral("1"), 4);
+        expectProgress(*controller.selection(), *controller.selectedFile(), true, true, true, false,
+                       QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("1"), 4);
 
-        CHECK(fixture.controller.store()->appendFile(FileSession(
+        CHECK(controller.store()->appendFile(FileSession(
             "outside", "diagram.png", {}, {.support = Support::OutsideApp, .supportDetail = "image content"})));
-        CHECK(fixture.controller.files()->outsideAppFiles() == 1);
+        CHECK(controller.files()->outsideAppFiles() == 1);
         CHECK(fixture.file().facts().resolved);
-        fixture.click("nextUnfinished");
-        expectNavigation(fixture, QStringLiteral("unfinished"), QStringLiteral("outside"),
-                         QStringLiteral("outside-editor"), 0, 1, 0, 0,
+        click(fixture, "nextUnfinished");
+        expectNavigation(fixture, *controller.navigator(), *controller.selection(), QStringLiteral("unfinished"),
+                         QStringLiteral("outside"), QStringLiteral("outside-editor"), 0, 1, 0, 0,
                          QStringLiteral("Unfinished file · outside the editor · diagram.png"));
-        const auto unfinished = fixture.controller.navigator()->target();
+        const auto unfinished = controller.navigator()->target();
         CHECK(unfinished.value(QStringLiteral("support")).toString() == QStringLiteral("outside-app"));
         CHECK(!unfinished.value(QStringLiteral("resolved")).toBool());
         CHECK(unfinished.value(QStringLiteral("path")).toString() == QStringLiteral("diagram.png"));
@@ -114,31 +128,32 @@ void comparison_scene::addNavigationCases(Groups groups)
                   .toString()
                   .contains(QStringLiteral("outstanding")));
         expectDiagnostic(fixture, QStringLiteral("image content"));
-        const auto *outside = fixture.controller.store()->file("outside");
+        const auto *outside = controller.store()->file("outside");
         CHECK(outside && outside->support() == Support::OutsideApp);
         CHECK(outside->supportDetail() == "image content");
         CHECK(outside->current().draft.text.empty() && !outside->facts().resolved);
-        fixture.click("previousUnfinished");
-        expectNavigation(fixture, QStringLiteral("unfinished"), QStringLiteral("outside"),
-                         QStringLiteral("outside-editor"), 0, 1, 0, 0,
+        click(fixture, "previousUnfinished");
+        expectNavigation(fixture, *controller.navigator(), *controller.selection(), QStringLiteral("unfinished"),
+                         QStringLiteral("outside"), QStringLiteral("outside-editor"), 0, 1, 0, 0,
                          QStringLiteral("Unfinished file · outside the editor · diagram.png"));
         CHECK(fixture.file().support() == Support::Supported && fixture.file().facts().resolved);
 
-        CHECK(fixture.controller.selection()->select(QStringLiteral("choices")));
+        CHECK(controller.selection()->select(QStringLiteral("choices")));
         settle([&] { return fixture.text().toStdString() == result; });
         auto newer = fixture.file().current().draft;
         newer.text += "newer\n";
-        CHECK(await(fixture.controller.store()->replaceDraft("choices", revision, newer)) == Transition::Applied);
+        CHECK(await(controller.store()->replaceDraft("choices", revision, newer)) == Transition::Applied);
         CHECK(fixture.file().current().id == revision + 1);
         CHECK(fixture.file().publication().staged() && fixture.file().publication().staged()->revision == revision);
         CHECK(fixture.file().facts().earlierStaged && !fixture.file().facts().resolved
               && fixture.file().facts().unsaved);
         settle([&] { return fixture.text().toStdString() == newer.text; });
-        expectProgress(fixture, false, false, false, true, QStringLiteral("2"), {}, {}, QStringLiteral("1"), 4);
+        expectProgress(*controller.selection(), *controller.selectedFile(), false, false, false, true,
+                       QStringLiteral("2"), {}, {}, QStringLiteral("1"), 4);
 
         const auto heldRevision = fixture.file().current().id;
         const auto heldText = fixture.text();
-        fixture.select(1, 6);
+        select(fixture, 1, 6);
         auto *editor = fixture.item("resultText");
         const int cursor = editor->property("cursorPosition").toInt();
         const int selectionStart = editor->property("selectionStart").toInt();
@@ -150,34 +165,35 @@ void comparison_scene::addNavigationCases(Groups groups)
         CHECK(fixture.window->property("fileListVisible").toBool() && fixture.item("fileList")->isVisible());
         CHECK(fixture.item("toggleFileList")->property("checked").toBool());
         CHECK(test_support::accessibleName(fixture.item("toggleFileList")) == QStringLiteral("Show file list"));
-        fixture.click("toggleFileList");
+        click(fixture, "toggleFileList");
         CHECK(!fixture.window->property("fileListVisible").toBool() && !fixture.item("fileList")->isVisible());
         CHECK(!fixture.item("toggleFileList")->property("checked").toBool());
         CHECK(test_support::accessibleName(fixture.item("toggleFileList")) == QStringLiteral("Show file list"));
-        CHECK(fixture.controller.selection()->fileId() == QStringLiteral("choices"));
+        CHECK(controller.selection()->fileId() == QStringLiteral("choices"));
         CHECK(fixture.file().current().id == heldRevision && fixture.file().facts().unsaved);
         CHECK(fixture.text() == heldText && fixture.text().toStdString() == newer.text);
         CHECK(editor->property("cursorPosition").toInt() == cursor);
         CHECK(editor->property("selectionStart").toInt() == selectionStart);
         CHECK(editor->property("selectionEnd").toInt() == selectionEnd);
-        fixture.click("toggleFileList");
+        click(fixture, "toggleFileList");
         CHECK(fixture.window->property("fileListVisible").toBool() && fixture.item("fileList")->isVisible());
         CHECK(fixture.item("toggleFileList")->property("checked").toBool());
         CHECK(test_support::accessibleName(fixture.item("toggleFileList")) == QStringLiteral("Show file list"));
-        CHECK(fixture.controller.selection()->fileId() == QStringLiteral("choices"));
+        CHECK(controller.selection()->fileId() == QStringLiteral("choices"));
         CHECK(fixture.file().current().id == heldRevision && fixture.text() == heldText
               && fixture.file().facts().unsaved);
         CHECK(editor->property("cursorPosition").toInt() == cursor);
         CHECK(editor->property("selectionStart").toInt() == selectionStart);
         CHECK(editor->property("selectionEnd").toInt() == selectionEnd);
-        const auto *stillOutside = fixture.controller.store()->file("outside");
+        const auto *stillOutside = controller.store()->file("outside");
         CHECK(stillOutside && stillOutside->support() == Support::OutsideApp);
         CHECK(stillOutside->supportDetail() == "image content" && stillOutside->current().draft.text.empty());
     });
     scenes.run("toggling the file list restores the result viewport scroll position", [] {
         std::string result;
         for (int line = 0; line < 200; ++line) result += std::string(240, static_cast<char>('a' + line % 26)) + "\n";
-        Fixture fixture(test_support::choiceFile("left\n", result, result));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile("left\n", result, result));
         auto *viewport = fixture.item("resultViewport");
         settle([&] {
             return viewport->property("contentHeight").toReal() > viewport->height() * 2
@@ -187,7 +203,7 @@ void comparison_scene::addNavigationCases(Groups groups)
         // position whose preservation this test exercises.
         test_support::waitForStable(fixture.window, "initial result viewport", [&] { return viewport; }, 60);
         // Keep the cursor at the top so that scrolling away leaves it out of view.
-        fixture.select(0, 0);
+        select(fixture, 0, 0);
         CHECK(viewport->setProperty("contentY", 600.0));
         CHECK(viewport->setProperty("contentX", 40.0));
         settle([&] {
@@ -201,20 +217,21 @@ void comparison_scene::addNavigationCases(Groups groups)
                 viewport->setProperty("contentX", 0.0);
             },
             Qt::DirectConnection);
-        fixture.click("toggleFileList");
+        click(fixture, "toggleFileList");
         QObject::disconnect(moved);
         CHECK(!fixture.window->property("fileListVisible").toBool());
         settle([&] { return fixture.item("resultText")->width() > 0; });
         CHECK(viewport->property("contentY").toReal() == 600.0);
         CHECK(viewport->property("contentX").toReal() == 40.0);
-        fixture.click("toggleFileList");
+        click(fixture, "toggleFileList");
         CHECK(fixture.window->property("fileListVisible").toBool());
         settle([&] { return fixture.item("resultText")->width() > 0; });
         CHECK(viewport->property("contentY").toReal() == 600.0);
         CHECK(viewport->property("contentX").toReal() == 40.0);
     });
     scenes.run("dragging the split handle resizes the file list within its limits and the toggle collapses it", [] {
-        Fixture fixture;
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller);
         auto *sidebar = test_support::waitForLayout(fixture.window, QStringLiteral("fileList"), 60)->parentItem();
         auto *split = sidebar->parentItem();
         while (split && !QByteArray(split->metaObject()->className()).contains("SplitView"))
@@ -255,16 +272,17 @@ void comparison_scene::addNavigationCases(Groups groups)
         drag(120);
         const auto chosen = sidebar->width();
         CHECK(std::abs(chosen - (minimum + 120)) < 2);
-        fixture.click("toggleFileList");
+        click(fixture, "toggleFileList");
         CHECK(!fixture.window->property("fileListVisible").toBool());
         settle([&] { return !sidebar->isVisible(); });
-        fixture.click("toggleFileList");
+        click(fixture, "toggleFileList");
         CHECK(fixture.window->property("fileListVisible").toBool());
         settle([&] { return sidebar->isVisible() && sidebar->width() > 0; });
         CHECK(std::abs(sidebar->width() - chosen) < 2);
     });
     scenes.run("scrolling the left source moves the result and the right source to the mapped lines", [] {
-        Fixture fixture(insertionFile());
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, insertionFile());
         auto *left = fixture.item("stage2Viewport");
         auto *result = fixture.item("resultViewport");
         auto *right = fixture.item("stage3Viewport");
@@ -283,15 +301,16 @@ void comparison_scene::addNavigationCases(Groups groups)
         CHECK((std::array<qreal, 3>{contentY(left), contentY(result), contentY(right)}) == settled);
 
         // Five new lines at the top of the result move the mapping with them.
-        fixture.select(0, 0);
-        for (int typed = 0; typed < 5; ++typed) fixture.key(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+        select(fixture, 0, 0);
+        for (int typed = 0; typed < 5; ++typed) key(fixture, Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
         settle([&] { return fixture.file().current().draft.text.starts_with("\n\n\n\n\nshared 1\n"); });
         wheelTo(fixture, "stage2Viewport", 120 * line);
         CHECK(std::abs(contentY(result) - (contentY(left) + 35 * line)) < 1);
         CHECK(std::abs(contentY(right) - (contentY(left) + 30 * line)) < 1);
     });
     scenes.run("a synchronised scroll settles in the same event-loop turn without feedback", [] {
-        Fixture fixture(insertionFile());
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, insertionFile());
         auto *left = fixture.item("stage2Viewport");
         auto *result = fixture.item("resultViewport");
         auto *right = fixture.item("stage3Viewport");
@@ -328,9 +347,10 @@ void comparison_scene::addNavigationCases(Groups groups)
         for (int line = 0; line < 20; ++line) result += "same\n";
         left += after;
         result += after;
-        Fixture fixture(test_support::choiceFile(left, result, result));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile(left, result, result));
         bool ambiguous = false;
-        for (const auto &value : fixture.controller.selectedFile()->passages()) {
+        for (const auto &value : controller.selectedFile()->passages()) {
             const auto passage = value.toMap();
             ambiguous = ambiguous
                 || (passage.value("side") == "stage2" && passage.value("kind") == "ambiguous"
@@ -366,9 +386,11 @@ void comparison_scene::addNavigationCases(Groups groups)
                                          earlier,          test_support::choiceText(earlier),
                                          "earlier-commit", "Common earlier version"};
         const auto launch = sources.launchResult.text.utf8;
+        Application controller(test_support::windowConfig());
         Fixture fixture(
+            controller,
             FileSession("choices", sources.path, {launch, {}, 0}, {.snapshots = sources, .initializeChoices = true}));
-        fixture.click("showEarlier");
+        click(fixture, "showEarlier");
         auto *left = fixture.item("stage2Viewport");
         auto *earlierView = fixture.item("earlierViewport");
         auto *editor = fixture.item("resultText");
@@ -385,7 +407,9 @@ void comparison_scene::addNavigationCases(Groups groups)
                                          earlier,          test_support::choiceText(earlier),
                                          "earlier-commit", "Common earlier version"};
         const auto launch = sources.launchResult.text.utf8;
+        Application controller(test_support::windowConfig());
         Fixture fixture(
+            controller,
             FileSession("choices", sources.path, {launch, {}, 0}, {.snapshots = sources, .initializeChoices = true}));
         auto *left = fixture.item("stage2Viewport");
         auto *earlierView = fixture.item("earlierViewport");
@@ -397,7 +421,7 @@ void comparison_scene::addNavigationCases(Groups groups)
         // The panes scroll while the earlier version is hidden, so it is still at the top.
         wheelTo(fixture, "stage2Viewport", 80 * line);
         CHECK(contentY(earlierView) == 0);
-        fixture.click("showEarlier");
+        click(fixture, "showEarlier");
         settleFor("the earlier version to catch up", [&] {
             return earlierView->isVisible() && earlierView->height() > 0
                 && std::abs(contentY(earlierView) - contentY(left)) < 1;
@@ -407,8 +431,9 @@ void comparison_scene::addNavigationCases(Groups groups)
         CHECK(std::abs(contentY(earlierView) - contentY(left)) < 1);
     });
     scenes.run("Find in a source scrolls the result and the other source to the passage", [] {
-        Fixture fixture(insertionFile());
-        fixture.click("openPassageSearch");
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, insertionFile());
+        click(fixture, "openPassageSearch");
         auto *left = fixture.item("stage2Viewport");
         auto *result = fixture.item("resultViewport");
         auto *right = fixture.item("stage3Viewport");
@@ -419,7 +444,7 @@ void comparison_scene::addNavigationCases(Groups groups)
         CHECK(contentY(left) < 200 * line);
         CHECK(fixture.item("searchScope")->property("currentText").toString() == "Left source");
         CHECK(fixture.item("searchQuery")->setProperty("text", "shared 300"));
-        fixture.click("findPassage");
+        click(fixture, "findPassage");
         auto *found = fixture.item("stage2Text");
         CHECK(found->property("selectedText").toString() == "shared 300");
         settleReplacement(fixture);
@@ -435,7 +460,8 @@ void comparison_scene::addNavigationCases(Groups groups)
         const auto left = numberedLines("shared", 1, 400);
         const auto right = numberedLines("shared", 1, 50) + numberedLines("right only", 1, 30)
             + numberedLines("shared", 51, 249) + "right late\n" + numberedLines("shared", 301, 100);
-        Fixture fixture(test_support::choiceFile(left, right, right));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile(left, right, right));
         auto *leftView = fixture.item("stage2Viewport");
         auto *result = fixture.item("resultViewport");
         auto *rightView = fixture.item("stage3Viewport");
@@ -445,9 +471,9 @@ void comparison_scene::addNavigationCases(Groups groups)
         const auto line = paneLineHeight(editor);
         const auto late = static_cast<int>(fixture.text().indexOf("right late"));
         CHECK(late > 0);
-        fixture.select(0, 0);
+        select(fixture, 0, 0);
         for (int click = 0; click < 5 && editor->property("selectionStart").toInt() != late; ++click)
-            fixture.clickMenuEntry("navigateMenu", "nextDifference");
+            clickMenuEntry(fixture, "navigateMenu", "nextDifference");
         CHECK(editor->property("selectionStart").toInt() == late);
         settleReplacement(fixture);
         CHECK(cursorInView(fixture));
@@ -457,7 +483,8 @@ void comparison_scene::addNavigationCases(Groups groups)
         CHECK(std::abs(contentY(rightView) - contentY(result)) < 1);
     });
     const auto undoRedoKeepViewport = [] {
-        Fixture fixture(insertionFile());
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, insertionFile());
         auto *editor = fixture.item("resultText");
         auto *left = fixture.item("stage2Viewport");
         auto *result = fixture.item("resultViewport");
@@ -465,7 +492,7 @@ void comparison_scene::addNavigationCases(Groups groups)
         const auto line = paneLineHeight(editor);
         placeResultCursor(fixture, QStringLiteral("shared 20\n"), 10 * line);
         const auto offset = editor->property("cursorPosition").toInt();
-        fixture.key(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+        key(fixture, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
         settle([&] { return fixture.file().current().draft.text.find("xshared 20\n") != std::string::npos; });
         settleReplacement(fixture);
         CHECK(editor->property("cursorPosition").toInt() == offset + 1);
@@ -473,7 +500,7 @@ void comparison_scene::addNavigationCases(Groups groups)
         const std::array<qreal, 3> typed{contentY(left), contentY(result), contentY(right)};
         CHECK(std::abs(typed[1] - 10 * line) < 1);
 
-        fixture.key(Qt::Key_Z, Qt::ControlModifier);
+        key(fixture, Qt::Key_Z, Qt::ControlModifier);
         CHECK(fixture.file().current().draft.text.find("xshared") == std::string::npos);
         settleReplacement(fixture);
         CHECK(editor->property("cursorPosition").toInt() == offset);
@@ -482,7 +509,7 @@ void comparison_scene::addNavigationCases(Groups groups)
         for (std::size_t pane = 0; pane < panes.size(); ++pane)
             CHECK(std::abs(contentY(panes[pane]) - typed[pane]) < 1);
 
-        fixture.key(Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+        key(fixture, Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
         CHECK(fixture.file().current().draft.text.find("xshared 20\n") != std::string::npos);
         settleReplacement(fixture);
         // The cursor follows the restored insertion, as it did when the character was typed.
@@ -493,14 +520,15 @@ void comparison_scene::addNavigationCases(Groups groups)
     // The view restores the result viewport once, with no reapply after the next frame, so
     // let the window draw frames after the undo before reading the panes.
     const auto undoKeepsViewportAfterFrames = [] {
-        Fixture fixture(insertionFile());
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, insertionFile());
         auto *editor = fixture.item("resultText");
         auto *result = fixture.item("resultViewport");
         const auto line = paneLineHeight(editor);
         placeResultCursor(fixture, QStringLiteral("shared 200\n"), 220 * line);
         const auto offset = editor->property("cursorPosition").toInt();
         CHECK(cursorInView(fixture));
-        fixture.key(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+        key(fixture, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
         settle([&] { return fixture.file().current().draft.text.find("xshared 200\n") != std::string::npos; });
         settleReplacement(fixture);
         const auto typed = contentY(result);
@@ -508,7 +536,7 @@ void comparison_scene::addNavigationCases(Groups groups)
         int frames = 0;
         const auto counter =
             QObject::connect(fixture.window, &QQuickWindow::frameSwapped, fixture.window, [&frames] { ++frames; });
-        fixture.key(Qt::Key_Z, Qt::ControlModifier);
+        key(fixture, Qt::Key_Z, Qt::ControlModifier);
         CHECK(fixture.file().current().draft.text.find("xshared") == std::string::npos);
         settleFor("three frames after the undo", [&] {
             if (frames < 3) fixture.window->update();
@@ -530,17 +558,18 @@ void comparison_scene::addNavigationCases(Groups groups)
     groups.display.run(undoRedoName, undoRedoKeepViewport);
     groups.display.run(framesName, undoKeepsViewportAfterFrames);
     scenes.run("undo keeps a result selection on the same text", [] {
-        Fixture fixture(insertionFile());
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, insertionFile());
         auto *editor = fixture.item("resultText");
         auto *result = fixture.item("resultViewport");
         const auto line = paneLineHeight(editor);
         placeResultCursor(fixture, QStringLiteral("shared 20\n"), 10 * line);
-        fixture.key(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+        key(fixture, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
         settle([&] { return fixture.file().current().draft.text.find("xshared 20\n") != std::string::npos; });
         // Select "shared 22" backwards, so the cursor is at its start.
         const auto selected = static_cast<int>(fixture.text().indexOf(QStringLiteral("shared 22")));
-        fixture.select(selected + 9, selected);
-        fixture.key(Qt::Key_Z, Qt::ControlModifier);
+        select(fixture, selected + 9, selected);
+        key(fixture, Qt::Key_Z, Qt::ControlModifier);
         settleReplacement(fixture);
         CHECK(fixture.text().indexOf(QStringLiteral("shared 22")) == selected - 1);
         CHECK(editor->property("selectionStart").toInt() == selected - 1);
@@ -549,7 +578,8 @@ void comparison_scene::addNavigationCases(Groups groups)
         CHECK(std::abs(contentY(result) - 10 * line) < 1);
     });
     scenes.run("applying a choice keeps the result cursor and scroll position", [] {
-        Fixture fixture(insertionFile());
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, insertionFile());
         auto *editor = fixture.item("resultText");
         auto *result = fixture.item("resultViewport");
         const auto line = paneLineHeight(editor);
@@ -558,27 +588,28 @@ void comparison_scene::addNavigationCases(Groups groups)
         const auto offset = editor->property("cursorPosition").toInt();
         const auto before = fixture.text();
         const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
-        CHECK(fixture.controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
-                                                          QString::fromStdString(target.source.contributionId),
-                                                          ChoicePreviewFlow::Action::ResolveUsingSide));
-        CHECK(commandResult(fixture.controller, fixture.controller.choices()->applyChoice(true)));
+        CHECK(controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
+                                                  QString::fromStdString(target.source.contributionId),
+                                                  ChoicePreviewFlow::Action::ResolveUsingSide));
+        CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
         CHECK(fixture.text() != before && !fixture.text().contains(QStringLiteral("right only")));
         settleReplacement(fixture);
         CHECK(editor->property("cursorPosition").toInt() == offset);
         CHECK(std::abs(contentY(result) - 10 * line) < 1);
     });
     scenes.run("a choice above the result cursor keeps it on its text and in view", [] {
-        Fixture fixture(insertionFile());
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, insertionFile());
         auto *editor = fixture.item("resultText");
         const auto line = paneLineHeight(editor);
         // Below the 30 inserted lines, with the cursor near the top of the view.
         placeResultCursor(fixture, QStringLiteral("shared 120\n"), 148 * line);
         CHECK(cursorInView(fixture));
         const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
-        CHECK(fixture.controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
-                                                          QString::fromStdString(target.source.contributionId),
-                                                          ChoicePreviewFlow::Action::ResolveUsingSide));
-        CHECK(commandResult(fixture.controller, fixture.controller.choices()->applyChoice(true)));
+        CHECK(controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
+                                                  QString::fromStdString(target.source.contributionId),
+                                                  ChoicePreviewFlow::Action::ResolveUsingSide));
+        CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
         CHECK(!fixture.text().contains(QStringLiteral("right only")));
         settleReplacement(fixture);
         // The removed lines took the cursor's line out of the kept view, so the view follows it.
@@ -592,7 +623,8 @@ void comparison_scene::addNavigationCases(Groups groups)
         const auto last = numberedLines("shared", 351, 50);
         const auto left = first + "left first\n" + middle + "left last\n" + last;
         const auto right = first + "right first\n" + middle + "right last\n" + last;
-        Fixture fixture(test_support::choiceFile(left, right, right));
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile(left, right, right));
         auto *editor = fixture.item("resultText");
         auto *result = fixture.item("resultViewport");
         const auto line = paneLineHeight(editor);
@@ -605,16 +637,16 @@ void comparison_scene::addNavigationCases(Groups groups)
             CHECK(editor->property("selectionStart").toInt() == editor->property("selectionEnd").toInt());
             CHECK(std::abs(contentY(result) - 140 * line) < 1);
         };
-        CHECK(fixture.controller.choices()->previewWholeFile("choices", revision(), ChoicePreviewFlow::Side::LeftSide));
-        CHECK(commandResult(fixture.controller, fixture.controller.choices()->applyWholeFile()));
+        CHECK(controller.choices()->previewWholeFile("choices", revision(), ChoicePreviewFlow::Side::LeftSide));
+        CHECK(commandResult(controller, controller.choices()->applyWholeFile()));
         CHECK(fixture.text().contains(QStringLiteral("left first\n"))
               && fixture.text().contains(QStringLiteral("left last\n")));
         kept();
-        CHECK(commandResult(fixture.controller, fixture.controller.commands()->undo("choices", revision())));
+        CHECK(commandResult(controller, controller.commands()->undo("choices", revision())));
         CHECK(fixture.text().contains(QStringLiteral("right first\n"))
               && fixture.text().contains(QStringLiteral("right last\n")));
         kept();
-        CHECK(commandResult(fixture.controller, fixture.controller.commands()->redo("choices", revision())));
+        CHECK(commandResult(controller, controller.commands()->redo("choices", revision())));
         CHECK(fixture.text().contains(QStringLiteral("left first\n"))
               && fixture.text().contains(QStringLiteral("left last\n")));
         kept();

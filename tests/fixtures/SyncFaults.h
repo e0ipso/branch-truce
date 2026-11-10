@@ -1,6 +1,6 @@
 #pragma once
 
-// A storage file system that fails one sync with EIO and records which directories were synced.
+// A storage file system that fails one sync with EIO or one publication exchange with EACCES.
 // Give it to the store, journal or session under test; nothing else sees its faults.
 
 #include "storage/FileSystem.h"
@@ -18,10 +18,10 @@ namespace test_support {
 
 class SyncFaults : public branch_truce::storage::FileSystem {
 public:
-    // What the next failing sync must be: a recovery payload, a recovery journal or a directory.
-    enum class Point { None, PayloadSync, JournalSync, DirectorySync };
+    // The next failing operation: a recovery sync, a directory sync or publication exchange.
+    enum class Point { None, PayloadSync, JournalSync, DirectorySync, PublicationExchange };
 
-    // Arms one fault. Only one matching sync fails, even when two threads sync at once.
+    // Arms one fault. Only one matching operation fails, even when two threads call at once.
     void arm(Point point)
     {
         failures = 0;
@@ -35,6 +35,17 @@ public:
     }
 
     mutable std::atomic<int> failures = 0;
+
+    int exchange(int fromDirectory, const char *from, int toDirectory, const char *to) const override
+    {
+        auto armed = Point::PublicationExchange;
+        if (next_.compare_exchange_strong(armed, Point::None)) {
+            ++failures;
+            errno = EACCES;
+            return -1;
+        }
+        return FileSystem::exchange(fromDirectory, from, toDirectory, to);
+    }
 
     int sync(int descriptor) const override
     {

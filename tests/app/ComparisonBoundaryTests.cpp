@@ -1,5 +1,9 @@
 // Backspace and Delete at the resource limits, in multi-megabyte buffers in the real editor.
-#include "ComparisonScene.h"
+#include "ComparisonCases.h"
+#include "ComparisonEditor.h"
+#include "ComparisonRecovery.h"
+#include "ComparisonSessionChecks.h"
+#include "fixtures/AppSession.h"
 
 using namespace comparison_scene;
 
@@ -9,42 +13,43 @@ namespace {
 // keyboards do, so the editor must not predict them as insertions.
 void deletionAtLimit(const std::string &atLimit, const QString &rejection)
 {
-    Fixture fixture(test_support::choiceFile("x\n", "x\n", atLimit));
+    Application controller(test_support::windowConfig());
+    Fixture fixture(controller, test_support::choiceFile("x\n", "x\n", atLimit));
     auto *editor = fixture.item("resultText");
     const auto before = fixture.file().current();
     const auto size = static_cast<int>(atLimit.size());
     CHECK(fixture.text().toStdString() == atLimit);
-    CHECK(!editor->property("readOnly").toBool() && fixture.controller.feedback()->message().isEmpty());
+    CHECK(!editor->property("readOnly").toBool() && controller.feedback()->message().isEmpty());
 
-    fixture.select(1, 1);
-    fixture.key(Qt::Key_Q, Qt::NoModifier, QStringLiteral("q"));
+    select(fixture, 1, 1);
+    key(fixture, Qt::Key_Q, Qt::NoModifier, QStringLiteral("q"));
     CHECK(fixture.file().current().id == before.id && fixture.text().toStdString() == atLimit);
     CHECK(!editor->property("readOnly").toBool());
-    CHECK(fixture.controller.feedback()->message() == rejection);
-    fixture.checkRecovered(before.draft);
+    CHECK(controller.feedback()->message() == rejection);
+    checkRecovered(*controller.store(), *controller.files(), before.draft);
 
-    fixture.select(size, size);
-    fixture.key(Qt::Key_Backspace, Qt::NoModifier, QStringLiteral("\b"));
+    select(fixture, size, size);
+    key(fixture, Qt::Key_Backspace, Qt::NoModifier, QStringLiteral("\b"));
     const auto backspaced = fixture.file().current();
     CHECK(backspaced.id == before.id + 1);
     CHECK(backspaced.draft.text == atLimit.substr(0, atLimit.size() - 1));
     CHECK(fixture.text().toStdString() == backspaced.draft.text);
-    CHECK(fixture.controller.feedback()->message().isEmpty());
-    fixture.checkRecovered(backspaced.draft);
+    CHECK(controller.feedback()->message().isEmpty());
+    checkRecovered(*controller.store(), *controller.files(), backspaced.draft);
 
-    fixture.select(size - 1, size - 1);
-    fixture.key(Qt::Key_A, Qt::NoModifier, QString(QLatin1Char(atLimit.back())));
+    select(fixture, size - 1, size - 1);
+    key(fixture, Qt::Key_A, Qt::NoModifier, QString(QLatin1Char(atLimit.back())));
     const auto refilled = fixture.file().current();
     CHECK(refilled.id == backspaced.id + 1 && refilled.draft.text == atLimit);
 
-    fixture.select(0, 0);
-    fixture.key(Qt::Key_Delete, Qt::NoModifier, QStringLiteral("\x7f"));
+    select(fixture, 0, 0);
+    key(fixture, Qt::Key_Delete, Qt::NoModifier, QStringLiteral("\x7f"));
     const auto deleted = fixture.file().current();
     CHECK(deleted.id == refilled.id + 1);
     CHECK(deleted.draft.text == atLimit.substr(1));
     CHECK(fixture.text().toStdString() == deleted.draft.text);
-    CHECK(!editor->property("readOnly").toBool() && fixture.controller.feedback()->message().isEmpty());
-    fixture.checkRecovered(deleted.draft);
+    CHECK(!editor->property("readOnly").toBool() && controller.feedback()->message().isEmpty());
+    checkRecovered(*controller.store(), *controller.files(), deleted.draft);
 }
 }
 
