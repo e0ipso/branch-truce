@@ -3,9 +3,12 @@
 #include "app/Application.h"
 #include "app/EngineText.h"
 #include "app/Translations.h"
+#include "fixtures/AppSession.h"
 #include "fixtures/ChoiceFile.h"
+#include "fixtures/ConflictedRepository.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/RecoveryJournal.h"
+#include "fixtures/ScopedEnvironment.h"
 #include "fixtures/SyncFaults.h"
 #include "mergetool/MergetoolProtocol.h"
 #include "recovery/RecoveryRestore.h"
@@ -33,6 +36,7 @@
 #include <mutex>
 #include <new>
 #include <sys/stat.h>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -89,131 +93,55 @@ private:
 };
 
 namespace {
-void writeFile(const QString &path, const QByteArray &bytes)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size());
-}
+using test_support::readFile;
+using test_support::ScopedEnvironment;
+using test_support::shellQuote;
+using test_support::writeFile;
 
-QByteArray readFile(const QString &path)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::ReadOnly));
-    const auto bytes = file.readAll();
-    CHECK(file.error() == QFileDevice::NoError);
-    return bytes;
-}
-
-QByteArray quoteShell(QByteArray value)
-{
-    value.replace("'", "'\\''");
-    return '\'' + value + '\'';
-}
-
-class Repository {
+// tracked.txt and excluded.txt committed on base; conflict() stops an operation on them with a
+// manual UTF-8 result in tracked.txt.
+class Repository : public test_support::ConflictedRepository {
 public:
     explicit Repository(bool excludedAttributes = false)
     {
-        CHECK(directory.isValid() && executables.isValid() && runtime.isValid());
-        root = QFileInfo(directory.path()).canonicalFilePath();
-        environment.insert("PATH", "/usr/bin:/bin");
-        // App caches and user configuration must stay outside the launched worktree.
-        environment.insert("HOME", executables.path());
-        environment.insert("XDG_CONFIG_HOME", executables.path() + "/config");
-        environment.insert("XDG_CACHE_HOME", executables.path() + "/cache");
-        environment.insert("XDG_DATA_HOME", executables.path() + "/data");
-        // The mergetool socket directory is created under here; keep it out of the real runtime directory.
-        CHECK(QFile::setPermissions(runtime.path(),
-                                    QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
-        environment.insert("XDG_RUNTIME_DIR", runtime.path());
-        environment.insert("LC_ALL", "C");
-        environment.insert("GIT_CONFIG_NOSYSTEM", "1");
-        environment.insert("GIT_TERMINAL_PROMPT", "0");
+        CHECK(executables.isValid());
+        // The real binary runs offscreen.
         environment.insert("QT_QPA_PLATFORM", "offscreen");
         environment.insert("QT_QUICK_BACKEND", "software");
-        git({"init", "--quiet", "--initial-branch=main"});
-        git({"config", "user.name", "Branch Truce Tests"});
-        git({"config", "user.email", "tests@example.invalid"});
-        writeFile(path("tracked.txt"), "base\n");
-        writeFile(path("excluded.txt"), "base\n");
-        if (excludedAttributes) {
-            writeFile(path(".gitattributes"), "excluded.txt -text eol=crlf\n");
-            git({"add", "--", ".gitattributes"});
-        }
-        git({"add", "--", "tracked.txt", "excluded.txt"});
-        git({"commit", "--quiet", "-m", "base"});
+        QMap<QString, QByteArray> base{{"tracked.txt", "base\n"}, {"excluded.txt", "base\n"}};
+        if (excludedAttributes) base.insert(".gitattributes", "excluded.txt -text eol=crlf\n");
+        commit(base, "base");
     }
-    QString path(const QString &relative) const { return root + '/' + relative; }
-    QByteArray git(const QStringList &arguments, int expected = 0) const
-    {
-        QProcess process;
-        process.setProcessEnvironment(environment);
-        process.setWorkingDirectory(root);
-        process.start("/usr/bin/git", QStringList{"--no-pager", "--literal-pathspecs"} + arguments);
-        CHECK(process.waitForStarted(5000) && process.waitForFinished(5000));
-        if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != expected)
-            throw std::runtime_error("fixture git: " + process.readAllStandardError().toStdString());
-        return process.readAllStandardOutput();
-    }
+    // Stops `operation` ("merge", "rebase-merge", "rebase-apply" or "cherry-pick") on tracked.txt,
+    // excluded.txt and the additional files, each given as its base, main and side text.
     void conflict(const QString &operation, const QMap<QString, std::array<QByteArray, 3>> &additional = {})
     {
         if (!additional.isEmpty()) {
+            QMap<QString, QByteArray> base;
             for (auto entry = additional.cbegin(); entry != additional.cend(); ++entry)
-                writeFile(path(entry.key()), entry.value()[0]);
-            git(QStringList{"add", "--"} + additional.keys());
-            git({"commit", "--quiet", "-m", "additional base conflicts"});
+                base.insert(entry.key(), entry.value()[0]);
+            commit(base, "additional base conflicts");
         }
-        git({"checkout", "--quiet", "-b", "side"});
-        for (const auto name : {"tracked.txt", "excluded.txt"}) writeFile(path(name), "side\n");
-        for (auto entry = additional.cbegin(); entry != additional.cend(); ++entry)
-            writeFile(path(entry.key()), entry.value()[2]);
-        git(QStringList{"add", "--", "tracked.txt", "excluded.txt"} + additional.keys());
-        git({"commit", "--quiet", "-m", "side"});
-        side = git({"rev-parse", "HEAD"}).trimmed();
-        git({"checkout", "--quiet", "main"});
-        for (const auto name : {"tracked.txt", "excluded.txt"}) writeFile(path(name), "main\n");
-        for (auto entry = additional.cbegin(); entry != additional.cend(); ++entry)
-            writeFile(path(entry.key()), entry.value()[1]);
-        git(QStringList{"add", "--", "tracked.txt", "excluded.txt"} + additional.keys());
-        git({"commit", "--quiet", "-m", "main"});
-        main = git({"rev-parse", "HEAD"}).trimmed();
-        if (operation.startsWith("rebase")) {
-            git({"checkout", "--quiet", "side"});
-            git({"rebase", operation == "rebase-apply" ? "--apply" : "--merge", "main"}, 1);
-        } else if (operation == "cherry-pick") {
-            git({"cherry-pick", "side"}, 1);
-        } else {
-            git({"merge", "--no-edit", "side"}, 1);
+        QMap<QString, QByteArray> mainFiles{{"tracked.txt", "main\n"}, {"excluded.txt", "main\n"}};
+        QMap<QString, QByteArray> sideFiles{{"tracked.txt", "side\n"}, {"excluded.txt", "side\n"}};
+        for (auto entry = additional.cbegin(); entry != additional.cend(); ++entry) {
+            mainFiles.insert(entry.key(), entry.value()[1]);
+            sideFiles.insert(entry.key(), entry.value()[2]);
         }
+        const auto stop = operation == "rebase-apply" ? Stop::RebaseApply
+            : operation == "rebase-merge"             ? Stop::RebaseMerge
+            : operation == "cherry-pick"              ? Stop::CherryPick
+                                                      : Stop::Merge;
+        std::tie(side, main) = ConflictedRepository::conflict(mainFiles, sideFiles, stop);
         writeFile(path("tracked.txt"), manual);
     }
-    QMap<QString, QByteArray> snapshot() const
-    {
-        QMap<QString, QByteArray> result;
-        // Includes the index, operation metadata, refs, objects, and untracked files.
-        QDirIterator files(root, QDir::Files | QDir::Hidden, QDirIterator::Subdirectories);
-        while (files.hasNext()) {
-            const auto selected = files.next();
-            result.insert(QDir(root).relativeFilePath(selected), readFile(selected));
-        }
-        return result;
-    }
+    // Gives the repository an unreachable remote and puts a Git first on PATH that refuses every
+    // network command and logs the rest.
     void offlineGuard()
     {
         git({"config", "remote.origin.url", "https://offline.invalid/never-contact"});
         git({"config", "branch.main.remote", "origin"});
-        const auto log = quoteShell(QFile::encodeName(executables.path() + "/git-argv"));
-        const auto marker = quoteShell(QFile::encodeName(executables.path() + "/network-attempt"));
-        const auto script = executables.path() + "/git";
-        writeFile(script,
-                  "#!/bin/sh\nfor argument in \"$@\"; do\n"
-                  "  case \"$argument\" in fetch|pull|push|clone|ls-remote|remote|submodule) : > "
-                      + marker
-                      + "; exit 97 ;; esac\n"
-                        "done\nprintf '%s\\n' \"$@\" >> "
-                      + log + "\nexec /usr/bin/git \"$@\"\n");
-        CHECK(QFile::setPermissions(script, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
-        environment.insert("PATH", executables.path() + ":/usr/bin:/bin");
+        environment.insert("PATH", offline.directory() + ":/usr/bin:/bin");
     }
     QJsonObject launch(const QString &application, const QStringList &arguments, const QString &cwd = {}) const
     {
@@ -252,8 +180,7 @@ public:
     // The socket directory the GUI and the controller use for this fixture's environment.
     QString socketDirectory() const
     {
-        const auto socket = mergetoolSocketDirectory(environment.value(QStringLiteral("XDG_RUNTIME_DIR")).toUtf8());
-        return socket;
+        return mergetoolSocketDirectory(environment.value(QStringLiteral("XDG_RUNTIME_DIR")).toUtf8());
     }
     void checkSocketDirectory() const
     {
@@ -261,83 +188,27 @@ public:
         if (socket != runtime.path() + QStringLiteral("/branch-truce"))
             throw std::runtime_error("socket directory outside the private runtime directory: " + socket.toStdString());
     }
-    QTemporaryDir directory;
+    // Scratch space outside the worktree.
     QTemporaryDir executables;
-    // QTemporaryDir under a long TMPDIR would push the socket path past its
-    // length limit and the lookup would fall back to the shared
-    // /tmp/branch-truce-<uid>. A short base under /tmp keeps it private.
-    QTemporaryDir runtime{QStringLiteral("/tmp/bt-run-XXXXXX")};
-    QString root;
-    QProcessEnvironment environment;
+    test_support::OfflineGit offline;
     QByteArray main;
     QByteArray side;
     const QByteArray manual = "manual UTF-8 \xc3\xa9 \xf0\x9f\x98\x80\n";
 };
 
-class ScopedEnvironment {
-public:
-    explicit ScopedEnvironment(const QProcessEnvironment &environment)
-    {
-        for (const auto name : {"HOME", "PATH", "LC_ALL", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME",
-                                "XDG_RUNTIME_DIR", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT"}) {
-            previous.insert(name,
-                            qEnvironmentVariableIsSet(name) ? std::optional<QByteArray>(qgetenv(name)) : std::nullopt);
-            qputenv(name, environment.value(QString::fromLatin1(name)).toUtf8());
-        }
-    }
-    ~ScopedEnvironment()
-    {
-        for (auto entry = previous.cbegin(); entry != previous.cend(); ++entry) {
-            if (entry.value())
-                qputenv(entry.key().constData(), *entry.value());
-            else
-                qunsetenv(entry.key().constData());
-        }
-    }
-
-private:
-    QMap<QByteArray, std::optional<QByteArray>> previous;
-};
-
-// Runs the event loop until the loader stops opening, for at most 25 s. Opening takes
-// about 0.5 s on an idle host. At load averages of 25 to 36 on 8 cores it averaged 2.5 s
-// and some opens took over 10 s.
-void waitOpened(Application &controller, const std::string &what)
-{
-    if (!controller.loader()->opening()) return;
-    QEventLoop loop;
-    QTimer timeout;
-    timeout.setSingleShot(true);
-    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-    QObject::connect(controller.loader(), &SessionLoader::launchChanged, &loop, [&] {
-        if (!controller.loader()->opening()) loop.quit();
-    });
-    timeout.start(25000);
-    loop.exec();
-    if (controller.loader()->opening()) throw std::runtime_error(what + " did not finish opening within 25 s");
-}
+using test_support::waitOpened;
 
 void openController(Application &controller, const Repository &repo, const QString &recoverySession = {})
 {
     const auto before = repo.snapshot();
     repo.checkSocketDirectory();
     CHECK(mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR")) == repo.socketDirectory());
-    CHECK(controller.loader()->openRepository(repo.root, {}, recoverySession));
-    waitOpened(controller, "the repository");
-    CHECK(!controller.loader()->opening());
+    test_support::openRepository(controller, repo.root, {}, recoverySession);
     if (controller.loader()->startupState() != "ready")
         throw std::runtime_error("controller startup: " + controller.loader()->detail().toStdString());
     CHECK(QFileInfo(repo.socketDirectory()).isDir());
-    const auto after = repo.snapshot();
-    if (after != before) {
-        QStringList changed;
-        for (auto it = before.cbegin(); it != before.cend(); ++it)
-            if (!after.contains(it.key()) || after.value(it.key()) != it.value()) changed.append(it.key());
-        for (auto it = after.cbegin(); it != after.cend(); ++it)
-            if (!before.contains(it.key())) changed.append(it.key());
+    if (const auto changed = Repository::changed(before, repo.snapshot()); !changed.isEmpty())
         throw std::runtime_error("repository changed during startup: " + changed.join(", ").toStdString());
-    }
-    CHECK(after == before);
 }
 
 const FileSession &openedFile(Application &controller, const char *path = "tracked.txt")
@@ -1859,8 +1730,8 @@ public:
             repo.conflict("merge");
             repo.offlineGuard();
             ready(repo, repo.launch(application, {repo.root}), "Merge");
-            CHECK(!QFile::exists(repo.executables.path() + "/network-attempt"));
-            const auto trace = readFile(repo.executables.path() + "/git-argv");
+            CHECK(!repo.offline.networkAttempted());
+            const auto trace = repo.offline.calls();
             CHECK(trace.contains("rev-parse\n") && trace.contains("cat-file\n"));
         });
         suite.run("excluded attributes retain the classifier reason beside an accepted manual UTF-8 result", [&] {
@@ -2089,10 +1960,10 @@ public:
             const auto trace = chosen.path() + "/git-argv";
             const auto script = chosen.path() + "/git";
             writeFile(script,
-                      "#!/bin/sh\nprintf '%s\\n' \"$@\" >> " + quoteShell(QFile::encodeName(trace))
-                          + "\nexec /usr/bin/git \"$@\"\n");
-            CHECK(QFile::setPermissions(script,
-                                        QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+                      ("#!/bin/sh\nprintf '%s\\n' \"$@\" >> " + shellQuote(trace) + "\nexec "
+                       + shellQuote(test_support::gitExecutable()) + " \"$@\"\n")
+                          .toUtf8(),
+                      true);
             const auto path = qgetenv("PATH");
             CHECK(gitOnPath() != script);
             Application controller{Application::Config{script, newRecoveryDirectory(), {}}};
@@ -2109,7 +1980,6 @@ public:
             repo.offlineGuard();
             ScopedEnvironment environment(repo.environment);
             const auto before = repo.snapshot();
-            const auto trace = repo.executables.path() + "/git-argv";
             Draft kept;
             {
                 Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
@@ -2149,7 +2019,7 @@ public:
                                      outcome = text;
                                      clean = value;
                                  });
-                const auto calls = readFile(trace);
+                const auto calls = repo.offline.calls();
                 CHECK(controller.completion()->leave());
                 // Git runs only as a coordinator task, so a leave that started one would leave it
                 // pending once the calls the leave queued have run.
@@ -2157,7 +2027,7 @@ public:
                 CHECK_EQ(controller.coordinator()->pendingTasks(), 0);
                 for (const auto *process : controller.findChildren<QProcess *>())
                     CHECK(process->state() == QProcess::NotRunning);
-                CHECK(readFile(trace) == calls);
+                CHECK(repo.offline.calls() == calls);
                 CHECK(ended == 1 && !clean);
                 CHECK(outcome
                       == "Left with 2 of 2 files outstanding. Drafts stay in Branch Truce; "

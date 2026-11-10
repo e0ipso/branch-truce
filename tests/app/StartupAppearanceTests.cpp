@@ -1,4 +1,5 @@
 #include "TestHarness.h"
+#include "fixtures/Files.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -13,12 +14,7 @@
 #include <utility>
 
 namespace {
-void writeFile(const QString &path, const QByteArray &bytes)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
-    CHECK(file.write(bytes) == bytes.size());
-}
+using test_support::writeFile;
 
 // Symlinks every entry of source into target except the path in hidden, whose
 // parent directories become real directories so their other entries stay visible.

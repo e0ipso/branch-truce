@@ -278,8 +278,6 @@ class Fixture {
 public:
     Fixture()
     {
-        CHECK(root.isValid());
-        git({"init", "--quiet", "--initial-branch=main"});
         write("tracked.txt", "before\n");
         git({"add", "--", "tracked.txt"});
         coordinator = std::make_unique<SessionCoordinator>(model, test_support::gitExecutable());
@@ -287,28 +285,17 @@ public:
                          [this](const TaskCompletion &value) { finished.push_back(value); });
         replace();
     }
-    ~Fixture()
-    {
-        coordinator.reset();
-        for (const auto &path : rawFiles) ::unlink(path.constData());
-    }
+    ~Fixture() { coordinator.reset(); }
+    QString root() const { return repository.root(); }
     void replace(const QByteArray &path = "tracked.txt", const QString &operation = "merge")
     {
-        CHECK(coordinator->replaceSession(root.path(), operation, {FileSession("file", path.toStdString(), draft())}));
+        CHECK(coordinator->replaceSession(root(), operation, {FileSession("file", path.toStdString(), draft())}));
     }
-    void write(const QByteArray &relative, const QByteArray &bytes)
-    {
-        const auto path = QFile::encodeName(root.path()) + '/' + relative;
-        const int fd = ::open(path.constData(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
-        CHECK(fd >= 0);
-        rawFiles.push_back(path);
-        const auto written = ::write(fd, bytes.constData(), static_cast<std::size_t>(bytes.size()));
-        const int closed = ::close(fd);
-        CHECK(written == bytes.size() && closed == 0);
-    }
+    // Writes a worktree file named by raw bytes.
+    void write(const QByteArray &relative, const QByteArray &bytes) { repository.writePath(relative, bytes); }
     QByteArray git(const QStringList &arguments, const QByteArray &input = {}) const
     {
-        return test_support::runGit(home.environment(), root.path(), arguments, input);
+        return repository.git(arguments, input);
     }
     void wait(std::size_t count)
     {
@@ -317,12 +304,10 @@ public:
         QCoreApplication::processEvents();
         CHECK(finished.size() == count);
     }
-    QTemporaryDir root{QStringLiteral("/tmp/truce-coordinator-XXXXXX")};
-    test_support::GitHome home;
+    test_support::GitRepository repository;
     test_support::TestSession model;
     std::unique_ptr<SessionCoordinator> coordinator;
     std::vector<TaskCompletion> finished;
-    QList<QByteArray> rawFiles;
 };
 }
 
@@ -847,7 +832,7 @@ public:
             CHECK(applied == 1 && f.finished[0].result.data == "before\n");
             const auto &stamp = f.finished[0].stamp;
             CHECK(stamp.id == id && stamp.generation == f.coordinator->generation());
-            CHECK(stamp.worktree == f.root.path() && stamp.operation == "merge" && stamp.fileId == "file");
+            CHECK(stamp.worktree == f.root() && stamp.operation == "merge" && stamp.fileId == "file");
             CHECK(stamp.inputRevision == 1 && stamp.resultRevision == 1 && stamp.decisionRevision == 1);
             CHECK(f.coordinator->mutationOutcomes().empty());
         });
@@ -860,8 +845,8 @@ public:
             CHECK(f.coordinator->submitMutation("file", 1, work, {}) == 0);
             CHECK(!f.coordinator->cancel(999));
             CHECK(!f.coordinator->replaceSession(
-                f.root.path(), "merge", {FileSession("same", "one", draft()), FileSession("same", "two", draft())}));
-            CHECK(!f.coordinator->replaceSession(f.root.path() + "/absent", "merge", {}));
+                f.root(), "merge", {FileSession("same", "one", draft()), FileSession("same", "two", draft())}));
+            CHECK(!f.coordinator->replaceSession(f.root() + "/absent", "merge", {}));
             QCoreApplication::processEvents();
             CHECK(f.coordinator->generation() == 1 && f.coordinator->pendingTasks() == 0 && f.finished.empty());
         });
@@ -977,7 +962,7 @@ public:
             CHECK(f.finished[2].result.gitResult->indexAfter
                   == "100644 " + expected + " 0\ttracked.txt" + QByteArray(1, '\0'));
             CHECK(f.git({"show", ":tracked.txt"}) == "first\n");
-            QFile file(f.root.path() + "/tracked.txt");
+            QFile file(f.root() + "/tracked.txt");
             CHECK(file.open(QIODevice::ReadOnly) && file.readAll() == "third\n");
             CHECK(f.coordinator->mutationOutcomes().size() == 3);
         });
@@ -1040,7 +1025,7 @@ public:
             CHECK(f.finished[0].result.status == TaskStatus::Cancelled
                   && f.finished[0].disposition == TaskDisposition::Cancelled);
             CHECK(f.git({"ls-files", "--stage", "-z"}) == before);
-            QFile file(f.root.path() + "/tracked.txt");
+            QFile file(f.root() + "/tracked.txt");
             CHECK(file.open(QIODevice::ReadOnly) && file.readAll() == "before\n");
         });
         test("cancellation after mutation retains inspection and holds the next writer", [] {
@@ -1110,7 +1095,7 @@ public:
             Fixture f;
             Gate inspect;
             QTemporaryDir aliases;
-            CHECK(aliases.isValid() && QFile::link(f.root.path(), aliases.path() + "/alias"));
+            CHECK(aliases.isValid() && QFile::link(f.root(), aliases.path() + "/alias"));
             auto nextRan = std::make_shared<std::atomic_bool>(false);
             const auto old = f.coordinator->submitMutation(
                 "file", 1,
@@ -1136,7 +1121,7 @@ public:
             f.wait(2);
             CHECK(f.finished[0].stamp.id == old && f.finished[0].disposition == TaskDisposition::StaleSession);
             CHECK(f.finished[0].result.mutation == MutationObservation::ObservedChanged);
-            CHECK(f.finished[1].stamp.id == next && f.finished[1].stamp.worktree == f.root.path());
+            CHECK(f.finished[1].stamp.id == next && f.finished[1].stamp.worktree == f.root());
             CHECK(f.finished[1].disposition == TaskDisposition::Current && nextRan->load());
         });
         test("worker and inspection failures retain honest mutation outcomes and release the queue", [] {
@@ -1246,7 +1231,7 @@ public:
             };
             QObject::connect(&f.model.rows, &QAbstractItemModel::modelAboutToBeReset, &f.model, [&] {
                 resetGuarded = f.coordinator->submit("file", 1, work) == 0
-                    && !f.coordinator->replaceSession(f.root.path(), "recursive", {});
+                    && !f.coordinator->replaceSession(f.root(), "recursive", {});
             });
             QObject::connect(f.coordinator.get(), &SessionCoordinator::pendingTasksChanged, &f.model, [&] {
                 if (replaced || f.coordinator->pendingTasks() != 1) return;
@@ -1317,7 +1302,7 @@ public:
                 CHECK(f.finished[0].result.gitResult.has_value());
                 const auto &result = *f.finished[0].result.gitResult;
                 CHECK(result.outcome == git::Outcome::Success && result.mutation == git::Mutation::ObservedChanged);
-                CHECK(result.request.path == path && result.request.directory == f.root.path());
+                CHECK(result.request.path == path && result.request.directory == f.root());
                 CHECK(result.request.sessionGeneration == f.coordinator->generation()
                       && result.request.inputRevision == 1);
                 CHECK(result.indexAfter == "100644 " + expected + " 0\t" + path + QByteArray(1, '\0'));

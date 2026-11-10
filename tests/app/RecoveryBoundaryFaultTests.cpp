@@ -5,9 +5,12 @@
 #include "app/EngineText.h"
 #include "app/SessionModel.h"
 #include "app/Translations.h"
+#include "fixtures/AppSession.h"
+#include "fixtures/ConflictedRepository.h"
 #include "fixtures/Files.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/RecoveryJournal.h"
+#include "fixtures/ScopedEnvironment.h"
 #include "fixtures/SyncFaults.h"
 #include "mergetool/MergetoolProtocol.h"
 #include "recovery/RecoveryRestore.h"
@@ -15,7 +18,6 @@
 
 #include <QCoreApplication>
 #include <QDir>
-#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -349,94 +351,28 @@ void tearFinalFrame(const QString &directory, TornTail tail)
 using test_support::readFile;
 using test_support::writeFile;
 
-// Restores the process environment even when fixture construction throws.
-class ScopedEnvironment {
-public:
-    ScopedEnvironment() = default;
-    ScopedEnvironment(const ScopedEnvironment &) = delete;
-    ScopedEnvironment &operator=(const ScopedEnvironment &) = delete;
-    void apply(const QProcessEnvironment &environment)
-    {
-        for (const auto &name : environment.keys()) {
-            const auto key = name.toLatin1();
-            if (!previous.contains(key))
-                previous.insert(key,
-                                qEnvironmentVariableIsSet(key.constData())
-                                    ? std::optional<QByteArray>(qgetenv(key.constData()))
-                                    : std::nullopt);
-            qputenv(key.constData(), environment.value(name).toUtf8());
-        }
-    }
-    ~ScopedEnvironment()
-    {
-        for (auto entry = previous.cbegin(); entry != previous.cend(); ++entry) {
-            if (entry.value())
-                qputenv(entry.key().constData(), *entry.value());
-            else
-                qunsetenv(entry.key().constData());
-        }
-    }
-
-private:
-    QMap<QByteArray, std::optional<QByteArray>> previous;
-};
-
 // One real text conflict on result.txt, opened through the application so
 // Mark resolved runs the product publication and Git index path.
-class IndexConflict {
+class IndexConflict : public test_support::ConflictedRepository {
 public:
     IndexConflict()
     {
-        CHECK(directory.isValid() && home.isValid() && runtime.isValid());
-        CHECK(QFile::setPermissions(runtime.path(),
-                                    QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
-        root = QFileInfo(directory.path()).canonicalFilePath();
-        environment.insert(QStringLiteral("PATH"), QStringLiteral("/usr/bin:/bin"));
-        environment.insert(QStringLiteral("HOME"), home.path());
-        environment.insert(QStringLiteral("XDG_CONFIG_HOME"), home.path() + QStringLiteral("/config"));
-        environment.insert(QStringLiteral("XDG_CACHE_HOME"), home.path() + QStringLiteral("/cache"));
-        environment.insert(QStringLiteral("XDG_DATA_HOME"), home.path() + QStringLiteral("/data"));
-        environment.insert(QStringLiteral("XDG_RUNTIME_DIR"), runtime.path());
-        environment.insert(QStringLiteral("LC_ALL"), QStringLiteral("C"));
-        environment.insert(QStringLiteral("GIT_CONFIG_NOSYSTEM"), QStringLiteral("1"));
-        environment.insert(QStringLiteral("GIT_CONFIG_GLOBAL"), QStringLiteral("/dev/null"));
-        environment.insert(QStringLiteral("GIT_TERMINAL_PROMPT"), QStringLiteral("0"));
-        git({QStringLiteral("init"), QStringLiteral("--quiet"), QStringLiteral("--initial-branch=main")});
-        git({QStringLiteral("config"), QStringLiteral("user.name"), QStringLiteral("Branch Truce Tests")});
-        git({QStringLiteral("config"), QStringLiteral("user.email"), QStringLiteral("tests@example.invalid")});
-        git({QStringLiteral("config"), QStringLiteral("core.autocrlf"), QStringLiteral("false")});
-        commit("base\n", QStringLiteral("base"));
-        git({QStringLiteral("checkout"), QStringLiteral("--quiet"), QStringLiteral("-b"), QStringLiteral("side")});
-        commit("side\n", QStringLiteral("side"));
-        git({QStringLiteral("checkout"), QStringLiteral("--quiet"), QStringLiteral("main")});
-        commit("main\n", QStringLiteral("main"));
-        git({QStringLiteral("merge"), QStringLiteral("--no-edit"), QStringLiteral("side")}, 1);
+        commit({{QStringLiteral("result.txt"), "base\n"}}, QStringLiteral("base"));
+        conflict({{QStringLiteral("result.txt"), "main\n"}}, {{QStringLiteral("result.txt"), "side\n"}});
         writeFile(path(QStringLiteral("result.txt")), manual);
-        scoped.apply(environment);
+        // Restores the process environment when it goes, even if the rest of construction throws.
+        scoped.emplace(environment);
         controller = std::make_unique<Application>(Application::Config{gitOnPath(), newRecoveryDirectory(), {}});
-        open();
+        test_support::openRepository(*controller, root);
+        if (controller->loader()->startupState() != QLatin1String("ready"))
+            throw std::runtime_error("controller startup: " + controller->loader()->detail().toStdString());
         CHECK(controller->selection()->select(id));
         auto draft = file().current().draft;
         draft.text = reviewed.toStdString();
         draft.unresolvedMarkers = 0;
         CHECK(controller->store()->replaceDraft(id.toStdString(), file().current().id, draft) == Transition::Applied);
     }
-    IndexConflict(const IndexConflict &) = delete;
-    IndexConflict &operator=(const IndexConflict &) = delete;
 
-    QString path(const QString &relative) const { return root + QLatin1Char('/') + relative; }
-    QByteArray git(const QStringList &arguments, int expected = 0) const
-    {
-        QProcess process;
-        process.setProcessEnvironment(environment);
-        process.setWorkingDirectory(root);
-        process.start(QStringLiteral("/usr/bin/git"),
-                      QStringList{QStringLiteral("--no-pager"), QStringLiteral("--literal-pathspecs")} + arguments);
-        CHECK(process.waitForStarted(5000) && process.waitForFinished(15000));
-        if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != expected)
-            throw std::runtime_error("fixture git: " + process.readAllStandardError().toStdString());
-        return process.readAllStandardOutput();
-    }
     QByteArray indexEntries() const
     {
         return git({QStringLiteral("ls-files"), QStringLiteral("--stage"), QStringLiteral("--"),
@@ -453,52 +389,20 @@ public:
     {
         CHECK(controller->commands()->markResolved(id, QString::number(static_cast<qulonglong>(file().current().id)),
                                                    true));
-        QElapsedTimer timer;
-        timer.start();
-        const auto settled = [&] {
-            return !controller->commands()->resolutionBusy()
-                && (file().stageOutcome()
-                    || (file().writeOutcome() && file().writeOutcome()->outcome != Outcome::Succeeded));
-        };
-        while (!settled() && timer.elapsed() < 25000) QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-        if (!settled())
-            throw std::runtime_error("publisher did not settle: " + controller->feedback()->message().toStdString());
+        test_support::waitUntil(
+            [&] {
+                return !controller->commands()->resolutionBusy()
+                    && (file().stageOutcome()
+                        || (file().writeOutcome() && file().writeOutcome()->outcome != Outcome::Succeeded));
+            },
+            [&] { return "publisher did not settle: " + controller->feedback()->message().toStdString(); });
     }
 
-    QTemporaryDir directory;
-    QTemporaryDir home;
-    // Keep session sockets private even when TMPDIR exceeds the Unix socket path limit.
-    QTemporaryDir runtime{QStringLiteral("/tmp/bt-run-XXXXXX")};
-    QString root;
-    QProcessEnvironment environment;
-    ScopedEnvironment scoped;
+    std::optional<test_support::ScopedEnvironment> scoped;
     std::unique_ptr<Application> controller; // Destroyed before the environment is restored.
     const QString id = QString::fromLatin1(QByteArray("result.txt").toHex());
     const QByteArray manual = "manual merge bytes\n";
     const QByteArray reviewed = "reviewed in app\n";
-
-private:
-    void commit(const QByteArray &bytes, const QString &message)
-    {
-        writeFile(path(QStringLiteral("result.txt")), bytes);
-        git({QStringLiteral("add"), QStringLiteral("--"), QStringLiteral("result.txt")});
-        git({QStringLiteral("commit"), QStringLiteral("--quiet"), QStringLiteral("-m"), message});
-    }
-    void open()
-    {
-        QEventLoop loop;
-        QTimer timeout;
-        timeout.setSingleShot(true);
-        QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-        QObject::connect(controller->loader(), &SessionLoader::launchChanged, &loop, [&] {
-            if (!controller->loader()->opening()) loop.quit();
-        });
-        CHECK(controller->loader()->openRepository(root));
-        timeout.start(15000);
-        if (controller->loader()->opening()) loop.exec();
-        if (controller->loader()->opening() || controller->loader()->startupState() != QLatin1String("ready"))
-            throw std::runtime_error("controller startup: " + controller->loader()->detail().toStdString());
-    }
 };
 
 RecoveryReplay replayedJournal(const QString &directory)
@@ -776,7 +680,7 @@ public:
         // and records what the product observed.
         suite.run("a replaced Git index entry stops publication and replay shows the recorded write failure", [] {
             IndexConflict conflict;
-            const auto staleFile = conflict.home.path() + QStringLiteral("/stale-index-bytes");
+            const auto staleFile = conflict.home().path() + QStringLiteral("/stale-index-bytes");
             writeFile(staleFile, "stale index bytes\n");
             const auto stale = conflict
                                    .git({QStringLiteral("hash-object"), QStringLiteral("-w"),

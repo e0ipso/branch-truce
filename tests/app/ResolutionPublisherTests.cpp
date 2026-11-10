@@ -3,12 +3,14 @@
 #include "app/Application.h"
 #include "app/EngineText.h"
 #include "app/Translations.h"
+#include "fixtures/AppSession.h"
+#include "fixtures/ConflictedRepository.h"
 #include "fixtures/GitOnPath.h"
+#include "fixtures/ScopedEnvironment.h"
 #include "fixtures/SyncFaults.h"
 #include "mergetool/MergetoolProtocol.h"
 #include <QCoreApplication>
 #include <QDirIterator>
-#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -72,133 +74,30 @@ public:
 }
 
 namespace {
-void writeFile(const QString &path, const QByteArray &bytes)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(bytes) == bytes.size());
-}
+using test_support::readFile;
+using test_support::ScopedEnvironment;
+using test_support::writeFile;
 
-QByteArray readFile(const QString &path)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::ReadOnly));
-    const auto bytes = file.readAll();
-    CHECK(file.error() == QFileDevice::NoError);
-    return bytes;
-}
-
-class Repository {
+// A merge stopped with tracked.txt and excluded.txt in conflict and notes.txt staged, tracked.txt
+// holding the user's manual merge.
+class Repository : public test_support::ConflictedRepository {
 public:
     Repository()
     {
-        CHECK(directory.isValid() && executables.isValid() && runtime.isValid());
-        CHECK(QFile::setPermissions(runtime.path(),
-                                    QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
-        root = QFileInfo(directory.path()).canonicalFilePath();
-        environment.insert("PATH", "/usr/bin:/bin");
-        environment.insert("HOME", executables.path());
-        environment.insert("XDG_CONFIG_HOME", executables.path() + "/config");
-        environment.insert("XDG_CACHE_HOME", executables.path() + "/cache");
-        environment.insert("XDG_DATA_HOME", executables.path() + "/data");
-        environment.insert("XDG_RUNTIME_DIR", runtime.path());
-        environment.insert("LC_ALL", "C");
-        environment.insert("GIT_CONFIG_NOSYSTEM", "1");
-        environment.insert("GIT_CONFIG_GLOBAL", "/dev/null");
-        environment.insert("GIT_TERMINAL_PROMPT", "0");
-        git({"init", "--quiet", "--initial-branch=main"});
-        git({"config", "user.name", "Branch Truce Tests"});
-        git({"config", "user.email", "tests@example.invalid"});
-        git({"config", "core.autocrlf", "false"});
-        writeFile(path("tracked.txt"), "base\n");
-        writeFile(path("excluded.txt"), "base\n");
-        writeFile(path("notes.txt"), "notes stay staged\n");
-        git({"add", "--", "tracked.txt", "excluded.txt", "notes.txt"});
-        git({"commit", "--quiet", "-m", "base"});
-        git({"checkout", "--quiet", "-b", "side"});
-        writeFile(path("tracked.txt"), "side\n");
-        writeFile(path("excluded.txt"), "side\n");
-        git({"add", "--", "tracked.txt", "excluded.txt"});
-        git({"commit", "--quiet", "-m", "side"});
-        git({"checkout", "--quiet", "main"});
-        writeFile(path("tracked.txt"), "main\n");
-        writeFile(path("excluded.txt"), "main\n");
-        git({"add", "--", "tracked.txt", "excluded.txt"});
-        git({"commit", "--quiet", "-m", "main"});
-        git({"merge", "--no-edit", "side"}, 1);
+        commit({{"tracked.txt", "base\n"}, {"excluded.txt", "base\n"}, {"notes.txt", "notes stay staged\n"}}, "base");
+        conflict({{"tracked.txt", "main\n"}, {"excluded.txt", "main\n"}},
+                 {{"tracked.txt", "side\n"}, {"excluded.txt", "side\n"}});
         writeFile(path("tracked.txt"), manual);
         notesObject = git({"rev-parse", ":notes.txt"}).trimmed();
     }
-    QString path(const QString &relative) const { return root + '/' + relative; }
-    QByteArray git(const QStringList &arguments, int expected = 0) const
-    {
-        QProcess process;
-        process.setProcessEnvironment(environment);
-        process.setWorkingDirectory(root);
-        process.start("/usr/bin/git", QStringList{"--no-pager", "--literal-pathspecs"} + arguments);
-        CHECK(process.waitForStarted(5000) && process.waitForFinished(15000));
-        if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != expected)
-            throw std::runtime_error("fixture git: " + process.readAllStandardError().toStdString());
-        return process.readAllStandardOutput();
-    }
-    QMap<QString, QByteArray> snapshot() const
-    {
-        QMap<QString, QByteArray> result;
-        QDirIterator files(root, QDir::Files | QDir::Hidden, QDirIterator::Subdirectories);
-        while (files.hasNext()) {
-            const auto selected = files.next();
-            result.insert(QDir(root).relativeFilePath(selected), readFile(selected));
-        }
-        return result;
-    }
-    QTemporaryDir directory;
-    QTemporaryDir executables;
-    // Keep session sockets private even when TMPDIR exceeds the Unix socket path limit.
-    QTemporaryDir runtime{QStringLiteral("/tmp/bt-run-XXXXXX")};
-    QString root;
-    QProcessEnvironment environment;
     QByteArray notesObject;
     const QByteArray manual = "resolved without a prior save\n";
-};
-
-class ScopedEnvironment {
-public:
-    explicit ScopedEnvironment(const QProcessEnvironment &environment)
-    {
-        for (const auto name : {"HOME", "PATH", "LC_ALL", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME",
-                                "XDG_RUNTIME_DIR", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "GIT_TERMINAL_PROMPT"}) {
-            previous.insert(name,
-                            qEnvironmentVariableIsSet(name) ? std::optional<QByteArray>(qgetenv(name)) : std::nullopt);
-            qputenv(name, environment.value(QString::fromLatin1(name)).toUtf8());
-        }
-    }
-    ~ScopedEnvironment()
-    {
-        for (auto entry = previous.cbegin(); entry != previous.cend(); ++entry) {
-            if (entry.value())
-                qputenv(entry.key().constData(), *entry.value());
-            else
-                qunsetenv(entry.key().constData());
-        }
-    }
-
-private:
-    QMap<QByteArray, std::optional<QByteArray>> previous;
 };
 
 void openController(Application &controller, const Repository &repo)
 {
     const auto before = repo.snapshot();
-    QEventLoop loop;
-    QTimer timeout;
-    timeout.setSingleShot(true);
-    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-    QObject::connect(controller.loader(), &SessionLoader::launchChanged, &loop, [&] {
-        if (!controller.loader()->opening()) loop.quit();
-    });
-    CHECK(controller.loader()->openRepository(repo.root));
-    timeout.start(15000);
-    if (controller.loader()->opening()) loop.exec();
-    CHECK(!controller.loader()->opening());
+    test_support::openRepository(controller, repo.root);
     if (controller.loader()->startupState() != "ready")
         throw std::runtime_error("controller startup: " + controller.loader()->detail().toStdString());
     CHECK(repo.snapshot() == before);
@@ -206,14 +105,12 @@ void openController(Application &controller, const Repository &repo)
 
 const FileSession &openedFile(Application &controller, const char *path = "tracked.txt")
 {
-    const auto *selected = controller.store()->file(QByteArray(path).toHex().toStdString());
-    CHECK(selected != nullptr);
-    return *selected;
+    return test_support::loadedFile(controller, path);
 }
 
 QString selectTracked(Application &controller)
 {
-    const auto id = QString::fromLatin1(QByteArray("tracked.txt").toHex());
+    const auto id = QString::fromStdString(test_support::fileIdOf("tracked.txt"));
     CHECK(controller.selection()->select(id));
     return id;
 }
@@ -222,37 +119,24 @@ QString revisionOf(const FileSession &file) { return QString::number(static_cast
 
 void waitFor(Application &controller, const std::function<bool()> &ready)
 {
-    QElapsedTimer timer;
-    timer.start();
-    while (!ready() && timer.elapsed() < 25000) QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-    if (!ready())
-        throw std::runtime_error((controller.feedback()->message() + " | " + controller.selectedFile()->status()
-                                  + " | busy=" + QString::number(controller.commands()->resolutionBusy()))
-                                     .toStdString());
+    test_support::waitUntil(ready, [&] {
+        return (controller.feedback()->message() + " | " + controller.selectedFile()->status()
+                + " | busy=" + QString::number(controller.commands()->resolutionBusy()))
+            .toStdString();
+    });
 }
 
-QSet<QByteArray> unmerged(const Repository &repo)
-{
-    QSet<QByteArray> result;
-    for (const auto &path : repo.git({"diff", "--name-only", "--diff-filter=U", "-z"}).split('\0'))
-        if (!path.isEmpty()) result.insert(path);
-    return result;
-}
+QSet<QByteArray> unmerged(const Repository &repo) { return repo.unmerged(); }
 
 void expectUnchanged(const Repository &repo, const QMap<QString, QByteArray> &before, bool ignoreObjects = false)
 {
-    const auto after = repo.snapshot();
-    QStringList changed;
-    const auto skip = [&](const QString &path) {
-        return ignoreObjects && path.startsWith(QStringLiteral(".git/objects/"));
-    };
-    for (auto it = after.cbegin(); it != after.cend(); ++it)
-        if (!skip(it.key()) && (!before.contains(it.key()) || before.value(it.key()) != it.value()))
-            changed << it.key();
-    for (auto it = before.cbegin(); it != before.cend(); ++it)
-        if (!skip(it.key()) && !after.contains(it.key())) changed << ("missing " + it.key());
+    auto changed = Repository::changed(before, repo.snapshot());
+    if (ignoreObjects)
+        changed.removeIf([](const QString &path) {
+            return path.startsWith(QStringLiteral(".git/objects/"))
+                || path.startsWith(QStringLiteral("missing .git/objects/"));
+        });
     if (!changed.isEmpty()) throw std::runtime_error(changed.join(", ").toStdString());
-    CHECK(changed.isEmpty());
 }
 
 struct Session {
@@ -310,18 +194,18 @@ public:
     }
     PublishStall(const PublishStall &) = delete;
     PublishStall &operator=(const PublishStall &) = delete;
+    // Runs the event loop until the worker signals that its exchange landed.
     bool waitForExchange()
     {
-        QElapsedTimer timer;
-        timer.start();
-        while (timer.elapsed() < 20000) {
-            pollfd input{};
-            input.fd = ready[0];
-            input.events = POLLIN;
-            if (::poll(&input, 1, 0) > 0 && (input.revents & POLLIN) != 0) return true;
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 30);
-        }
-        return false;
+        test_support::waitUntil(
+            [this] {
+                pollfd input{};
+                input.fd = ready[0];
+                input.events = POLLIN;
+                return ::poll(&input, 1, 0) > 0 && (input.revents & POLLIN) != 0;
+            },
+            "the publisher did not reach its exchange");
+        return true;
     }
     void releaseWorker()
     {
