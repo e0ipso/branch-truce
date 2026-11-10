@@ -2,6 +2,10 @@
 // intents, failed and retried Saves and discards, and a deliberate leave.
 #include "StartupRoutes.h"
 #include "fixtures/AppSession.h"
+#include "fixtures/Await.h"
+
+using test_support::await;
+using test_support::commandResult;
 
 using namespace startup_routes;
 
@@ -28,25 +32,24 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
                         const auto current = model->file(id)->current();
                         latest = current.draft;
                         latest.text = bytes.toStdString();
-                        CHECK(model->replaceDraft(id, current.id, latest) == Transition::Applied);
+                        CHECK(await(model->replaceDraft(id, current.id, latest)) == Transition::Applied);
                         const auto &file = *model->file(id);
                         const auto revision = file.current().id;
-                        CHECK(model->beginMarkResolved(id, revision, true) == Transition::Applied);
-                        CHECK(model->recordCheckpoint(id, revision, Outcome::Succeeded) == Transition::Applied);
-                        CHECK(model
-                                  ->commitRecord(mutationRecoveryTransaction(
-                                      file, {QUuid::createUuid().toString(), MutationKind::Publication, {}}))
-                                  .succeeded);
+                        CHECK(await(model->beginMarkResolved(id, revision, true)) == Transition::Applied);
+                        CHECK(await(model->recordCheckpoint(id, revision, Outcome::Succeeded)) == Transition::Applied);
+                        CHECK(await(model->commitRecord(mutationRecoveryTransaction(
+                                        file, {QUuid::createUuid().toString(), MutationKind::Publication, {}})))
+                                  .commit.succeeded);
                         writeFile(repo.path("tracked.txt"), bytes);
-                        CHECK(model->recordWrite(id, revision, Outcome::Succeeded) == Transition::Applied);
+                        CHECK(await(model->recordWrite(id, revision, Outcome::Succeeded)) == Transition::Applied);
                         if (staging) {
-                            CHECK(model
-                                      ->commitRecord(mutationRecoveryTransaction(
-                                          file, {QUuid::createUuid().toString(), MutationKind::Staging, {}}))
-                                      .succeeded);
+                            CHECK(await(model->commitRecord(mutationRecoveryTransaction(
+                                            file, {QUuid::createUuid().toString(), MutationKind::Staging, {}})))
+                                      .commit.succeeded);
                             repo.git({"add", "--", "tracked.txt"});
                             const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
-                            CHECK(model->recordStage(id, revision, Outcome::Succeeded, object.toStdString(), "100644")
+                            CHECK(await(model->recordStage(id, revision, Outcome::Succeeded, object.toStdString(),
+                                                           "100644"))
                                   == Transition::Applied);
                         }
                     }
@@ -86,26 +89,24 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
                     const auto id = openedFile(controller).id();
                     auto draft = model->file(id)->current().draft;
                     draft.text = "first successfully written result\n";
-                    CHECK(model->replaceDraft(id, 1, draft) == Transition::Applied);
-                    CHECK(model->beginMarkResolved(id, 2, true) == Transition::Applied);
-                    CHECK(model->recordCheckpoint(id, 2, Outcome::Succeeded) == Transition::Applied);
+                    CHECK(await(model->replaceDraft(id, 1, draft)) == Transition::Applied);
+                    CHECK(await(model->beginMarkResolved(id, 2, true)) == Transition::Applied);
+                    CHECK(await(model->recordCheckpoint(id, 2, Outcome::Succeeded)) == Transition::Applied);
                     location = model->recoveryDirectory();
-                    CHECK(model
-                              ->commitRecord(mutationRecoveryTransaction(
-                                  *model->file(id), {QUuid::createUuid().toString(), MutationKind::Publication, {}}))
-                              .succeeded);
+                    CHECK(await(model->commitRecord(mutationRecoveryTransaction(
+                                    *model->file(id), {QUuid::createUuid().toString(), MutationKind::Publication, {}})))
+                              .commit.succeeded);
                     writeFile(repo.path("tracked.txt"), QByteArray::fromStdString(draft.text));
-                    CHECK(model->recordWrite(id, 2, Outcome::Succeeded) == Transition::Applied);
+                    CHECK(await(model->recordWrite(id, 2, Outcome::Succeeded)) == Transition::Applied);
                     if (laterRevision) {
                         draft.text = "later interrupted result\n";
-                        CHECK(model->replaceDraft(id, 2, draft) == Transition::Applied);
-                        CHECK(model->beginMarkResolved(id, 3, true) == Transition::Applied);
-                        CHECK(model->recordCheckpoint(id, 3, Outcome::Succeeded) == Transition::Applied);
+                        CHECK(await(model->replaceDraft(id, 2, draft)) == Transition::Applied);
+                        CHECK(await(model->beginMarkResolved(id, 3, true)) == Transition::Applied);
+                        CHECK(await(model->recordCheckpoint(id, 3, Outcome::Succeeded)) == Transition::Applied);
                     }
-                    CHECK(model
-                              ->commitRecord(mutationRecoveryTransaction(
-                                  *model->file(id), {QUuid::createUuid().toString(), MutationKind::Publication, {}}))
-                              .succeeded);
+                    CHECK(await(model->commitRecord(mutationRecoveryTransaction(
+                                    *model->file(id), {QUuid::createUuid().toString(), MutationKind::Publication, {}})))
+                              .commit.succeeded);
                 }
                 const auto before = repo.snapshot();
                 Application controller{test_support::windowConfig()};
@@ -135,17 +136,16 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
             const auto id = openedFile(controller).id();
             auto draft = model->file(id)->current().draft;
             draft.text = "reviewed staged result\n";
-            CHECK(model->replaceDraft(id, 1, draft) == Transition::Applied);
+            CHECK(await(model->replaceDraft(id, 1, draft)) == Transition::Applied);
             revision = model->file(id)->current().id;
-            CHECK(model->beginMarkResolved(id, revision, true) == Transition::Applied);
-            CHECK(model->recordCheckpoint(id, revision, Outcome::Succeeded) == Transition::Applied);
+            CHECK(await(model->beginMarkResolved(id, revision, true)) == Transition::Applied);
+            CHECK(await(model->recordCheckpoint(id, revision, Outcome::Succeeded)) == Transition::Applied);
             writeFile(repo.path("tracked.txt"), QByteArray::fromStdString(draft.text));
-            CHECK(model->recordWrite(id, revision, Outcome::Succeeded) == Transition::Applied);
+            CHECK(await(model->recordWrite(id, revision, Outcome::Succeeded)) == Transition::Applied);
             location = model->recoveryDirectory();
-            CHECK(model
-                      ->commitRecord(mutationRecoveryTransaction(
-                          *model->file(id), {QUuid::createUuid().toString(), MutationKind::Staging, {}}))
-                      .succeeded);
+            CHECK(await(model->commitRecord(mutationRecoveryTransaction(
+                            *model->file(id), {QUuid::createUuid().toString(), MutationKind::Staging, {}})))
+                      .commit.succeeded);
             repo.git({"add", "--", "tracked.txt"});
             object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
         }
@@ -185,11 +185,13 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
             auto saved = openedFile(controller).current().draft;
             saved.text += "saved app draft\n";
             saved.decisions["kept"] = {DecisionValue::Accepted, 4};
-            CHECK(controller.store()->replaceDraft(openedFile(controller).id(), openedFile(controller).current().id,
-                                                   saved)
+            CHECK(await(controller.store()->replaceDraft(openedFile(controller).id(),
+                                                         openedFile(controller).current().id, saved))
                   == Transition::Applied);
             CHECK(openedFile(controller).facts().unsaved && !openedFile(controller).publication().checkpoint());
-            CHECK(controller.commands()->saveDraft(id, QString::number(openedFile(controller).current().id)));
+            CHECK(commandResult(
+                controller,
+                controller.commands()->saveDraft(id, QString::number(openedFile(controller).current().id))));
             baseline = openedFile(controller).current().draft;
             CHECK(openedFile(controller).publication().checkpoint()
                   && openedFile(controller).revision(*openedFile(controller).publication().checkpoint())->draft
@@ -203,14 +205,16 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
             auto edited = baseline;
             edited.text += "discarded edit\n";
             edited.decisions["kept"] = {DecisionValue::Ignored, {}};
-            CHECK(controller.store()->replaceDraft(openedFile(controller).id(), openedFile(controller).current().id,
-                                                   edited)
+            CHECK(await(controller.store()->replaceDraft(openedFile(controller).id(),
+                                                         openedFile(controller).current().id, edited))
                   == Transition::Applied);
             discarded = openedFile(controller).current().draft;
             CHECK(openedFile(controller).facts().unsaved
                   && openedFile(controller).revision(*openedFile(controller).publication().checkpoint())->draft
                       == baseline);
-            CHECK(controller.commands()->discardUnsaved(id, QString::number(openedFile(controller).current().id)));
+            CHECK(commandResult(
+                controller,
+                controller.commands()->discardUnsaved(id, QString::number(openedFile(controller).current().id))));
             CHECK(openedFile(controller).current().draft == baseline);
             CHECK(openedFile(controller).current().draft != discarded);
             CHECK(openedFile(controller).current().draft.decisions.at("kept").value == DecisionValue::Accepted);
@@ -250,23 +254,23 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
         CHECK(controller.selection()->select(trackedId));
         auto saved = openedFile(controller, "tracked.txt").current().draft;
         saved.text += "saved app draft\n";
-        CHECK(controller.store()->replaceDraft(trackedId.toStdString(), revision().toULongLong(), saved)
+        CHECK(await(controller.store()->replaceDraft(trackedId.toStdString(), revision().toULongLong(), saved))
               == Transition::Applied);
-        CHECK(controller.commands()->saveDraft(trackedId, revision()));
+        CHECK(commandResult(controller, controller.commands()->saveDraft(trackedId, revision())));
         auto edited = saved;
         edited.text += "discard me\n";
-        CHECK(controller.store()->replaceDraft(trackedId.toStdString(), revision().toULongLong(), edited)
+        CHECK(await(controller.store()->replaceDraft(trackedId.toStdString(), revision().toULongLong(), edited))
               == Transition::Applied);
         {
             const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
-            CHECK(!controller.commands()->discardUnsaved(trackedId, revision()));
+            CHECK(!commandResult(controller, controller.commands()->discardUnsaved(trackedId, revision())));
             CHECK_EQ(faults->failures.load(), 1);
         }
         // The other file has no Save, so a message built from it would say
         // the initial result was restored.
         CHECK(controller.selection()->select(otherId));
         CHECK(openedFile(controller, "excluded.txt").facts().unsaved);
-        CHECK(controller.commands()->retryPendingRecovery(trackedId));
+        CHECK(commandResult(controller, controller.commands()->retryPendingRecovery(trackedId)));
         CHECK(controller.feedback()->message()
               == "Discarded unsaved changes. Draft saved in Branch Truce; repository file unchanged.");
         CHECK(openedFile(controller, "tracked.txt").current().draft == saved);
@@ -294,10 +298,12 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
             auto saved = openedFile(controller).current().draft;
             saved.text += "saved app draft\n";
             saved.decisions["kept"] = {DecisionValue::Accepted, 4};
-            CHECK(controller.store()->replaceDraft(openedFile(controller).id(), openedFile(controller).current().id,
-                                                   saved)
+            CHECK(await(controller.store()->replaceDraft(openedFile(controller).id(),
+                                                         openedFile(controller).current().id, saved))
                   == Transition::Applied);
-            CHECK(controller.commands()->saveDraft(id, QString::number(openedFile(controller).current().id)));
+            CHECK(commandResult(
+                controller,
+                controller.commands()->saveDraft(id, QString::number(openedFile(controller).current().id))));
             baseline = openedFile(controller).current().draft;
             CHECK(openedFile(controller).publication().checkpoint()
                   && openedFile(controller).revision(*openedFile(controller).publication().checkpoint())->draft
@@ -306,14 +312,14 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
             auto next = baseline;
             next.text += "retry me\n";
             next.decisions["kept"] = {DecisionValue::Ignored, {}};
-            CHECK(
-                controller.store()->replaceDraft(openedFile(controller).id(), openedFile(controller).current().id, next)
-                == Transition::Applied);
+            CHECK(await(controller.store()->replaceDraft(openedFile(controller).id(),
+                                                         openedFile(controller).current().id, next))
+                  == Transition::Applied);
             edited = openedFile(controller).current().draft;
             const auto revision = QString::number(openedFile(controller).current().id);
             {
                 const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
-                CHECK(!controller.commands()->saveDraft(id, revision));
+                CHECK(!commandResult(controller, controller.commands()->saveDraft(id, revision)));
                 CHECK_EQ(faults->failures.load(), 1);
             }
             CHECK(controller.feedback()->message() == "Draft save failed. The edited result is still available.");
@@ -327,7 +333,8 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
             CHECK(controller.selectedFile()->status() == "Draft save failed");
             CHECK(controller.selectedFile()->recoveryState() == FileStates::RecoveryState::SaveFailed);
             CHECK(!controller.selectedFile()->canEdit());
-            CHECK(!controller.commands()->undo(id, revision) && !controller.commands()->discardUnsaved(id, revision));
+            CHECK(!commandResult(controller, controller.commands()->undo(id, revision))
+                  && !commandResult(controller, controller.commands()->discardUnsaved(id, revision)));
             CHECK(openedFile(controller).current().draft == edited);
             CHECK(repo.snapshot() == before);
             const auto pending = storage::RecoveryStore(controller.store()->recoveryDirectory()).read();
@@ -336,7 +343,7 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
             request = pending.transactions.back().id;
             CHECK(pending.transactions.back().state.value("written").isNull()
                   && pending.transactions.back().state.value("staged").isNull());
-            CHECK(controller.commands()->retryPendingRecovery(id));
+            CHECK(commandResult(controller, controller.commands()->retryPendingRecovery(id)));
             CHECK(!controller.files()->hasPendingRecovery());
             CHECK(openedFile(controller).current().draft == edited);
             CHECK(openedFile(controller).publication().checkpoint()
@@ -379,7 +386,8 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
             const auto &tracked = openedFile(controller);
             auto edited = tracked.current().draft;
             edited.text += "kept app draft\n";
-            CHECK(controller.store()->replaceDraft(tracked.id(), tracked.current().id, edited) == Transition::Applied);
+            CHECK(await(controller.store()->replaceDraft(tracked.id(), tracked.current().id, edited))
+                  == Transition::Applied);
             kept = openedFile(controller).current().draft;
             const auto excluded = QString::fromLatin1(QByteArray("excluded.txt").toHex());
             const auto summary = controller.completion()->handoffData();

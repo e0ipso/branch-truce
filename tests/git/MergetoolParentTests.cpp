@@ -7,6 +7,7 @@
 #include "app/Application.h"
 #include "app/Translations.h"
 #include "fixtures/AppSession.h"
+#include "fixtures/Await.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/mergetool/GitGate.h"
 #include "fixtures/mergetool/RealParent.h"
@@ -19,6 +20,8 @@
 
 #include <csignal>
 #include <sys/stat.h>
+
+using test_support::commandResult;
 
 using namespace branch_truce;
 using namespace mergetool_fixture;
@@ -83,7 +86,7 @@ std::string draftOf(Application &controller, const QByteArray &path)
 void editDraft(Application &controller, const QByteArray &path, const QString &prefix)
 {
     const auto id = select(controller, path);
-    CHECK(controller.commands()->editResult(id, revisionOf(controller, path), 0, 0, prefix));
+    CHECK(commandResult(controller, controller.commands()->editResult(id, revisionOf(controller, path), 0, 0, prefix)));
 }
 
 void waitForWaiter(Application &controller, const QByteArray &path)
@@ -138,7 +141,8 @@ QMap<QByteArray, std::string> saveDrafts(Application &controller, const QList<QB
     QMap<QByteArray, std::string> drafts;
     for (const auto &path : paths) {
         editDraft(controller, path, QStringLiteral("draft kept by leave: %1\n").arg(QString::fromLatin1(path)));
-        CHECK(controller.commands()->saveDraft(select(controller, path), revisionOf(controller, path)));
+        CHECK(commandResult(controller,
+                            controller.commands()->saveDraft(select(controller, path), revisionOf(controller, path))));
         drafts.insert(path, draftOf(controller, path));
     }
     return drafts;
@@ -256,8 +260,9 @@ int main(int argc, char **argv)
         CHECK(controller.mergetool()->parentSessionActive());
         editDraft(controller, "tracked.txt", QStringLiteral("draft kept in the app\n"));
         const auto draft = draftOf(controller, "tracked.txt");
-        CHECK(
-            controller.commands()->saveDraft(select(controller, "tracked.txt"), revisionOf(controller, "tracked.txt")));
+        CHECK(commandResult(controller,
+                            controller.commands()->saveDraft(select(controller, "tracked.txt"),
+                                                             revisionOf(controller, "tracked.txt"))));
         CHECK(controller.feedback()->message().contains(QStringLiteral("repository file unchanged")));
         CHECK(opened(controller, "tracked.txt").publication().checkpoint());
         CHECK(opened(controller, "tracked.txt")
@@ -437,8 +442,9 @@ int main(int argc, char **argv)
                 waitIdle(controller, QString::fromLatin1(change));
                 CHECK(controller.store()->hasRecoveryFailure(id.toStdString()));
                 CHECK(parentBlocked(*parent, controller, "tracked.txt") && repo.index() == indexChanged);
-                CHECK(!controller.commands()->editResult(id, revisionOf(controller, "tracked.txt"), 0, 0,
-                                                         QStringLiteral("edited\n")));
+                CHECK(!commandResult(controller,
+                                     controller.commands()->editResult(id, revisionOf(controller, "tracked.txt"), 0, 0,
+                                                                       QStringLiteral("edited\n"))));
                 CHECK(!controller.commands()->markResolved(id, revisionOf(controller, "tracked.txt"), true));
                 CHECK(controller.mergetool()->leave());
                 waitParent(*parent, 1, controller.feedback()->message());
@@ -509,8 +515,9 @@ int main(int argc, char **argv)
                       waitIdle(controller, QString::fromLatin1(change));
                       CHECK(controller.store()->hasRecoveryFailure(id.toStdString()));
                       CHECK(parentBlocked(*parent, controller, "tracked.txt") && repo.index() == indexChanged);
-                      CHECK(!controller.commands()->editResult(id, revisionOf(controller, "tracked.txt"), 0, 0,
-                                                               QStringLiteral("edited\n")));
+                      CHECK(!commandResult(controller,
+                                           controller.commands()->editResult(id, revisionOf(controller, "tracked.txt"),
+                                                                             0, 0, QStringLiteral("edited\n"))));
                       CHECK(!controller.commands()->markResolved(id, revisionOf(controller, "tracked.txt"), true));
                       CHECK(controller.mergetool()->leave());
                       waitParent(*parent, 1, controller.feedback()->message());
@@ -554,8 +561,9 @@ int main(int argc, char **argv)
         CHECK(readFile(intake + "/merged") == "launch bytes\n");
         editDraft(controller, "tracked.txt", QStringLiteral("draft before leave\n"));
         const auto draft = draftOf(controller, "tracked.txt");
-        CHECK(
-            controller.commands()->saveDraft(select(controller, "tracked.txt"), revisionOf(controller, "tracked.txt")));
+        CHECK(commandResult(controller,
+                            controller.commands()->saveDraft(select(controller, "tracked.txt"),
+                                                             revisionOf(controller, "tracked.txt"))));
         writeFile(repo.path("tracked.txt"), "written by another editor\n");
         CHECK(controller.mergetool()->leave());
         waitParent(*parent, 1, controller.feedback()->message());
@@ -708,8 +716,9 @@ int main(int argc, char **argv)
         waitForWaiter(controller, "tracked.txt");
         editDraft(controller, "tracked.txt", QStringLiteral("draft before the interrupt\n"));
         const auto draft = draftOf(controller, "tracked.txt");
-        CHECK(
-            controller.commands()->saveDraft(select(controller, "tracked.txt"), revisionOf(controller, "tracked.txt")));
+        CHECK(commandResult(controller,
+                            controller.commands()->saveDraft(select(controller, "tracked.txt"),
+                                                             revisionOf(controller, "tracked.txt"))));
         parent->signalGroup(SIGINT);
         pump([&] { return parent->state() == QProcess::NotRunning; },
              QStringLiteral("interrupted parent still running"));

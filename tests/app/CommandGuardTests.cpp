@@ -3,6 +3,7 @@
 #include "TestHarness.h"
 #include "TestSession.h"
 #include "app/CommandGuard.h"
+#include "fixtures/Await.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/SyncFaults.h"
 #include <QCoreApplication>
@@ -11,6 +12,8 @@
 #include <memory>
 #include <optional>
 #include <variant>
+
+using test_support::awaitAligned;
 
 using namespace branch_truce;
 using test_support::TestSession;
@@ -32,7 +35,7 @@ struct Guarded {
         CHECK(store.appendFile(test_support::choiceFile()));
         CHECK(store.appendFile(FileSession("outside", "diagram.png", {},
                                            {.support = Support::OutsideApp, .supportDetail = "image content"})));
-        CHECK(store.editResult("choices", 1, {{0, 0}, "edited\n"}) == Transition::Applied);
+        CHECK(awaitAligned(store, store.editResult("choices", 1, {{0, 0}, "edited\n"})) == Transition::Applied);
         CHECK(store.file("choices")->current().id == 2);
     }
     std::variant<RevisionId, Transition> check(const QString &fileId, const QString &revision, CommandCheck kind,
@@ -123,7 +126,8 @@ int main(int argc, char **argv)
         using Result = std::variant<RevisionId, Transition>;
         {
             const test_support::ArmedFault fault(*session.faults, test_support::SyncFaults::Point::JournalSync);
-            CHECK(session.store.editResult("choices", 2, {{0, 0}, "pending\n"}) == Transition::Blocked);
+            CHECK(awaitAligned(session.store, session.store.editResult("choices", 2, {{0, 0}, "pending\n"}))
+                  == Transition::Blocked);
         }
         CHECK(session.store.hasPendingRecovery());
         CHECK(session.check("outside", "1", CommandCheck::Current, false, "outside") == Result{Transition::Blocked});

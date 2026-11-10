@@ -25,6 +25,7 @@ class ChoicePreviewFlow : public QObject {
     QML_ELEMENT
     QML_UNCREATABLE("Owned by the application")
     // The pending preview of each scope for the dialogs, or empty.
+    Q_PROPERTY(bool previewPending READ previewPending NOTIFY previewPendingChanged)
     Q_PROPERTY(QVariantMap choicePreview READ choicePreview NOTIFY choicePreviewChanged)
     Q_PROPERTY(QVariantMap nonConflictingPreview READ nonConflictingPreview NOTIFY nonConflictingPreviewChanged)
     Q_PROPERTY(QVariantMap wholeFilePreview READ wholeFilePreview NOTIFY wholeFilePreviewChanged)
@@ -56,6 +57,7 @@ public:
     {
         return preview(Scope::WholeFile, fileId, revision, side);
     }
+    [[nodiscard]] bool previewPending() const { return waiting_; }
     // confirmReplacement allows a replacement of manual work the preview asked to confirm.
     Q_INVOKABLE bool applyChoice(bool confirmReplacement = false) { return apply(Scope::Choice, confirmReplacement); }
     Q_INVOKABLE bool applyNonConflicting() { return apply(Scope::NonConflicting, true); }
@@ -80,11 +82,14 @@ Q_SIGNALS:
     // view(scope) may have changed: a preview of that scope became pending or
     // stopped pending, or the session's files were replaced under it.
     void changed(branch_truce::ChoicePreviewFlow::Scope scope);
+    void ready(branch_truce::ChoicePreviewFlow::Scope scope);
+    void previewPendingChanged();
     void choicePreviewChanged();
     void nonConflictingPreviewChanged();
     void wholeFilePreviewChanged();
 
 private:
+    bool prepare(Scope scope, const QString &fileId, RevisionId expected, Option option, const QString &target);
     [[nodiscard]] std::optional<Scope> pendingScope() const;
     [[nodiscard]] QVariantMap choiceView(const ChoicePreview &preview, const FileSession &file) const;
     [[nodiscard]] QVariantMap nonConflictingView(const NonConflictingPreview &preview, const FileSession &file) const;
@@ -100,5 +105,7 @@ private:
     CommandFeedback &feedback_;
     std::variant<std::monostate, ChoicePreview, NonConflictingPreview, WholeFilePreview> pending_;
     QString fileId_;
+    quint64 request_ = 0;
+    bool waiting_ = false;
 };
 }

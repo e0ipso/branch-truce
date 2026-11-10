@@ -3,6 +3,7 @@
 #include "app/Application.h"
 #include "app/Translations.h"
 #include "fixtures/AppSession.h"
+#include "fixtures/Await.h"
 #include "fixtures/ConflictedRepository.h"
 #include "fixtures/EventLoop.h"
 #include "fixtures/Files.h"
@@ -40,6 +41,9 @@
 #include <memory>
 #include <unistd.h>
 #include <utility>
+
+using test_support::awaitAligned;
+using test_support::commandResult;
 
 using namespace branch_truce;
 
@@ -199,8 +203,10 @@ void storeBeforeCopiedLaunch(const Repository &repo)
     {
         Application before{test_support::windowConfig()};
         openController(before, repo);
-        CHECK(before.store()->editResult(QByteArray("tracked.txt").toHex().toStdString(),
-                                         opened(before, "tracked.txt").current().id, {{0, 0}, "recovered edit\n"})
+        CHECK(awaitAligned(*before.store(),
+                           before.store()->editResult(QByteArray("tracked.txt").toHex().toStdString(),
+                                                      opened(before, "tracked.txt").current().id,
+                                                      {{0, 0}, "recovered edit\n"}))
               == Transition::Applied);
     }
     copyInPlace(repo.path("tracked.txt"));
@@ -227,7 +233,9 @@ void checkCopiedLaunchRefused(Application &controller, QProcess &launcher, const
     select(controller, "tracked.txt");
     const auto revision = revisionOf(opened(controller, "tracked.txt"));
     CHECK(controller.store()->hasRecoveryFailure(fileId.toStdString()));
-    CHECK(!controller.commands()->editResult(fileId, revision, 0, 0, QStringLiteral("edited after the attach\n")));
+    CHECK(!commandResult(
+        controller,
+        controller.commands()->editResult(fileId, revision, 0, 0, QStringLiteral("edited after the attach\n"))));
     CHECK(!controller.commands()->markResolved(fileId, revision, true));
     CHECK(launcher.state() == QProcess::Running);
     CHECK(readFile(target) == current);
@@ -480,7 +488,8 @@ int main(int argc, char **argv)
             CHECK(QFile::exists(firstIntake + "/base") && QFile::exists(firstIntake + "/local")
                   && QFile::exists(firstIntake + "/remote"));
             const auto id = select(controller, "tracked.txt");
-            CHECK(controller.commands()->saveDraft(id, revisionOf(opened(controller, "tracked.txt"))));
+            CHECK(commandResult(controller,
+                                controller.commands()->saveDraft(id, revisionOf(opened(controller, "tracked.txt")))));
             CHECK(controller.feedback()->message().contains(QStringLiteral("repository file unchanged")));
             CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
             CHECK(repo.unmerged("tracked.txt") && repo.unmerged("excluded.txt"));
@@ -508,7 +517,8 @@ int main(int argc, char **argv)
             CHECK(!secondIntake.isEmpty() && secondIntake != firstIntake);
             CHECK(readFile(secondIntake + "/merged") == repo.excluded);
             const auto other = select(controller, "excluded.txt");
-            CHECK(controller.commands()->saveDraft(other, revisionOf(opened(controller, "excluded.txt"))));
+            CHECK(commandResult(
+                controller, controller.commands()->saveDraft(other, revisionOf(opened(controller, "excluded.txt")))));
             CHECK(readFile(repo.path("excluded.txt")) == repo.excluded);
             CHECK(controller.mergetool()->leave());
             waitFinished(*again, 1, controller);
@@ -530,7 +540,8 @@ int main(int argc, char **argv)
         const auto intake = controller.mergetoolSession()->intake("tracked.txt");
         CHECK(readFile(intake + "/merged") == repo.tracked && QFile::exists(intake + "/local"));
         const auto id = select(controller, "tracked.txt");
-        CHECK(controller.commands()->saveDraft(id, revisionOf(opened(controller, "tracked.txt"))));
+        CHECK(commandResult(controller,
+                            controller.commands()->saveDraft(id, revisionOf(opened(controller, "tracked.txt")))));
         CHECK(controller.mergetool()->leave());
         waitFinished(*parent, 1, controller);
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
@@ -564,7 +575,8 @@ int main(int argc, char **argv)
         CHECK(parent->state() == QProcess::Running);
         CHECK(controller.mergetoolSession()->waitingPath() == first);
         const auto firstId = select(controller, first);
-        CHECK(controller.commands()->saveDraft(firstId, revisionOf(opened(controller, first))));
+        CHECK(commandResult(controller,
+                            controller.commands()->saveDraft(firstId, revisionOf(opened(controller, first)))));
         CHECK(readFile(repo.path(QString::fromLatin1(first))) == firstText);
         CHECK(controller.commands()->markResolved(firstId, revisionOf(opened(controller, first)), true));
         pump(
@@ -652,8 +664,10 @@ int main(int argc, char **argv)
             startController(two, repo);
             for (auto *controller : {&one, &two}) {
                 const auto revision = opened(*controller, "tracked.txt").current().id;
-                CHECK(controller->store()->editResult(QByteArray("tracked.txt").toHex().toStdString(), revision,
-                                                      {{0, 0}, controller == &one ? "chosen\n" : "other\n"})
+                CHECK(awaitAligned(
+                          *controller->store(),
+                          controller->store()->editResult(QByteArray("tracked.txt").toHex().toStdString(), revision,
+                                                          {{0, 0}, controller == &one ? "chosen\n" : "other\n"}))
                       == Transition::Applied);
             }
             chosen = QFileInfo(one.store()->recoveryDirectory()).fileName();
@@ -704,8 +718,10 @@ int main(int argc, char **argv)
                 {
                     Application before{test_support::windowConfig()};
                     openController(before, repo);
-                    CHECK(before.store()->editResult(fileId.toStdString(), opened(before, "tracked.txt").current().id,
-                                                     {{0, 0}, "recovered edit\n"})
+                    CHECK(awaitAligned(*before.store(),
+                                       before.store()->editResult(fileId.toStdString(),
+                                                                  opened(before, "tracked.txt").current().id,
+                                                                  {{0, 0}, "recovered edit\n"}))
                           == Transition::Applied);
                 }
                 const auto target = repo.path("tracked.txt");
@@ -735,8 +751,9 @@ int main(int argc, char **argv)
                 const auto revision = revisionOf(opened(controller, "tracked.txt"));
                 if (change == QStringLiteral("none")) {
                     CHECK(!controller.store()->hasRecoveryFailure(fileId.toStdString()));
-                    CHECK(controller.commands()->editResult(fileId, revision, 0, 0,
-                                                            QStringLiteral("reviewed after the attach\n")));
+                    CHECK(commandResult(controller,
+                                        controller.commands()->editResult(
+                                            fileId, revision, 0, 0, QStringLiteral("reviewed after the attach\n"))));
                     const auto expected = opened(controller, "tracked.txt").current().draft.text;
                     CHECK(controller.commands()->markResolved(fileId, revisionOf(opened(controller, "tracked.txt")),
                                                               true));
@@ -746,8 +763,9 @@ int main(int argc, char **argv)
                     continue;
                 }
                 CHECK(controller.store()->hasRecoveryFailure(fileId.toStdString()));
-                CHECK(!controller.commands()->editResult(fileId, revision, 0, 0,
-                                                         QStringLiteral("edited after the attach\n")));
+                CHECK(!commandResult(controller,
+                                     controller.commands()->editResult(fileId, revision, 0, 0,
+                                                                       QStringLiteral("edited after the attach\n"))));
                 CHECK(!controller.commands()->markResolved(fileId, revision, true));
                 CHECK(readFile(target) == "launch bytes\n");
                 CHECK(controller.mergetool()->leave());
@@ -780,8 +798,10 @@ int main(int argc, char **argv)
         pump([&] { return !controller.store()->hasRecoveryFailure(launched.toStdString()); },
              QStringLiteral("the launcher-started window kept the copied launch error: ")
                  + recoveryError(controller, "tracked.txt"));
-        CHECK(controller.commands()->editResult(launched, revisionOf(opened(controller, "tracked.txt")), 0, 0,
-                                                QStringLiteral("reviewed in the started window\n")));
+        CHECK(
+            commandResult(controller,
+                          controller.commands()->editResult(launched, revisionOf(opened(controller, "tracked.txt")), 0,
+                                                            0, QStringLiteral("reviewed in the started window\n"))));
         const auto expected = opened(controller, "tracked.txt").current().draft.text;
         CHECK(expected.starts_with("reviewed in the started window\nrecovered edit\n"));
         CHECK(controller.commands()->markResolved(launched, revisionOf(opened(controller, "tracked.txt")), true));

@@ -21,7 +21,6 @@ Application::Application(Config config, QObject *parent)
       store_(std::move(config.recoveryDirectory), config.files, this),
       files_(store_, this),
       coordinator_(store_, runnersOf(config, gitProcesses_), workers_, this),
-      alignment_(store_, this),
       publisher_(store_, coordinator_, runnersOf(config, gitProcesses_), config.files, this),
       mergetool_(
           publisher_, store_, coordinator_, [this] { return loader_.repository(); },

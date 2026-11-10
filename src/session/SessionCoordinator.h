@@ -77,12 +77,9 @@ public:
     using Inspect = std::function<MutationObservation(const TaskInput &)>;
     using Completion = std::function<void(const TaskCompletion &)>;
 
-    // How long destruction waits for admitted mutations to end.
-    static constexpr int kShutdownGraceMs = 2000;
-
     // Each Git task runs in its own runner from git, a child of this
-    // coordinator; other work runs on workers, which only this coordinator
-    // uses and which outlives it.
+    // coordinator; other work runs on workers, which outlives it. Destruction
+    // drains this coordinator's job futures without waiting on unrelated work.
     SessionCoordinator(SessionStore &store, git::GitRunners git, QThreadPool &workers, QObject *parent = nullptr);
     ~SessionCoordinator() override;
     // worktree is the verified repository root, not a launch subdirectory.

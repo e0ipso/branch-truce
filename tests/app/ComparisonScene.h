@@ -188,6 +188,9 @@ public:
         const auto center = target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0)).toPoint();
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, center);
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        settleFor("the clicked command committed",
+                  [&] { return !controller.store()->commandPending(controller.selection()->id()); });
+        settleAligned();
     }
     bool toolbarEnabled(const char *name)
     {

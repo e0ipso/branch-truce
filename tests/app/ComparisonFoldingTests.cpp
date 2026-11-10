@@ -1,5 +1,10 @@
 // Conflict markers in the result: folded blocks, their rows and choices, and conflict navigation.
 #include "ComparisonScene.h"
+#include "fixtures/AppSession.h"
+#include "fixtures/Await.h"
+
+using test_support::await;
+using test_support::commandResult;
 
 using namespace comparison_scene;
 
@@ -128,10 +133,14 @@ void comparison_scene::addFoldingCases(Groups groups)
         CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
         settle([&] { return foldedLines(fixture) == numbers(3, 15); });
         checkUnchanged(fixture, edited);
-        CHECK(fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id)));
+        CHECK(commandResult(
+            fixture.controller,
+            fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.file().current().draft == original.draft);
         settle([&] { return foldedLines(fixture) == numbers(3, 15); });
-        CHECK(fixture.controller.commands()->redo("choices", QString::number(fixture.file().current().id)));
+        CHECK(commandResult(
+            fixture.controller,
+            fixture.controller.commands()->redo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.file().current().draft == edited.draft);
         settle([&] { return foldedLines(fixture) == numbers(3, 15); });
         const auto redone = captureWork(fixture);
@@ -239,10 +248,14 @@ void comparison_scene::addFoldingCases(Groups groups)
         expectLook(fixture, "after folding the edited marker again", joinedFold);
         checkUnchanged(fixture, afterJoin);
         // Undo and redo restore the bytes and their recognized folds.
-        CHECK(fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id)));
+        CHECK(commandResult(
+            fixture.controller,
+            fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.text() == launched);
         expectLook(fixture, "after undo", folded);
-        CHECK(fixture.controller.commands()->redo("choices", QString::number(fixture.file().current().id)));
+        CHECK(commandResult(
+            fixture.controller,
+            fixture.controller.commands()->redo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.text() == joined);
         expectLook(fixture, "after redo", joinedFold);
         fixture.checkRecovered(fixture.file().current().draft);
@@ -321,7 +334,7 @@ void comparison_scene::addFoldingCases(Groups groups)
         CHECK(fixture.controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
                                                           QString::fromStdString(first.source.contributionId),
                                                           ChoicePreviewFlow::Action::ResolveUsingSide));
-        CHECK(fixture.controller.choices()->applyChoice(true));
+        CHECK(commandResult(fixture.controller, fixture.controller.choices()->applyChoice(true)));
         CHECK(!fixture.text().contains(QStringLiteral(">>>>>>> theirs\nbridge")));
         CHECK(fixture.controller.selectedFile()->markerBlocks().size() == 1);
         for (const auto &entry : remaining(fixture))
@@ -329,7 +342,9 @@ void comparison_scene::addFoldingCases(Groups groups)
         // The second block, now lines 5-9, folds into its row on line 5.
         expectLook(fixture, "after resolving the first section",
                    {{6, 7, 8, 9}, numbers(1, 12, {6, 7, 8, 9}), {5}, {5}, 3});
-        CHECK(fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id)));
+        CHECK(commandResult(
+            fixture.controller,
+            fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
         CHECK(remaining(fixture) == atLaunch);
         expectLook(fixture, "after undoing the choice", markedFolded());
     });
@@ -349,7 +364,7 @@ void comparison_scene::addFoldingCases(Groups groups)
             CHECK(fixture.controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
                                                               QString::fromStdString(target.source.contributionId),
                                                               ChoicePreviewFlow::Action::ResolveUsingSide));
-            CHECK(fixture.controller.choices()->applyChoice(true));
+            CHECK(commandResult(fixture.controller, fixture.controller.choices()->applyChoice(true)));
         };
         resolve(SourceSide::Stage2, 0);
         CHECK(!notice->isVisible());
@@ -358,10 +373,14 @@ void comparison_scene::addFoldingCases(Groups groups)
         CHECK(notice->isVisible() && rowLine() == QStringLiteral("Ready to mark resolved"));
         // Nothing was written or resolved.
         CHECK(!fixture.file().facts().resolved && !fixture.file().publication().written());
-        CHECK(fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id)));
+        CHECK(commandResult(
+            fixture.controller,
+            fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
         settle([&] { return !notice->isVisible(); });
         CHECK(!notice->isVisible() && rowLine() != QStringLiteral("Ready to mark resolved"));
-        CHECK(fixture.controller.commands()->redo("choices", QString::number(fixture.file().current().id)));
+        CHECK(commandResult(
+            fixture.controller,
+            fixture.controller.commands()->redo("choices", QString::number(fixture.file().current().id))));
         settle([&] { return notice->isVisible(); });
         CHECK(notice->isVisible());
     });
@@ -390,7 +409,7 @@ void comparison_scene::addFoldingCases(Groups groups)
             CHECK(fixture.controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
                                                               QString::fromStdString(target.source.contributionId),
                                                               ChoicePreviewFlow::Action::ResolveUsingSide));
-            CHECK(fixture.controller.choices()->applyChoice(true));
+            CHECK(commandResult(fixture.controller, fixture.controller.choices()->applyChoice(true)));
         };
         // Deciding the first section keeps the block, its fold and every region's markers.
         resolve(SourceSide::Stage2, 0);
@@ -403,7 +422,9 @@ void comparison_scene::addFoldingCases(Groups groups)
         CHECK(remain().size() == atLaunch.size() && !remain().contains(true));
         settle([&] { return foldedLines(fixture).isEmpty(); });
         // One undo brings back the block and its fold.
-        CHECK(fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id)));
+        CHECK(commandResult(
+            fixture.controller,
+            fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.text() == QString::fromStdString(test_support::splitText()) && remain() == atLaunch && folded());
         settle([&] { return foldedLines(fixture) == numbers(3, 11); });
     });
@@ -462,11 +483,13 @@ void comparison_scene::addFoldingCases(Groups groups)
         CHECK(fixture.controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
                                                           QString::fromStdString(target.source.contributionId),
                                                           ChoicePreviewFlow::Action::Ignore));
-        CHECK(fixture.controller.choices()->applyChoice(true));
+        CHECK(commandResult(fixture.controller, fixture.controller.choices()->applyChoice(true)));
         CHECK(fixture.file().facts().undecided == 3);
         CHECK(fixture.text().toStdString() == result);
         noConflicts();
-        CHECK(fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id)));
+        CHECK(commandResult(
+            fixture.controller,
+            fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.file().facts().undecided == 4);
         CHECK(fixture.text().toStdString() == result);
         noConflicts();

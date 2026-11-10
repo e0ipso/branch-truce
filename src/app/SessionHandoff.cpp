@@ -61,7 +61,8 @@ Handoff SessionHandoff::build(const SessionStore &store, const SessionActivity &
     Handoff result;
     result.totalFiles = static_cast<int>(store.size());
     for (const auto category : order) result.groups.push_back({category, {}});
-    bool filesResolved = store.size() > 0 && !store.hasPendingRecovery() && !store.hasRecoveryFailures();
+    bool filesResolved =
+        store.size() > 0 && !store.hasPendingRecovery() && !store.hasRecoveryFailures() && !store.recording();
     for (std::size_t row = 0; row < store.size(); ++row) {
         const auto &file = store.files()[row];
         const auto route = presentation.route(row);
@@ -102,7 +103,9 @@ Handoff SessionHandoff::build(const SessionStore &store, const SessionActivity &
                              .arg(result.outstandingFiles);
     // Leaving must not lose input that never reached the recovery store, or
     // a publication whose outcome is still unknown.
-    if (store.hasPendingRecovery())
+    if (store.recording() && !store.hasPendingRecovery())
+        result.leaveBlocker = tr("Recovery is still being written. Wait before leaving.");
+    else if (store.hasPendingRecovery())
         result.leaveBlocker =
             tr("Pending input is not in recovery yet. Retry recovery before leaving so the draft is kept.");
     else if (activity.resolutionRunning)

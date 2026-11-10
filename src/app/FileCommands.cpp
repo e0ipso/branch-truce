@@ -38,15 +38,33 @@ FileCommands::FileCommands(SessionStore &store, const Selection &selection, Resu
             [this] { feedback_.report(Transition::InvalidAnchor); });
     // A publication step can end the resolution or ask for confirmation.
     connect(&publisher_, &ResolutionPublisher::changed, this, &FileCommands::resolutionChanged);
-    // Replacing the files drops their pending input, so a discard waiting on
-    // it never completes and must not report a completion.
-    connect(&store_, &SessionStore::aboutToReplace, this, [this] {
-        discardPendingFileId_.reset();
-        stagedDiscardPendingFileId_.reset();
-    });
+    connect(&publisher_, &ResolutionPublisher::markersBlocked, this,
+            [this](const QString &id, quint64 revision, quint64 count, quint64 line, const QString &message) {
+                feedback_.showMarkers(message, id.toStdString(), revision, count, line);
+            });
     connect(&store_, &SessionStore::replaced, this, &FileCommands::resolutionChanged);
-    connect(&store_, &SessionStore::fileChanged, this,
-            [this](int row) { pendingDiscardSettled(store_.files()[static_cast<std::size_t>(row)].id()); });
+    connect(&store_, &SessionStore::fileStored, this, [this](int row, SessionStore::Action action) {
+        const auto &file = store_.files()[static_cast<std::size_t>(row)];
+        if (action == SessionStore::Action::ManualSave)
+            feedback_.show(tr("Draft saved in Branch Truce; repository file unchanged."));
+        else if (action == SessionStore::Action::DiscardToCheckpoint)
+            feedback_.show(discardedMessage(file));
+        else if (action == SessionStore::Action::DiscardToStaged)
+            feedback_.show(stagedDiscardMessage());
+    });
+}
+
+bool FileCommands::acknowledge(QFuture<Transition> result, const QString &failure)
+{
+    if (result.isFinished()) return feedback_.report(result.result());
+    feedback_.show(tr("Command pending. Waiting for durable recovery."));
+    result.then(this, [this, failure](Transition outcome) {
+        if (outcome != Transition::Applied && !failure.isEmpty())
+            feedback_.show(failure);
+        else if (outcome != Transition::Applied)
+            feedback_.report(outcome);
+    });
+    return true;
 }
 
 bool FileCommands::resolutionConfirmation() const { return publisher_.confirmationPending(); }
@@ -83,7 +101,7 @@ bool FileCommands::editResult(const QString &fileId, const QString &revision, in
 {
     const auto target = admit(fileId, revision, CommandCheck::Edit);
     const auto edit = target ? resultEdit(*target, begin, end, replacement) : std::nullopt;
-    return edit && feedback_.report(store_.editResult(fileId.toStdString(), target->revision, *edit));
+    return edit && acknowledge(store_.editResult(fileId.toStdString(), target->revision, *edit));
 }
 
 bool FileCommands::typeResult(const QString &fileId, const QString &revision, int begin, int end,
@@ -99,13 +117,13 @@ bool FileCommands::recordTyping() { return store_.recordTyping(); }
 bool FileCommands::undo(const QString &fileId, const QString &revision)
 {
     const auto target = admit(fileId, revision, CommandCheck::Current);
-    return target && feedback_.report(store_.undo(fileId.toStdString(), target->revision));
+    return target && acknowledge(store_.undo(fileId.toStdString(), target->revision));
 }
 
 bool FileCommands::redo(const QString &fileId, const QString &revision)
 {
     const auto target = admit(fileId, revision, CommandCheck::Current);
-    return target && feedback_.report(store_.redo(fileId.toStdString(), target->revision));
+    return target && acknowledge(store_.redo(fileId.toStdString(), target->revision));
 }
 
 bool FileCommands::saveDraft(const QString &fileId, const QString &revision)
@@ -114,16 +132,8 @@ bool FileCommands::saveDraft(const QString &fileId, const QString &revision)
     if (!target) return false;
     const auto &[file, expected] = *target;
     if (file->publication().checkpointed(expected)) return feedback_.report(Transition::NoChange);
-    // The recovery commit inside this call is the app checkpoint. It does not
-    // write the worktree or stage a path; publication stays on Mark resolved.
-    const auto result = store_.recordCheckpoint(fileId.toStdString(), expected, Outcome::Succeeded);
-    if (result == Transition::Blocked && store_.pendingAction(fileId.toStdString())) {
-        feedback_.show(tr("Draft save failed. The edited result is still available."));
-        return false;
-    }
-    if (result != Transition::Applied) return feedback_.report(result);
-    feedback_.show(tr("Draft saved in Branch Truce; repository file unchanged."));
-    return true;
+    return acknowledge(store_.recordCheckpoint(fileId.toStdString(), expected, Outcome::Succeeded),
+                       tr("Draft save failed. The edited result is still available."));
 }
 
 bool FileCommands::markResolved(const QString &fileId, const QString &revision, bool confirmUndecided)
@@ -174,72 +184,37 @@ QString FileCommands::stagedDiscardMessage()
     return tr("Discarded the draft. The result staged in Git is current again; the repository file is unchanged.");
 }
 
-void FileCommands::pendingDiscardSettled(const std::string &fileId)
-{
-    if (discardPendingFileId_ == fileId && !store_.pendingDraft(fileId)) {
-        discardPendingFileId_.reset();
-        if (const auto *discarded = store_.file(fileId)) feedback_.show(discardedMessage(*discarded));
-    }
-    if (stagedDiscardPendingFileId_ == fileId && !store_.pendingDraft(fileId)) {
-        stagedDiscardPendingFileId_.reset();
-        if (store_.file(fileId)) feedback_.show(stagedDiscardMessage());
-    }
-}
-
 bool FileCommands::discardUnsaved(const QString &fileId, const QString &revision)
 {
     const auto target = admit(fileId, revision, CommandCheck::CurrentSupported);
-    if (!target) return false;
-    // Applied means the restored text and decisions are already in the journal.
-    const auto id = fileId.toStdString();
-    const auto result = store_.discardToCheckpoint(id, target->revision);
-    if (result == Transition::Blocked && store_.pendingAction(id)) {
-        // The editor shows the pending restored result. The acknowledged edit
-        // stays in place until this same discard commits.
-        discardPendingFileId_ = id;
-        feedback_.show(tr("Discard was not completed. The restored result is shown until retry finishes it."));
-        return false;
-    }
-    discardPendingFileId_.reset();
-    if (result != Transition::Applied) return feedback_.report(result);
-    feedback_.show(discardedMessage(*store_.file(id)));
-    return true;
+    return target
+        && acknowledge(store_.discardToCheckpoint(fileId.toStdString(), target->revision),
+                       tr("Discard was not completed. The restored result is shown until retry finishes it."));
 }
 
 bool FileCommands::discardToStaged(const QString &fileId, const QString &revision)
 {
     const auto target = admit(fileId, revision, CommandCheck::CurrentSupported);
     if (!target) return false;
-    // Applied means the staged revision is current again and the journal holds it.
-    const auto id = fileId.toStdString();
-    const auto result = store_.discardToStaged(id, target->revision);
-    if (result == Transition::Blocked && store_.pendingAction(id)) {
-        // The acknowledged draft stays current until retry commits this same discard.
-        stagedDiscardPendingFileId_ = id;
-        feedback_.show(tr("Discard was not completed. The draft is kept until retry finishes the discard."));
-        return false;
-    }
-    stagedDiscardPendingFileId_.reset();
-    if (result == Transition::Blocked) {
+    auto command = store_.discardToStaged(fileId.toStdString(), target->revision);
+    if (command.isFinished() && command.result() == Transition::Blocked) {
         feedback_.show(
             tr("Discard was not completed. No verified result staged in Git to return to, so the draft is kept."));
         return false;
     }
-    if (result != Transition::Applied) return feedback_.report(result);
-    feedback_.show(stagedDiscardMessage());
-    return true;
+    return acknowledge(command, tr("Discard was not completed. The draft is kept until retry finishes the discard."));
 }
 
 bool FileCommands::loadLargeFile(const QString &fileId)
 {
     const auto *file = store_.file(fileId.toStdString());
     const auto target = admit(fileId, file ? QString::number(file->current().id) : QString{}, CommandCheck::Current);
-    return target && feedback_.report(store_.loadLargeFile(fileId.toStdString()));
+    return target && acknowledge(store_.loadLargeFile(fileId.toStdString()));
 }
 
 bool FileCommands::retryPendingRecovery(const QString &fileId)
 {
     if (editor_.composing()) return feedback_.report(Transition::Blocked);
-    return store_.retryRecovery(fileId.toStdString()) == Transition::Applied;
+    return acknowledge(store_.retryRecovery(fileId.toStdString()));
 }
 }

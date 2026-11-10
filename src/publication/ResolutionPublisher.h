@@ -68,9 +68,10 @@ public:
 
 Q_SIGNALS:
     void changed(const QString &message);
+    void markersBlocked(const QString &fileId, quint64 revision, quint64 count, quint64 line, const QString &message);
 
 private:
-    enum class Step { Prepare, Discover, Index, Publish, Stage, ParentPreflight, Verify };
+    enum class Step { Prepare, Discover, Index, Publish, Stage, ParentPreflight, Verify, Inspect };
     // What finishes each step, and whether the step runs after the write, so
     // that a failure there is a staging failure.
     struct StepHandling {
@@ -100,11 +101,14 @@ private:
     [[nodiscard]] bool previouslyWritten(const FileSession &session, RevisionId revision) const;
     [[nodiscard]] bool preserveWrite() const;
     [[nodiscard]] static StartResult result(Transition transition, const QString &detail);
-    StartResult recordWrite(const std::string &fileId, RevisionId revision, Outcome outcome, const QString &detail);
     void fail(Outcome outcome, const QString &detail, bool stage);
     void finishResolved();
     void clearAttempt();
     bool launch(Step step, git::Request request);
+    StartResult reviewed(Transition review);
+    void preparePublication();
+    void inspectDestination(std::function<void(storage::DestinationCapture)> inspected);
+    void inspectedIndex(storage::DestinationCapture current);
     bool startPrepare();
     bool startVerify();
     void prepared(const git::TextConversionResult &result);
@@ -123,7 +127,7 @@ private:
     git::RepositoryContext repository_;
     git::TextConversion conversion_;
     Baselines baselines_;
-    std::optional<Attempt> attempt_;
+    std::shared_ptr<Attempt> attempt_;
     ParentStaging parent_;
     std::optional<std::pair<std::string, RevisionId>> confirmation_;
 };

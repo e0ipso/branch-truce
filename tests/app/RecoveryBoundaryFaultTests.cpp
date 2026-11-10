@@ -6,6 +6,7 @@
 #include "app/SessionModel.h"
 #include "app/Translations.h"
 #include "fixtures/AppSession.h"
+#include "fixtures/Await.h"
 #include "fixtures/ConflictedRepository.h"
 #include "fixtures/Files.h"
 #include "fixtures/GitOnPath.h"
@@ -39,6 +40,9 @@
 #include <string_view>
 #include <sys/stat.h>
 #include <unistd.h>
+
+using test_support::await;
+using test_support::awaitAligned;
 
 using namespace branch_truce;
 
@@ -168,18 +172,20 @@ void typeBurst(test_support::TestSession &model)
 void saveCheckpoint(test_support::TestSession &model)
 {
     openBase(model);
-    CHECK(model.replaceDraft("file", 1, savedDraft()) == Transition::Applied);
-    CHECK(model.recordCheckpoint("file", model.file("file")->current().id, Outcome::Succeeded) == Transition::Applied);
+    CHECK(await(model.replaceDraft("file", 1, savedDraft())) == Transition::Applied);
+    CHECK(await(model.recordCheckpoint("file", model.file("file")->current().id, Outcome::Succeeded))
+          == Transition::Applied);
 }
 void reviewSaved(test_support::TestSession &model)
 {
     saveCheckpoint(model);
-    CHECK(model.beginMarkResolved("file", model.file("file")->current().id) == Transition::Applied);
+    CHECK(await(model.beginMarkResolved("file", model.file("file")->current().id)) == Transition::Applied);
 }
 void writeSaved(test_support::TestSession &model)
 {
     reviewSaved(model);
-    CHECK(model.recordWrite("file", model.file("file")->current().id, Outcome::Succeeded) == Transition::Applied);
+    CHECK(await(model.recordWrite("file", model.file("file")->current().id, Outcome::Succeeded))
+          == Transition::Applied);
 }
 
 [[noreturn]] void runBoundary(const QString &name, const QString &directory, const QString &crash)
@@ -191,7 +197,7 @@ void writeSaved(test_support::TestSession &model)
         openBase(model);
         commitBoundary(
             model, *files,
-            [](test_support::TestSession &session) { return session.replaceDraft("file", 1, savedDraft()); },
+            [](test_support::TestSession &session) { return await(session.replaceDraft("file", 1, savedDraft())); },
             [](FileSession &file) { return file.replaceDraft(file.current().id, savedDraft()); });
     }
     if (name == QLatin1String("typing")) {
@@ -205,8 +211,10 @@ void writeSaved(test_support::TestSession &model)
             },
             [](FileSession &file) {
                 for (std::size_t index = 0; index < std::string_view(typedText).size(); ++index) {
-                    const auto applied = file.editResult(
-                        file.current().id, {{index, index}, std::string(1, typedText[index])}, {.join = index > 0});
+                    const auto applied = awaitAligned(
+                        file,
+                        file.editResult(file.current().id, {{index, index}, std::string(1, typedText[index])},
+                                        {.join = index > 0}));
                     if (applied != Transition::Applied) return applied;
                 }
                 return Transition::Applied;
@@ -222,22 +230,23 @@ void writeSaved(test_support::TestSession &model)
     }
     if (name == QLatin1String("checkpoint")) {
         openBase(model);
-        CHECK(model.replaceDraft("file", 1, savedDraft()) == Transition::Applied);
+        CHECK(await(model.replaceDraft("file", 1, savedDraft())) == Transition::Applied);
         const auto revision = model.file("file")->current().id;
         commitBoundary(
             model, *files,
             [=](test_support::TestSession &session) {
-                return session.recordCheckpoint("file", revision, Outcome::Succeeded);
+                return await(session.recordCheckpoint("file", revision, Outcome::Succeeded));
             },
             [=](FileSession &file) { return file.recordCheckpoint(revision, Outcome::Succeeded); });
     }
     if (name == QLatin1String("discard")) {
         saveCheckpoint(model);
-        CHECK(model.replaceDraft("file", model.file("file")->current().id, discardedDraft()) == Transition::Applied);
+        CHECK(await(model.replaceDraft("file", model.file("file")->current().id, discardedDraft()))
+              == Transition::Applied);
         const auto revision = model.file("file")->current().id;
         commitBoundary(
             model, *files,
-            [=](test_support::TestSession &session) { return session.discardToCheckpoint("file", revision); },
+            [=](test_support::TestSession &session) { return await(session.discardToCheckpoint("file", revision)); },
             [=](FileSession &file) { return file.discardToCheckpoint(file.current().id); });
     }
     if (name == QLatin1String("write")) {
@@ -246,7 +255,7 @@ void writeSaved(test_support::TestSession &model)
         commitBoundary(
             model, *files,
             [=](test_support::TestSession &session) {
-                return session.recordWrite("file", revision, Outcome::Succeeded);
+                return await(session.recordWrite("file", revision, Outcome::Succeeded));
             },
             [=](FileSession &file) { return file.recordWrite(revision, Outcome::Succeeded); });
     }
@@ -256,7 +265,7 @@ void writeSaved(test_support::TestSession &model)
         commitBoundary(
             model, *files,
             [=](test_support::TestSession &session) {
-                return session.recordStage("file", revision, Outcome::Succeeded, "verified-object", "100644");
+                return await(session.recordStage("file", revision, Outcome::Succeeded, "verified-object", "100644"));
             },
             [=](FileSession &file) {
                 return file.recordStage(revision, Outcome::Succeeded, "verified-object", "100644");
@@ -264,12 +273,12 @@ void writeSaved(test_support::TestSession &model)
     }
     if (name == QLatin1String("checkpoint-failed")) {
         openBase(model);
-        CHECK(model.replaceDraft("file", 1, savedDraft()) == Transition::Applied);
+        CHECK(await(model.replaceDraft("file", 1, savedDraft())) == Transition::Applied);
         const auto revision = model.file("file")->current().id;
         commitBoundary(
             model, *files,
             [=](test_support::TestSession &session) {
-                return session.recordCheckpoint("file", revision, Outcome::Failed, "checkpoint sync failed");
+                return await(session.recordCheckpoint("file", revision, Outcome::Failed, "checkpoint sync failed"));
             },
             [=](FileSession &file) {
                 return file.recordCheckpoint(revision, Outcome::Failed, "checkpoint sync failed");
@@ -281,7 +290,7 @@ void writeSaved(test_support::TestSession &model)
         commitBoundary(
             model, *files,
             [=](test_support::TestSession &session) {
-                return session.recordWrite("file", revision, Outcome::Failed, "repository write failed");
+                return await(session.recordWrite("file", revision, Outcome::Failed, "repository write failed"));
             },
             [=](FileSession &file) { return file.recordWrite(revision, Outcome::Failed, "repository write failed"); });
     }
@@ -291,10 +300,11 @@ void writeSaved(test_support::TestSession &model)
         commitBoundary(
             model, *files,
             [=](test_support::TestSession &session) {
-                return session.recordWrite("file", revision, Outcome::Uncertain, "destination changed during write");
+                return await(
+                    session.recordWrite("file", revision, Outcome::Uncertain, "destination changed during write"));
             },
             [=](FileSession &file) {
-                return file.recordWrite(revision, Outcome::Uncertain, "destination changed during write");
+                return await(file.recordWrite(revision, Outcome::Uncertain, "destination changed during write"));
             });
     }
     if (name == QLatin1String("stage-failed")) {
@@ -303,7 +313,7 @@ void writeSaved(test_support::TestSession &model)
         commitBoundary(
             model, *files,
             [=](test_support::TestSession &session) {
-                return session.recordStage("file", revision, Outcome::Failed, {}, {}, "index update failed");
+                return await(session.recordStage("file", revision, Outcome::Failed, {}, {}, "index update failed"));
             },
             [=](FileSession &file) {
                 return file.recordStage(revision, Outcome::Failed, {}, {}, "index update failed");
@@ -410,7 +420,8 @@ public:
         auto draft = file().current().draft;
         draft.text = reviewed.toStdString();
         draft.unresolvedMarkers = 0;
-        CHECK(controller->store()->replaceDraft(id.toStdString(), file().current().id, draft) == Transition::Applied);
+        CHECK(await(controller->store()->replaceDraft(id.toStdString(), file().current().id, draft))
+              == Transition::Applied);
     }
 
     QByteArray indexEntries() const
@@ -623,17 +634,18 @@ public:
         suite.run("recovery-write retry keeps one edit and its decisions", [] {
             retryBoundary(
                 openBase,
-                [](test_support::TestSession &session) { return session.replaceDraft("file", 1, savedDraft()); },
+                [](test_support::TestSession &session) { return await(session.replaceDraft("file", 1, savedDraft())); },
                 [](FileSession &file) { return file.replaceDraft(file.current().id, savedDraft()); });
         });
         suite.run("checkpoint sync failure retains the draft and retries one manual save", [] {
             retryBoundary(
                 [](test_support::TestSession &session) {
                     openBase(session);
-                    CHECK(session.replaceDraft("file", 1, savedDraft()) == Transition::Applied);
+                    CHECK(await(session.replaceDraft("file", 1, savedDraft())) == Transition::Applied);
                 },
                 [](test_support::TestSession &session) {
-                    return session.recordCheckpoint("file", session.file("file")->current().id, Outcome::Succeeded);
+                    return await(
+                        session.recordCheckpoint("file", session.file("file")->current().id, Outcome::Succeeded));
                 },
                 [](FileSession &file) { return file.recordCheckpoint(file.current().id, Outcome::Succeeded); });
         });
@@ -641,7 +653,7 @@ public:
             retryBoundary(
                 reviewSaved,
                 [](test_support::TestSession &session) {
-                    return session.recordWrite("file", session.file("file")->current().id, Outcome::Succeeded);
+                    return await(session.recordWrite("file", session.file("file")->current().id, Outcome::Succeeded));
                 },
                 [](FileSession &file) { return file.recordWrite(file.current().id, Outcome::Succeeded); });
         });
@@ -650,11 +662,11 @@ public:
             retryBoundary(
                 writeSaved,
                 [](test_support::TestSession &session) {
-                    return session.recordStage("file", session.file("file")->current().id, Outcome::Succeeded,
-                                               "verified-object", "100644");
+                    return await(session.recordStage("file", session.file("file")->current().id, Outcome::Succeeded,
+                                                     "verified-object", "100644"));
                 },
                 [](FileSession &file) {
-                    return file.recordStage(file.current().id, Outcome::Succeeded, "verified-object", "100644");
+                    return await(file.recordStage(file.current().id, Outcome::Succeeded, "verified-object", "100644"));
                 });
         });
         suite.run("a corrupt record is not restored as success", [] {

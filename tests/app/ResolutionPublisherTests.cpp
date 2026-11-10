@@ -94,10 +94,11 @@ int main(int argc, char **argv)
         Publishing session;
         const auto revision = session.revision();
         const auto refused = session.publisher.start("choices", revision, true);
-        CHECK(refused.transition == Transition::Blocked);
+        CHECK(refused.transition == Transition::Applied && session.publisher.busy());
+        test_support::waitUntil([&] { return !session.publisher.busy(); }, "publication failure was not acknowledged");
         const QString detail =
             QStringLiteral("Repository write failed. No launch destination is available, and the file is unresolved.");
-        CHECK_EQ(refused.detail, detail);
+        CHECK_EQ(session.messages.back(), detail);
         // The review and the Save before the write are kept; the write is recorded as failed.
         CHECK(session.file().publication().reviewed() && session.file().publication().checkpoint()
               && *session.file().publication().checkpoint() == revision);

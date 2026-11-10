@@ -7,6 +7,7 @@
 #include "app/EngineText.h"
 #include "app/Translations.h"
 #include "fixtures/AppSession.h"
+#include "fixtures/Await.h"
 #include "fixtures/ConflictedRepository.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/ScopedEnvironment.h"
@@ -40,6 +41,9 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+
+using test_support::await;
+using test_support::commandResult;
 
 using namespace branch_truce;
 
@@ -237,7 +241,7 @@ void publishWhileDraftChanges(Application &controller, const QString &id, const 
     CHECK(stall.waitForExchange());
     auto draft = openedFile(controller).current().draft;
     draft.text = nextText;
-    CHECK(controller.store()->replaceDraft(id.toStdString(), openedFile(controller).current().id, draft)
+    CHECK(await(controller.store()->replaceDraft(id.toStdString(), openedFile(controller).current().id, draft))
           == Transition::Applied);
     CHECK(revisionOf(openedFile(controller)) != launched);
     stall.releaseWorker();
@@ -263,7 +267,7 @@ struct RestartedWrite {
             auto draft = openedFile(first).current().draft;
             draft.text = edited.toStdString();
             draft.unresolvedMarkers = 0;
-            CHECK(first.store()->replaceDraft(id.toStdString(), openedFile(first).current().id, draft)
+            CHECK(await(first.store()->replaceDraft(id.toStdString(), openedFile(first).current().id, draft))
                   == Transition::Applied);
             writeFile(hook, "#!/bin/sh\nexit 1\n");
             CHECK(
@@ -356,8 +360,8 @@ int main(int argc, char **argv)
         const auto stale = session.revision();
         auto edited = openedFile(session.controller).current().draft;
         edited.text += "later edit\n";
-        CHECK(session.controller.store()->replaceDraft(session.id.toStdString(),
-                                                       openedFile(session.controller).current().id, edited)
+        CHECK(await(session.controller.store()->replaceDraft(session.id.toStdString(),
+                                                             openedFile(session.controller).current().id, edited))
               == Transition::Applied);
         CHECK(!session.controller.commands()->markResolved(session.id, stale, true));
         CHECK(session.controller.feedback()->message().contains(QStringLiteral("changed")));
@@ -545,8 +549,8 @@ int main(int argc, char **argv)
         auto draft = openedFile(session.controller).current().draft;
         draft.text = "published once\n";
         draft.unresolvedMarkers = 0;
-        CHECK(session.controller.store()->replaceDraft(session.id.toStdString(),
-                                                       openedFile(session.controller).current().id, draft)
+        CHECK(await(session.controller.store()->replaceDraft(session.id.toStdString(),
+                                                             openedFile(session.controller).current().id, draft))
               == Transition::Applied);
         const auto revision = session.revision();
         {
@@ -599,7 +603,7 @@ int main(int argc, char **argv)
         auto draft = openedFile(controller).current().draft;
         draft.text = "written before the time out\n";
         draft.unresolvedMarkers = 0;
-        CHECK(controller.store()->replaceDraft(id.toStdString(), openedFile(controller).current().id, draft)
+        CHECK(await(controller.store()->replaceDraft(id.toStdString(), openedFile(controller).current().id, draft))
               == Transition::Applied);
         const auto revision = revisionOf(openedFile(controller));
         CHECK(controller.commands()->markResolved(id, revision, true));
@@ -646,8 +650,8 @@ int main(int argc, char **argv)
         auto draft = openedFile(session.controller).current().draft;
         draft.text = reviewed.toStdString();
         draft.unresolvedMarkers = 0;
-        CHECK(session.controller.store()->replaceDraft(session.id.toStdString(),
-                                                       openedFile(session.controller).current().id, draft)
+        CHECK(await(session.controller.store()->replaceDraft(session.id.toStdString(),
+                                                             openedFile(session.controller).current().id, draft))
               == Transition::Applied);
         const auto revision = session.revision();
         // git mergetool moves MERGED to BACKUP and copies it back before the tool runs.
@@ -703,8 +707,8 @@ int main(int argc, char **argv)
         auto draft = openedFile(session.controller).current().draft;
         draft.text = reviewed.toStdString();
         draft.unresolvedMarkers = 0;
-        CHECK(session.controller.store()->replaceDraft(session.id.toStdString(),
-                                                       openedFile(session.controller).current().id, draft)
+        CHECK(await(session.controller.store()->replaceDraft(session.id.toStdString(),
+                                                             openedFile(session.controller).current().id, draft))
               == Transition::Applied);
         const auto revision = session.revision();
         // The write succeeds and the refused staging hook keeps the conflict in the index.
@@ -758,9 +762,9 @@ int main(int argc, char **argv)
         edited.unresolvedMarkers = 0;
         {
             test_support::ArmedFault fault(*session.files, test_support::SyncFaults::Point::JournalSync);
-            CHECK(
-                controller.store()->replaceDraft(session.id.toStdString(), openedFile(controller).current().id, edited)
-                == Transition::Blocked);
+            CHECK(await(controller.store()->replaceDraft(session.id.toStdString(), openedFile(controller).current().id,
+                                                         edited))
+                  == Transition::Blocked);
             CHECK(session.files->failures == 1);
         }
         CHECK(controller.files()->hasPendingRecovery());
@@ -776,7 +780,7 @@ int main(int argc, char **argv)
         CHECK(controller.files()->hasPendingRecovery());
         expectUnchanged(session.repo, before);
 
-        CHECK(controller.commands()->retryPendingRecovery(session.id));
+        CHECK(commandResult(controller, controller.commands()->retryPendingRecovery(session.id)));
         CHECK(openedFile(controller).current().draft == edited);
         summary = controller.completion()->handoffData();
         CHECK(summary.value("canLeave").toBool() && summary.value("leaveBlocker").toString().isEmpty());
@@ -810,8 +814,8 @@ int main(int argc, char **argv)
         auto resolved = openedFile(controller, "excluded.txt").current().draft;
         resolved.text = "excluded resolved\n";
         resolved.unresolvedMarkers = 0;
-        CHECK(controller.store()->replaceDraft(excluded.toStdString(),
-                                               openedFile(controller, "excluded.txt").current().id, resolved)
+        CHECK(await(controller.store()->replaceDraft(excluded.toStdString(),
+                                                     openedFile(controller, "excluded.txt").current().id, resolved))
               == Transition::Applied);
         CHECK(controller.commands()->markResolved(excluded, revisionOf(openedFile(controller, "excluded.txt")), true));
         waitFor(controller, [&] {
@@ -826,7 +830,8 @@ int main(int argc, char **argv)
         CHECK(QFileInfo::exists(store + "/journal"));
         CHECK(controller.completion()->finish());
         CHECK(end.count == 1 && end.clean);
-        // Nothing in the finished session's recovery store is needed any more.
+        // Cleanup follows the clean finish on the journal worker.
+        test_support::waitUntil([&] { return !QFileInfo::exists(store); }, "finished recovery store was not removed");
         CHECK(!QFileInfo::exists(store));
         CHECK(end.outcome == summary.value("outcome").toString() && controller.completion()->outcome() == end.outcome);
         CHECK(end.outcome.startsWith("All 2 files in this session are written and resolved in Git."));
@@ -840,8 +845,8 @@ int main(int argc, char **argv)
         const auto replace = [&](std::string text) {
             auto draft = openedFile(session.controller).current().draft;
             draft.text = std::move(text);
-            CHECK(session.controller.store()->replaceDraft(session.id.toStdString(),
-                                                           openedFile(session.controller).current().id, draft)
+            CHECK(await(session.controller.store()->replaceDraft(session.id.toStdString(),
+                                                                 openedFile(session.controller).current().id, draft))
                   == Transition::Applied);
         };
         // "caf\xc3\xa9 \xf0\x9f\x98\x80\n" is 8 UTF-16 code units and "kept\n" 5 more.
@@ -898,26 +903,29 @@ int main(int argc, char **argv)
         const auto stagedRevision = session.revision();
         const auto before = session.repo.snapshot();
         // With no newer draft there is nothing to discard.
-        CHECK(session.controller.commands()->discardToStaged(session.id, stagedRevision));
+        CHECK(commandResult(session.controller,
+                            session.controller.commands()->discardToStaged(session.id, stagedRevision)));
         CHECK(session.controller.feedback()->message() == QStringLiteral("No change."));
         auto edited = openedFile(session.controller).current().draft;
         edited.text += "later edit\n";
-        CHECK(session.controller.store()->replaceDraft(session.id.toStdString(),
-                                                       openedFile(session.controller).current().id, edited)
+        CHECK(await(session.controller.store()->replaceDraft(session.id.toStdString(),
+                                                             openedFile(session.controller).current().id, edited))
               == Transition::Applied);
         const auto draftRevision = session.revision();
         CHECK(openedFile(session.controller).facts().status == FileStatus::EarlierStaged);
         CHECK(session.controller.selectedFile()->progress().value("earlierResolved").toBool());
 
         // A stale revision is refused like every other command and keeps the draft.
-        CHECK(!session.controller.commands()->discardToStaged(session.id, stagedRevision));
+        CHECK(!commandResult(session.controller,
+                             session.controller.commands()->discardToStaged(session.id, stagedRevision)));
         CHECK(session.controller.feedback()->message().contains(QStringLiteral("changed")));
         CHECK(openedFile(session.controller).current().draft.text == edited.text);
 
         // A journal failure keeps the acknowledged draft, and the pending discard blocks other commands.
         {
             test_support::ArmedFault fault(*session.files, test_support::SyncFaults::Point::JournalSync);
-            CHECK(!session.controller.commands()->discardToStaged(session.id, draftRevision));
+            CHECK(!commandResult(session.controller,
+                                 session.controller.commands()->discardToStaged(session.id, draftRevision)));
             CHECK(session.files->failures == 1);
         }
         CHECK(session.controller.files()->hasPendingRecovery());
@@ -925,13 +933,14 @@ int main(int argc, char **argv)
               == QStringLiteral("Discard was not completed. The draft is kept until retry finishes the discard."));
         CHECK(openedFile(session.controller).current().draft.text == edited.text);
         CHECK(session.revision() == draftRevision);
-        CHECK(!session.controller.commands()->discardToStaged(session.id, draftRevision));
+        CHECK(!commandResult(session.controller,
+                             session.controller.commands()->discardToStaged(session.id, draftRevision)));
         CHECK(session.controller.feedback()->message().contains(QStringLiteral("Command not completed")));
-        CHECK(!session.controller.commands()->saveDraft(session.id, draftRevision));
+        CHECK(!commandResult(session.controller, session.controller.commands()->saveDraft(session.id, draftRevision)));
         CHECK(openedFile(session.controller).current().draft.text == edited.text);
 
         // Retry commits the same discard: the staged revision is current and resolved again.
-        CHECK(session.controller.commands()->retryPendingRecovery(session.id));
+        CHECK(commandResult(session.controller, session.controller.commands()->retryPendingRecovery(session.id)));
         CHECK(!session.controller.files()->hasPendingRecovery());
         CHECK(session.controller.feedback()->message()
               == QStringLiteral(
@@ -948,7 +957,8 @@ int main(int argc, char **argv)
     suite.run("discard to staged without a staged result refuses and keeps the draft", [] {
         Session unstaged;
         const auto text = openedFile(unstaged.controller).current().draft.text;
-        CHECK(!unstaged.controller.commands()->discardToStaged(unstaged.id, unstaged.revision()));
+        CHECK(!commandResult(unstaged.controller,
+                             unstaged.controller.commands()->discardToStaged(unstaged.id, unstaged.revision())));
         CHECK(unstaged.controller.feedback()->message()
               == QStringLiteral(
                   "Discard was not completed. No verified result staged in Git to return to, so the draft is kept."));
@@ -989,7 +999,9 @@ int main(int argc, char **argv)
              QStringLiteral("The result changed. Inspect a new whole-file preview."),
              QStringLiteral("This file has no editable captured source.")},
             {"saveDraft",
-             [&](const QString &id, const QString &revision) { return controller.commands()->saveDraft(id, revision); },
+             [&](const QString &id, const QString &revision) {
+                 return commandResult(controller, controller.commands()->saveDraft(id, revision));
+             },
              stale, blocked},
             {"markResolved",
              [&](const QString &id, const QString &revision) {
@@ -998,12 +1010,12 @@ int main(int argc, char **argv)
              stale, blocked},
             {"discardUnsaved",
              [&](const QString &id, const QString &revision) {
-                 return controller.commands()->discardUnsaved(id, revision);
+                 return commandResult(controller, controller.commands()->discardUnsaved(id, revision));
              },
              stale, blocked},
             {"discardToStaged",
              [&](const QString &id, const QString &revision) {
-                 return controller.commands()->discardToStaged(id, revision);
+                 return commandResult(controller, controller.commands()->discardToStaged(id, revision));
              },
              stale, blocked},
         };
@@ -1048,7 +1060,8 @@ int main(int argc, char **argv)
         edited.text += "pending edit\n";
         {
             test_support::ArmedFault fault(*session.files, test_support::SyncFaults::Point::JournalSync);
-            CHECK(controller.store()->replaceDraft(session.id.toStdString(), current, edited) != Transition::Applied);
+            CHECK(await(controller.store()->replaceDraft(session.id.toStdString(), current, edited))
+                  != Transition::Applied);
             CHECK(session.files->failures == 1);
         }
         CHECK(controller.files()->hasPendingRecovery());
@@ -1099,7 +1112,8 @@ int main(int argc, char **argv)
         count("selection", controller.selection(), &Selection::changed);
 
         // A refused Save changes only the command message.
-        CHECK(!controller.commands()->saveDraft(session.id, QStringLiteral("not a revision")));
+        CHECK(
+            !commandResult(controller, controller.commands()->saveDraft(session.id, QStringLiteral("not a revision"))));
         CHECK(controller.feedback()->message() == QStringLiteral("The result changed. Select the scope again."));
         CHECK(emitted == (std::map<std::string, int>{{"message", 1}}));
         CHECK(!controller.choices()->wholeFilePreview().isEmpty());

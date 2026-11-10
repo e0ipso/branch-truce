@@ -168,4 +168,32 @@
         </translation>
     </message>
 </context>
+<context>
+    <name>FileCommands</name>
+    <message>
+        <source>Command pending. Waiting for durable recovery.</source>
+        <translation>Command pending. Waiting for durable recovery.</translation>
+    </message>
+</context>
+<context>
+    <name>ChoicePreviewFlow</name>
+    <message>
+        <source>Waiting for the current result to align before previewing.</source>
+        <translation>Waiting for the current result to align before previewing.</translation>
+    </message>
+</context>
+<context>
+    <name>ResolutionPublisher</name>
+    <message>
+        <source>Preparing the reviewed result. Waiting for durable recovery.</source>
+        <translation>Preparing the reviewed result. Waiting for durable recovery.</translation>
+    </message>
+</context>
+<context>
+    <name>SessionHandoff</name>
+    <message>
+        <source>Recovery is still being written. Wait before leaving.</source>
+        <translation>Recovery is still being written. Wait before leaving.</translation>
+    </message>
+</context>
 </TS>

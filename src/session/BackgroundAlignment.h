@@ -2,6 +2,8 @@
 #pragma once
 
 #include "core/RevisionId.h"
+#include "core/SessionState.h"
+#include <QFuture>
 #include <QObject>
 #include <QThreadPool>
 #include <memory>
@@ -20,10 +22,14 @@ class SessionStore;
 // alignment at a time rather than one per key. The worker reads only the
 // immutable map it was given. Used on the store's thread.
 class BackgroundAlignment final : public QObject {
+    Q_OBJECT
 public:
     explicit BackgroundAlignment(SessionStore &store, QObject *parent = nullptr);
     // Waits for the alignments still running.
     ~BackgroundAlignment() override = default;
+    QFuture<Transition> waitFor(const std::string &id, RevisionId revision);
+Q_SIGNALS:
+    void finished(const QString &id, quint64 revision, bool succeeded);
 
 private:
     // Starts aligning the file in storage row `row` unless its passages are

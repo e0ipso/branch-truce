@@ -3,6 +3,7 @@
 #include "app/AppPaths.h"
 #include "app/Application.h"
 #include "app/Translations.h"
+#include "fixtures/Await.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/EventLoop.h"
 #include "fixtures/Files.h"
@@ -12,6 +13,7 @@
 #include "fixtures/ScriptedGit.h"
 #include "recovery/RecoveryRestore.h"
 #include "session/SessionCoordinator.h"
+#include "storage/OffThread.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QEventLoop>
@@ -28,6 +30,8 @@
 #include <atomic>
 #include <fcntl.h>
 #include <unistd.h>
+
+using test_support::await;
 
 using namespace branch_truce;
 
@@ -65,11 +69,6 @@ struct Gate {
     }
 };
 
-// A worker still running when the case ends fails it instead of leaking into the next case.
-struct DrainWorkers {
-    ~DrainWorkers() { EXPECT(QThreadPool::globalInstance()->waitForDone(6000)); }
-};
-
 TaskResult writeResult(const TaskInput &input, const TaskControl &control, const QByteArray &bytes)
 {
     if (!control.beginMutation()) return {TaskStatus::Cancelled, MutationObservation::NotAttempted, {}, {}, {}};
@@ -101,6 +100,7 @@ public:
     void replace(const QByteArray &path = "tracked.txt", const QString &operation = "merge")
     {
         CHECK(coordinator->replaceSession(root(), operation, {FileSession("file", path.toStdString(), draft())}));
+        model.settle();
     }
     // Writes a worktree file named by raw bytes.
     void write(const QByteArray &relative, const QByteArray &bytes) { repository.writePath(relative, bytes); }
@@ -128,12 +128,7 @@ public:
     int run()
     {
         test_support::Suite suite("SessionCoordinatorTests");
-        const auto test = [&](const char *name, auto body) {
-            suite.run(name, [&] {
-                DrainWorkers drain;
-                body();
-            });
-        };
+        const auto test = [&](const char *name, auto body) { suite.run(name, [&] { body(); }); };
         test("background snapshots leave the event loop responsive and complete on its thread", [] {
             Fixture f;
             Gate gate;
@@ -204,7 +199,7 @@ public:
                 gate.wait();
                 auto edited = draft(decisionsOnly ? "before\n" : "edited\n");
                 if (decisionsOnly) edited.decisions["left"] = {DecisionValue::Ignored, {}};
-                CHECK(f.model.replaceDraft("file", 1, edited) == Transition::Applied);
+                CHECK(await(f.model.replaceDraft("file", 1, edited)) == Transition::Applied);
                 gate.open();
                 f.wait(1);
                 CHECK(applied == 0 && f.finished[0].disposition == TaskDisposition::StaleRevision);
@@ -227,7 +222,7 @@ public:
                 [&](const TaskCompletion &) { ++applied; });
             CHECK(id != 0);
             inspect.wait();
-            CHECK(f.model.replaceDraft("file", 1, draft("new draft\n")) == Transition::Applied);
+            CHECK(await(f.model.replaceDraft("file", 1, draft("new draft\n"))) == Transition::Applied);
             inspect.open();
             f.wait(1);
             CHECK(applied == 0 && f.finished[0].disposition == TaskDisposition::StaleRevision);
@@ -518,7 +513,7 @@ public:
                 CHECK(!f.finished[0].result.problem.isEmpty() && f.finished[1].result.status == TaskStatus::Succeeded);
             }
         });
-        test("teardown returns while workers or inspection are blocked and suppresses callbacks", [] {
+        test("teardown drains owned work and inspection without publishing callbacks", [] {
             for (const bool duringInspection : {false, true}) {
                 Fixture f;
                 Gate gate;
@@ -544,15 +539,34 @@ public:
                     CHECK(f.coordinator->submit("file", 1, work, [&](const TaskCompletion &) { ++applied; }) != 0);
                 }
                 gate.wait();
-                f.coordinator.reset();
-                // Destruction returned while the worker still waits at the gate, so it did not wait
-                // for the worker.
-                CHECK(gate.state->phase.load() == Gate::Phase::Waiting);
+                f.coordinator->cancelAll();
                 gate.open();
-                CHECK(QThreadPool::globalInstance()->waitForDone(5000));
+                f.coordinator.reset();
+                CHECK(gate.state->phase.load() == Gate::Phase::Released);
+                if (duringInspection) {
+                    const auto journal = storage::RecoveryStore(f.model.recoveryDirectory()).read();
+                    CHECK(journal.succeeded
+                          && journal.transactions.back().state.value("action") == "mutation-observation");
+                }
                 QCoreApplication::processEvents();
                 CHECK(f.finished.empty() && applied == 0 && (duringInspection || cancelled->load()));
             }
+        });
+        test("teardown leaves unrelated work on the supplied pool running", [] {
+            Fixture f;
+            Gate unrelated;
+            auto future = runOffThread(
+                f.workers, &f.model,
+                [state = unrelated.state] {
+                    state->pause();
+                    return true;
+                },
+                [](bool) {});
+            unrelated.wait();
+            f.coordinator.reset();
+            CHECK(unrelated.state->phase == Gate::Phase::Waiting);
+            unrelated.open();
+            CHECK(await(future));
         });
         test("completion can replace a session and enqueue work before diagnostic notifications", [] {
             Fixture f;

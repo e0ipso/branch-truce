@@ -1,6 +1,11 @@
 // Navigation and scrolling: within-file and file-list navigation, synchronised scrolling, and the
 // cursor and viewport across undo, redo and choices.
 #include "ComparisonScene.h"
+#include "fixtures/AppSession.h"
+#include "fixtures/Await.h"
+
+using test_support::await;
+using test_support::commandResult;
 
 using namespace comparison_scene;
 
@@ -74,15 +79,16 @@ void comparison_scene::addNavigationCases(Groups groups)
         expectProgress(fixture, true, false, false, false, QStringLiteral("1"), QStringLiteral("1"), {}, {}, 4);
 
         // Progress keeps the review, write and stage revisions separate.
-        CHECK(fixture.controller.store()->beginMarkResolved("choices", revision, true) == Transition::Applied);
+        CHECK(await(fixture.controller.store()->beginMarkResolved("choices", revision, true)) == Transition::Applied);
         CHECK(fixture.file().publication().reviewed() && fixture.file().publication().reviewed()->revision == revision);
         CHECK(!fixture.file().publication().written() && !fixture.file().publication().staged()
               && !fixture.file().facts().resolved);
         expectProgress(fixture, true, true, false, false, QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("1"),
                        {}, 4);
-        CHECK(fixture.controller.store()->recordWrite("choices", revision, Outcome::Succeeded) == Transition::Applied);
-        CHECK(fixture.controller.store()->recordStage("choices", revision, Outcome::Succeeded, "verified-object",
-                                                      "100644")
+        CHECK(await(fixture.controller.store()->recordWrite("choices", revision, Outcome::Succeeded))
+              == Transition::Applied);
+        CHECK(await(fixture.controller.store()->recordStage("choices", revision, Outcome::Succeeded, "verified-object",
+                                                            "100644"))
               == Transition::Applied);
         CHECK(fixture.file().facts().resolved && fixture.file().publication().staged()->revision == revision);
         CHECK(fixture.text().toStdString() == result);
@@ -122,7 +128,7 @@ void comparison_scene::addNavigationCases(Groups groups)
         settle([&] { return fixture.text().toStdString() == result; });
         auto newer = fixture.file().current().draft;
         newer.text += "newer\n";
-        CHECK(fixture.controller.store()->replaceDraft("choices", revision, newer) == Transition::Applied);
+        CHECK(await(fixture.controller.store()->replaceDraft("choices", revision, newer)) == Transition::Applied);
         CHECK(fixture.file().current().id == revision + 1);
         CHECK(fixture.file().publication().staged() && fixture.file().publication().staged()->revision == revision);
         CHECK(fixture.file().facts().earlierStaged && !fixture.file().facts().resolved
@@ -555,7 +561,7 @@ void comparison_scene::addNavigationCases(Groups groups)
         CHECK(fixture.controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
                                                           QString::fromStdString(target.source.contributionId),
                                                           ChoicePreviewFlow::Action::ResolveUsingSide));
-        CHECK(fixture.controller.choices()->applyChoice(true));
+        CHECK(commandResult(fixture.controller, fixture.controller.choices()->applyChoice(true)));
         CHECK(fixture.text() != before && !fixture.text().contains(QStringLiteral("right only")));
         settleReplacement(fixture);
         CHECK(editor->property("cursorPosition").toInt() == offset);
@@ -572,7 +578,7 @@ void comparison_scene::addNavigationCases(Groups groups)
         CHECK(fixture.controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
                                                           QString::fromStdString(target.source.contributionId),
                                                           ChoicePreviewFlow::Action::ResolveUsingSide));
-        CHECK(fixture.controller.choices()->applyChoice(true));
+        CHECK(commandResult(fixture.controller, fixture.controller.choices()->applyChoice(true)));
         CHECK(!fixture.text().contains(QStringLiteral("right only")));
         settleReplacement(fixture);
         // The removed lines took the cursor's line out of the kept view, so the view follows it.
@@ -600,15 +606,15 @@ void comparison_scene::addNavigationCases(Groups groups)
             CHECK(std::abs(contentY(result) - 140 * line) < 1);
         };
         CHECK(fixture.controller.choices()->previewWholeFile("choices", revision(), ChoicePreviewFlow::Side::LeftSide));
-        CHECK(fixture.controller.choices()->applyWholeFile());
+        CHECK(commandResult(fixture.controller, fixture.controller.choices()->applyWholeFile()));
         CHECK(fixture.text().contains(QStringLiteral("left first\n"))
               && fixture.text().contains(QStringLiteral("left last\n")));
         kept();
-        CHECK(fixture.controller.commands()->undo("choices", revision()));
+        CHECK(commandResult(fixture.controller, fixture.controller.commands()->undo("choices", revision())));
         CHECK(fixture.text().contains(QStringLiteral("right first\n"))
               && fixture.text().contains(QStringLiteral("right last\n")));
         kept();
-        CHECK(fixture.controller.commands()->redo("choices", revision()));
+        CHECK(commandResult(fixture.controller, fixture.controller.commands()->redo("choices", revision())));
         CHECK(fixture.text().contains(QStringLiteral("left first\n"))
               && fixture.text().contains(QStringLiteral("left last\n")));
         kept();

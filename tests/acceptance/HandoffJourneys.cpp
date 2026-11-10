@@ -2,6 +2,7 @@
 #include "acceptance/JourneyData.h"
 #include "acceptance/JourneySteps.h"
 #include "acceptance/JourneySuite.h"
+#include "fixtures/Await.h"
 #include "fixtures/QuickScene.h"
 
 #include <QDialogButtonBox>
@@ -11,6 +12,8 @@
 #include <QProcess>
 
 #include <csignal>
+
+using test_support::awaitAligned;
 
 using namespace branch_truce;
 using test_support::readFile;
@@ -336,7 +339,10 @@ void blockedStartupRestoresTheChosenSession(Sandbox &sandbox)
     const auto id = fileId("shared.txt").toStdString();
     const auto edit = [&](Application &controller, const std::string &text) {
         const auto *file = controller.store()->file(id);
-        CHECK(file && controller.store()->editResult(id, file->current().id, {{0, 0}, text}) == Transition::Applied);
+        CHECK(
+            file
+            && awaitAligned(*controller.store(), controller.store()->editResult(id, file->current().id, {{0, 0}, text}))
+                == Transition::Applied);
     };
     QString first;
     QString second;

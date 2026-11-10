@@ -1,6 +1,10 @@
 // Layout of the comparison window: pane widths, headers, tooltips, the footer, the toolbar and its
 // overflow, and the earlier version.
 #include "ComparisonScene.h"
+#include "fixtures/AppSession.h"
+#include "fixtures/Await.h"
+
+using test_support::commandResult;
 
 using namespace comparison_scene;
 
@@ -254,7 +258,9 @@ void comparison_scene::addLayoutCases(Groups groups)
         // With no undecided conflict left, neither header can resolve one.
         settleFor("nothing left to resolve", [&] { return enabled(false, false); });
         for (int i = 0; i < 2; ++i)
-            CHECK(fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id)));
+            CHECK(commandResult(
+                fixture.controller,
+                fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.file().current().draft == launch.draft);
         // In a narrow header the complete identity outranks the title: the title elides
         // and the button stays inside the header.
@@ -329,12 +335,20 @@ void comparison_scene::addLayoutCases(Groups groups)
         CHECK(edited.draft.text == "a\n" + original);
         CHECK(edited.draft.decisions == before.draft.decisions);
         fixture.checkRecovered(edited.draft);
-        CHECK(fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id)));
+        CHECK(commandResult(
+            fixture.controller,
+            fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.file().current().draft.text == "a" + original);
-        CHECK(fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id)));
+        CHECK(commandResult(
+            fixture.controller,
+            fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.file().current().draft == before.draft);
-        CHECK(fixture.controller.commands()->redo("choices", QString::number(fixture.file().current().id)));
-        CHECK(fixture.controller.commands()->redo("choices", QString::number(fixture.file().current().id)));
+        CHECK(commandResult(
+            fixture.controller,
+            fixture.controller.commands()->redo("choices", QString::number(fixture.file().current().id))));
+        CHECK(commandResult(
+            fixture.controller,
+            fixture.controller.commands()->redo("choices", QString::number(fixture.file().current().id))));
         CHECK(fixture.file().current().draft == edited.draft);
         settle([&] { return visualLines(fixture.item("resultText"), 1) > 1; });
         auto &document = resultDocument(fixture);
@@ -541,7 +555,8 @@ void comparison_scene::addLayoutCases(Groups groups)
     });
     scenes.run("resizing earlier context and collapsed choices preserve current sources and manual work", [] {
         Fixture fixture;
-        CHECK(fixture.controller.commands()->editResult("choices", "1", 0, 0, "manual prefix\n"));
+        CHECK(commandResult(fixture.controller,
+                            fixture.controller.commands()->editResult("choices", "1", 0, 0, "manual prefix\n")));
         const auto before = fixture.file().current();
         const auto left = fixture.item("stage2Text")->property("text");
         const auto right = fixture.item("stage3Text")->property("text");

@@ -92,19 +92,21 @@ QString FilePresentation::categoryTitle(HandoffCategory category)
 bool FilePresentation::resolved(std::size_t row) const
 {
     const auto &id = store_.files()[row].id();
-    return !store_.pendingAction(id) && !store_.hasRecoveryFailure(id) && store_.facts(row).resolved;
+    return !store_.recording(id) && !store_.pendingAction(id) && !store_.hasRecoveryFailure(id)
+        && store_.facts(row).resolved;
 }
 
 bool FilePresentation::unsaved(std::size_t row) const
 {
-    return store_.pendingAction(store_.files()[row].id()) || store_.facts(row).unsaved;
+    return store_.recording(store_.files()[row].id()) || store_.pendingAction(store_.files()[row].id())
+        || store_.facts(row).unsaved;
 }
 
 FilePresentation::Progress FilePresentation::progress(std::size_t row) const
 {
     const auto &facts = store_.facts(row);
     const auto &id = store_.files()[row].id();
-    const bool pending = store_.pendingAction(id).has_value();
+    const bool pending = store_.pendingAction(id).has_value() || store_.recording(id);
     const bool recoveryClear = !pending && !store_.hasRecoveryFailure(id);
     return {facts.undecided,
             !pending && !facts.unsaved,

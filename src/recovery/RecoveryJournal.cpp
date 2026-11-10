@@ -6,6 +6,7 @@
 #include <QUuid>
 #include <algorithm>
 #include <exception>
+#include <utility>
 
 namespace branch_truce {
 RecoveryJournal::RecoveryJournal(QString directory, std::shared_ptr<const storage::FileSystem> files)
@@ -15,53 +16,15 @@ RecoveryJournal::RecoveryJournal(QString directory, std::shared_ptr<const storag
     worker_.setMaxThreadCount(1);
 }
 
-// The worker goes first and finishes the record it is writing; its outcome
-// then has no context left to reach.
-RecoveryJournal::~RecoveryJournal() = default;
+RecoveryJournal::~RecoveryJournal() { close(); }
 
-Problem RecoveryJournal::ensureLease()
+void RecoveryJournal::commit(storage::RecoveryTransaction transaction, CommitCallback written)
 {
-    if (lease_) return {};
-    auto failure = storage::RecoveryLease::Failure::None;
-    lease_ = storage::RecoveryLease::acquire(directory_, files_, &failure);
-    if (lease_) return {};
-    return failure == storage::RecoveryLease::Failure::Held ? ProblemCode::RecoveryStoreHeld
-                                                            : ProblemCode::RecoveryStoreUnavailable;
-}
-
-storage::RecoveryCommit RecoveryJournal::commitUnderLease(const storage::RecoveryTransaction &transaction)
-{
-    auto leaseError = ensureLease();
-    if (!leaseError.isEmpty()) return storage::RecoveryCommit{false, std::move(leaseError)};
-    return lease_->commit(transaction);
-}
-
-void RecoveryJournal::committed(RecoveryAction action)
-{
-    if (action != RecoveryAction::Open) userWork_ = true;
-}
-
-storage::RecoveryCommit RecoveryJournal::commit(const storage::RecoveryTransaction &transaction)
-{
-    finishBehind();
-    auto result = commitUnderLease(transaction);
-    if (result.succeeded) userWork_ = true;
-    return result;
-}
-
-bool RecoveryJournal::commitCandidate(const FileSession &candidate, RecoveryAction action,
-                                      std::string_view previousText)
-{
-    finishBehind();
-    auto transaction =
-        recoveryTransaction(candidate, action, QUuid::createUuid().toString(QUuid::WithoutBraces), previousText);
-    const auto result = commitUnderLease(transaction);
-    if (result.succeeded) {
-        committed(action);
-        return true;
-    }
-    pending_[candidate.id()].push_back(Pending{candidate, action, std::move(transaction), result.problem});
-    return false;
+    behind_.push_back(
+        {{}, std::move(transaction), [this, written = std::move(written)](storage::RecoveryCommit result) {
+             written(Receipt{std::move(result), lease_});
+         }});
+    writeNext();
 }
 
 void RecoveryJournal::commitBehind(const FileSession &candidate, RecoveryAction action, std::string_view previousText,
@@ -69,117 +32,121 @@ void RecoveryJournal::commitBehind(const FileSession &candidate, RecoveryAction 
 {
     auto transaction =
         recoveryTransaction(candidate, action, QUuid::createUuid().toString(QUuid::WithoutBraces), previousText);
-    behind_.push_back({Pending{candidate, action, std::move(transaction), {}}, std::move(written)});
+    behind_.push_back({Pending{candidate, action, transaction, {}}, std::move(transaction),
+                       [written = std::move(written)](storage::RecoveryCommit result) {
+                           if (written) written(result.succeeded ? Written::Committed : Written::Failed);
+                       }});
     writeNext();
 }
 
-void RecoveryJournal::holdBehind()
+void RecoveryJournal::settleBehind(Receipt result)
 {
+    lease_ = std::move(result.lease);
     auto next = std::move(behind_.front());
     behind_.pop_front();
-    pending_[next.record.candidate.id()].push_back(std::move(next.record));
-    if (next.written) next.written(Written::Held);
-}
-
-void RecoveryJournal::settleBehind(const storage::RecoveryCommit &result)
-{
-    auto next = std::move(behind_.front());
-    behind_.pop_front();
-    const auto action = next.record.action;
-    if (result.succeeded) {
-        committed(action);
-    } else {
-        next.record.problem = result.problem;
-        pending_[next.record.candidate.id()].push_back(std::move(next.record));
+    if (result.commit.succeeded) {
+        if (!next.record || next.record->action != RecoveryAction::Open) userWork_ = true;
+    } else if (next.record) {
+        next.record->problem = result.commit.problem;
+        pending_.push_back(std::move(*next.record));
     }
-    if (next.written) next.written(result.succeeded ? Written::Committed : Written::Failed);
+    if (next.written) next.written(std::move(result.commit));
 }
 
 void RecoveryJournal::writeNext()
 {
-    while (!writing_ && !finishing_ && !behind_.empty()) {
-        if (pending_.contains(behind_.front().record.candidate.id())) {
-            holdBehind();
-            continue;
-        }
-        if (auto leaseError = ensureLease(); !leaseError.isEmpty()) {
-            settleBehind({false, std::move(leaseError)});
+    while (!writing_ && !behind_.empty()) {
+        // Any failed transaction holds the whole store, including other files.
+        if (hasPending()) {
+            settleBehind({{false, ProblemCode::TaskRecoveryBlocked}, lease_});
             continue;
         }
         const auto ticket = nextTicket_++;
-        // The outcome is dropped if the journal, and with it the context, is gone.
         writing_ = Writing{ticket,
                            runOffThread(
                                worker_, &context_,
-                               [lease = lease_, transaction = behind_.front().record.transaction] {
+                               [directory = directory_, files = files_, lease = lease_,
+                                transaction = behind_.front().transaction]() mutable {
                                    try {
-                                       return lease->commit(transaction);
-                                   } catch (const std::exception &) {
-                                       return storage::RecoveryCommit{false, ProblemCode::RecoveryCommitFailed};
+                                       if (!lease) {
+                                           auto failure = storage::RecoveryLease::Failure::None;
+                                           lease = storage::RecoveryLease::acquire(directory, files, &failure);
+                                           if (!lease)
+                                               return Receipt{{false,
+                                                               failure == storage::RecoveryLease::Failure::Held
+                                                                   ? ProblemCode::RecoveryStoreHeld
+                                                                   : ProblemCode::RecoveryStoreUnavailable},
+                                                              {}};
+                                       }
+                                       return Receipt{lease->commit(transaction), lease};
+                                   } catch (...) {
+                                       return Receipt{{false, ProblemCode::RecoveryCommitFailed}, lease};
                                    }
                                },
-                               [this, ticket](const storage::RecoveryCommit &) { wroteBehind(ticket); })};
+                               [this, ticket](const Receipt &) { wroteBehind(ticket); })};
     }
 }
 
 void RecoveryJournal::wroteBehind(quint64 ticket)
 {
-    // finishBehind() may already have settled it.
     if (!writing_ || writing_->ticket != ticket) return;
-    const auto result = writing_->result.result();
+    auto result = writing_->result.result();
     writing_.reset();
-    settleBehind(result);
+    settleBehind(std::move(result));
     writeNext();
 }
 
-void RecoveryJournal::finishBehind()
+bool RecoveryJournal::recording(const std::string &id) const
 {
-    if (finishing_) return;
-    finishing_ = true;
-    if (writing_) {
-        writing_->result.waitForFinished();
-        const auto result = writing_->result.result();
-        writing_.reset();
-        settleBehind(result);
-    }
-    while (!behind_.empty()) {
-        if (pending_.contains(behind_.front().record.candidate.id()))
-            holdBehind();
-        else
-            settleBehind(commitUnderLease(behind_.front().record.transaction));
-    }
-    finishing_ = false;
+    return std::any_of(behind_.begin(), behind_.end(),
+                       [&](const Behind &entry) { return entry.record && entry.record->candidate.id() == id; });
 }
 
-std::optional<FileSession> RecoveryJournal::retryPending(const std::string &id)
+void RecoveryJournal::close()
 {
-    finishBehind();
-    const auto queue = pending_.find(id);
-    if (queue == pending_.end()) return {};
-    std::optional<FileSession> last;
-    auto &records = queue->second;
-    while (!records.empty()) {
-        auto &next = records.front();
-        const auto result = commitUnderLease(next.transaction);
-        if (!result.succeeded) {
-            next.problem = result.problem;
-            return last;
-        }
-        committed(next.action);
-        last = std::move(next.candidate);
-        records.pop_front();
+    while (busy()) {
+        writeNext();
+        if (!writing_) continue;
+        writing_->result.waitForFinished();
+        wroteBehind(writing_->ticket);
     }
-    pending_.erase(queue);
-    return last;
+}
+
+void RecoveryJournal::retryPending(const std::string &id, std::function<void(FileSession, RecoveryAction)> acknowledged,
+                                   std::function<void()> written)
+{
+    // Retry the entire dependent queue in its original order, not per-file
+    // order. Entries are moved back without re-encoding their transaction IDs.
+    if (busy() || !pending(id)) {
+        written();
+        return;
+    }
+    auto records = std::exchange(pending_, {});
+    for (auto &record : records) {
+        auto candidate = record.candidate;
+        const auto action = record.action;
+        auto transaction = record.transaction;
+        behind_.push_back({std::move(record), std::move(transaction),
+                           [acknowledged, candidate, action](storage::RecoveryCommit result) {
+                               if (result.succeeded) acknowledged(candidate, action);
+                           }});
+    }
+    // The final queue entry is a barrier and cannot overtake any retry.
+    auto &tail = behind_.back().written;
+    tail = [tail = std::move(tail), written = std::move(written)](storage::RecoveryCommit result) {
+        tail(result);
+        written();
+    };
+    writeNext();
 }
 
 bool RecoveryJournal::startNewStore()
 {
-    finishBehind();
+    if (busy()) return false;
     if (hasPending()) return false;
     directory_ =
         QFileInfo(directory_).absolutePath() + QLatin1Char('/') + QUuid::createUuid().toString(QUuid::WithoutBraces);
-    lease_.reset();
+    worker_.start([lease = std::exchange(lease_, {})] {});
     userWork_ = false;
     return true;
 }
@@ -187,7 +154,7 @@ bool RecoveryJournal::startNewStore()
 void RecoveryJournal::reset(std::optional<AdoptedStore> adopted)
 {
     // Records the caller queued belong in the store it is leaving.
-    finishBehind();
+    Q_ASSERT(!busy());
     pending_.clear();
     failures_.clear();
     if (!adopted || !adopted->lease) return;
@@ -197,36 +164,47 @@ void RecoveryJournal::reset(std::optional<AdoptedStore> adopted)
     userWork_ = adopted->userWork;
 }
 
-bool RecoveryJournal::discardStore()
+QFuture<bool> RecoveryJournal::discardStore()
 {
-    finishBehind();
-    if (hasPending() || hasFailures() || !ensureLease().isEmpty()) return false;
-    const bool removed = lease_->remove();
-    lease_.reset();
-    userWork_ = false;
-    // Nothing commits after this: a later command stays pending with an error.
+    if (busy() || hasPending() || hasFailures() || !lease_) return completedFuture(false);
     directory_.clear();
-    return removed;
+    userWork_ = false;
+    return runOffThread(
+        worker_, &context_,
+        [lease = std::exchange(lease_, {})] {
+            try {
+                return lease->remove();
+            } catch (...) {
+                return false;
+            }
+        },
+        [](bool) {});
 }
 
 const RecoveryJournal::Pending *RecoveryJournal::pending(const std::string &id) const
 {
-    const auto found = pending_.find(id);
-    return found == pending_.end() ? nullptr : &found->second.front();
+    const auto found = std::find_if(pending_.begin(), pending_.end(),
+                                    [&](const Pending &record) { return record.candidate.id() == id; });
+    return found == pending_.end() ? nullptr : &*found;
 }
 
-const FileSession *RecoveryJournal::pendingCandidate(const std::string &id) const
+const FileSession *RecoveryJournal::pendingCandidate(const std::string &id, bool includeQueued) const
 {
-    const auto found = pending_.find(id);
-    return found == pending_.end() ? nullptr : &found->second.back().candidate;
+    if (includeQueued) {
+        const auto queued = std::find_if(behind_.rbegin(), behind_.rend(), [&](const Behind &entry) {
+            return entry.record && entry.record->candidate.id() == id;
+        });
+        if (queued != behind_.rend()) return &queued->record->candidate;
+    }
+    const auto found = std::find_if(pending_.rbegin(), pending_.rend(),
+                                    [&](const Pending &record) { return record.candidate.id() == id; });
+    return found == pending_.rend() ? nullptr : &found->candidate;
 }
 
 bool RecoveryJournal::onlyOpenCapturesPending() const
 {
-    return std::all_of(pending_.cbegin(), pending_.cend(), [](const auto &queue) {
-        return std::all_of(queue.second.cbegin(), queue.second.cend(),
-                           [](const auto &pending) { return pending.action == RecoveryAction::Open; });
-    });
+    return std::all_of(pending_.cbegin(), pending_.cend(),
+                       [](const auto &record) { return record.action == RecoveryAction::Open; });
 }
 
 const Problem *RecoveryJournal::failure(const std::string &id) const
