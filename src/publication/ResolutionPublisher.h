@@ -2,6 +2,7 @@
 #pragma once
 
 #include "git/TextConversion.h"
+#include "publication/ParentStaging.h"
 #include "session/SessionCoordinator.h"
 #include "storage/DestinationWriter.h"
 #include <QByteArray>
@@ -20,15 +21,7 @@ namespace branch_truce {
 class ResolutionPublisher final : public QObject {
     Q_OBJECT
 public:
-    struct Offer {
-        std::string fileId;
-        QByteArray path;
-        RevisionId revision = 0;
-        QByteArray mode;
-        QByteArray canonicalObjectId;
-        QString worktreeRoot;
-        git::ConvertedText prepared;
-    };
+    using Offer = ParentOffer;
     // The repository file a supported file publishes over, as captured before
     // any edit, or why it cannot be used: a translated sentence or an encoded
     // Problem, which the window shows translated.
@@ -78,6 +71,14 @@ Q_SIGNALS:
 
 private:
     enum class Step { Prepare, Discover, Index, Publish, Stage, ParentPreflight, Verify };
+    // What finishes each step, and whether the step runs after the write, so
+    // that a failure there is a staging failure.
+    struct StepHandling {
+        void (ResolutionPublisher::*task)(const TaskCompletion &) = nullptr;
+        void (ResolutionPublisher::*conversion)(const git::TextConversionResult &) = nullptr;
+        bool afterWrite = false;
+    };
+    [[nodiscard]] static const StepHandling &handling(Step step);
     struct Attempt {
         quint64 generation = 0;
         std::string fileId;
@@ -121,8 +122,7 @@ private:
     git::TextConversion conversion_;
     Baselines baselines_;
     std::optional<Attempt> attempt_;
-    std::optional<Offer> offer_;
-    QByteArray parentPath_;
+    ParentStaging parent_;
     std::optional<std::pair<std::string, RevisionId>> confirmation_;
 };
 }
