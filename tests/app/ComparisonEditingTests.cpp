@@ -318,12 +318,13 @@ void comparison_scene::addEditingCases(Groups groups)
                   .contains("Draft saved in Branch Truce; repository file unchanged"));
         CHECK(fixture.file().checkpoint() && fixture.file().checkpoint()->draft == saved);
         CHECK(!fixture.file().facts().unsaved && !fixture.file().written() && !fixture.file().staged());
-        const auto savedStore = storage::RecoveryStore(fixture.controller.store()->recoveryDirectory()).read();
-        CHECK(savedStore.succeeded);
-        CHECK(std::any_of(savedStore.transactions.cbegin(), savedStore.transactions.cend(), [](const auto &stored) {
-            return stored.state.value("action") == "manual-save" && stored.state.value("written").isNull()
-                && stored.state.value("staged").isNull();
-        }));
+        // A restart sees the Save and nothing written; SessionRecoveryTests checks the records themselves.
+        {
+            const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.store()->recoveryDirectory()));
+            CHECK(replay.succeeded && replay.files.front().checkpoint()
+                  && replay.files.front().checkpoint()->draft == saved);
+            CHECK(!replay.files.front().written() && !replay.files.front().staged());
+        }
         auto discarded = saved;
         discarded.text += "discarded edit\n";
         discarded.decisions["kept"] = {DecisionValue::Ignored, {}};
@@ -336,9 +337,6 @@ void comparison_scene::addEditingCases(Groups groups)
         CHECK(fixture.file().current().draft.decisions.at("kept").value == DecisionValue::Accepted);
         CHECK(fixture.text().toStdString() == saved.text);
         CHECK(!fixture.file().facts().unsaved && !fixture.file().written() && !fixture.file().staged());
-        const auto discardedStore = storage::RecoveryStore(fixture.controller.store()->recoveryDirectory()).read();
-        CHECK(discardedStore.succeeded
-              && discardedStore.transactions.back().state.value("action") == "discard-to-checkpoint");
         const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.store()->recoveryDirectory()));
         CHECK(replay.succeeded && replay.files.front().current().draft == saved);
         CHECK(replay.files.front().current().draft != discarded && !replay.files.front().written()
