@@ -22,8 +22,8 @@ import capture_profile
 from ledger import assemble
 from fixture import PATHS, GitError, git, make_fixture, png, reference_bytes, unmerged
 import reports
-from processes import OutputLimitError, run
-from replay import (NativeClient, OwnedResources, await_compositor, item, private_environment, replay_lock,
+from processes import OutputLimitError, OwnedResources, run
+from replay import (NativeClient, await_compositor, item, private_environment, replay_lock,
                     write_kdeglobals)
 
 
@@ -161,6 +161,16 @@ class ProcessTests(unittest.TestCase):
         with self.assertRaises(OutputLimitError):
             run([sys.executable, '-c', 'import os; os.write(1, b"x" * 65536)'], env=dict(os.environ), max_output=1024)
 
+    def test_checked_failure_keeps_bounded_log_and_working_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / 'helper.log'
+            with self.assertRaises(subprocess.CalledProcessError) as failure:
+                run([sys.executable, '-c', 'import os,sys; print(os.getcwd()); print("failed", file=sys.stderr); sys.exit(17)'],
+                    cwd=directory, timeout=5, max_output=1024, check=True, log=log)
+            self.assertEqual(failure.exception.returncode, 17)
+            self.assertEqual(failure.exception.stdout, (directory + '\n').encode())
+            self.assertEqual(log.read_bytes(), failure.exception.stdout + b'failed\n')
+
     def test_cancellation_reaps_the_started_process(self):
         with patch('processes.selectors.DefaultSelector.select', side_effect=KeyboardInterrupt), \
              patch('processes.stop_group', wraps=__import__('processes').stop_group) as stop:
@@ -214,17 +224,36 @@ class ResourceTests(PrivateBaseTestCase):
         self.assertFalse(owned.root.exists())
         self.assertTrue(json.loads(receipt.read_text())['private_root_removed'])
 
-    def test_failed_process_stop_still_removes_private_directory(self):
-        with self.assertRaisesRegex(PermissionError, 'stop refused'):
-            with patch('replay.os.killpg', side_effect=PermissionError('stop refused')):
-                with self.owned() as owned:
-                    process, stream = owned.spawn([sys.executable, '-c', 'import signal; signal.pause()'],
-                                                  env=dict(os.environ), log=owned.root / 'process.log')
-        process.kill()
-        process.wait()
+    def test_failed_stop_attempts_every_owner_and_retains_storage_until_retry(self):
+        import processes
+        receipt = self.base / 'cleanup.json'
+        owned = self.owned(receipt)
+        first, stream = owned.spawn([sys.executable, '-c', 'import signal; signal.pause()'],
+                                    env=dict(os.environ), log=owned.root / 'first.log')
+        second, _ = owned.spawn([sys.executable, '-c', 'import signal; signal.pause()'],
+                                 env=dict(os.environ), log=owned.root / 'second.log')
+        reader = owned.start_reader(lambda: None)
+        stop_group = processes.stop_group
+        def stop(process):
+            if process is second:
+                raise PermissionError('stop refused')
+            stop_group(process)
+        try:
+            with patch('processes.stop_group', side_effect=stop), self.assertRaisesRegex(RuntimeError, 'stop refused'):
+                owned.close()
+            self.assertIsNotNone(first.returncode)
+            self.assertIsNone(second.poll())
+            self.assertFalse(reader.is_alive())
+            self.assertFalse(stream.closed)
+            self.assertTrue(owned.root.exists())
+            evidence = json.loads(receipt.read_text())
+            self.assertFalse(evidence['owned_processes_reaped'])
+            self.assertFalse(evidence['private_root_removed'])
+            self.assertIn('stop refused', evidence['errors'][0])
+        finally:
+            owned.close()
         self.assertTrue(stream.closed)
         self.assertFalse(owned.root.exists())
-        self.assertEqual(list(self.base.iterdir()), [])
 
     def test_private_environment_does_not_modify_parent(self):
         before = dict(os.environ)
@@ -379,6 +408,20 @@ class ReadinessTests(PrivateBaseTestCase):
         self.assertFalse(owned.root.exists())
         self.assertIsNotNone(process.returncode)
 
+    def test_image_helpers_enforce_deadlines_and_output_limits(self):
+        from calibration import ImageTool
+        tool_path = self.base / 'image-helper'
+        tool_path.write_text(f'#!{sys.executable}\nimport time\ntime.sleep(60)\n')
+        tool_path.chmod(0o700)
+        tool = ImageTool(tool_path)
+        bounded = lambda argv, **kw: run(argv, **dict(kw, timeout=0.1))
+        for operation in (lambda: tool.decode('unused'), lambda: tool.crop('unused', 'unused', [0, 0, 1, 1])):
+            with patch('calibration.run', side_effect=bounded), self.assertRaises(subprocess.TimeoutExpired):
+                operation()
+        tool_path.write_text(f'#!{sys.executable}\nimport os\nos.write(1, b"x" * (2 * 1024 * 1024))\n')
+        with self.assertRaises(OutputLimitError):
+            tool.decode('unused')
+
     def test_native_reply_requires_complete_successful_message(self):
         for response, exception in [(b'{"error":"not durable"}\n', RuntimeError),
                                     (b'{"error":""}', RuntimeError),
@@ -437,6 +480,20 @@ class AcceptanceEvidenceTests(PrivateBaseTestCase):
             request = json.loads((root / 'last-request.json').read_text())
             self.assertEqual((request['action'], request['target']), ('toolbar-click', 'undoCommand'))
 
+    def test_failure_capture_timeout_keeps_the_original_failure_receipt(self):
+        from replay import Compositor, drive_app
+        with self.owned() as owned:
+            with patch('replay.run_journey', side_effect=RuntimeError('primary action failure')), \
+                 patch('replay.run', side_effect=subprocess.TimeoutExpired(['grim'], 15)), \
+                 self.assertRaisesRegex(RuntimeError, 'primary action failure'):
+                drive_app(owned, Compositor(dict(os.environ), dict(name='private')), {},
+                          app=Path('/bin/true'), driver=self.base / 'unused.so', tool=None,
+                          repo=self.base, source=self.base, out=self.base)
+        evidence = json.loads((self.base / 'failure.json').read_text())
+        self.assertEqual(evidence['error'], 'primary action failure')
+        self.assertIsNone(evidence['capture_exit'])
+        self.assertIn('timed out', evidence['capture_error'])
+
     def test_ledger_keeps_missing_runs_and_measured_residuals_outstanding(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -487,7 +544,7 @@ class AcceptanceEvidenceTests(PrivateBaseTestCase):
             evidence = json.loads(receipt.read_text())
             self.assertFalse(private.exists())
             self.assertEqual(evidence, dict(private_root=str(private), private_root_removed=True,
-                                            owned_processes_reaped=True))
+                                            owned_processes_reaped=True, owned_readers_stopped=True, errors=[]))
 
     def test_cleanup_is_confirmed_only_by_complete_receipts(self):
         receipts = []
@@ -499,6 +556,7 @@ class AcceptanceEvidenceTests(PrivateBaseTestCase):
         self.assertFalse(cleanup_confirmed([]))
         self.assertFalse(cleanup_confirmed(receipts + [self.base / 'missing.json']))
         for change in (dict(owned_processes_reaped=False), dict(private_root_removed=False),
+                       dict(owned_readers_stopped=False), dict(errors=['reader failed']),
                        dict(private_root=str(self.base))):
             with self.subTest(change=change):
                 broken = self.base / 'broken.json'

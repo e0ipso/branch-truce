@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import shutil
+import signal
 import sys
 
 if __name__ == '__main__':
@@ -15,6 +16,7 @@ if __name__ == '__main__':
 import capture_profile  # noqa: E402
 from fixture import sha256  # noqa: E402
 from ledger import assemble  # noqa: E402
+from processes import interrupt, run  # noqa: E402
 from reports import write_json  # noqa: E402
 
 
@@ -41,8 +43,8 @@ def main():
     context = dict(
         started_at_utc=datetime.now(timezone.utc).isoformat(),
         source=str(args.source), build=str(args.build),
-        source_head_observed=subprocess.check_output(
-            ['git', '-C', str(args.source), 'rev-parse', 'HEAD'], text=True).strip(),
+        source_head_observed=run(['git', '-C', str(args.source), 'rev-parse', 'HEAD'],
+                                 timeout=10, max_output=65536, check=True).stdout.decode().strip(),
         os_release=Path('/etc/os-release').read_text(),
         ci={key: os.environ.get(key) for key in
             ('BRANCH_TRUCE_CI_RUN_URL', 'BRANCH_TRUCE_CI_RUN_ATTEMPT', 'BRANCH_TRUCE_CI_JOB',
@@ -53,6 +55,19 @@ def main():
     def save():
         write_json(receipt, context)
 
+    def invoke(command, log, timeout):
+        try:
+            result = run(command, cwd=args.source, timeout=timeout, max_output=16 * 1024 * 1024,
+                         log=args.output / log)
+            status = result.returncode
+        except (OSError, subprocess.SubprocessError) as error:
+            with (args.output / log).open('ab') as stream:
+                stream.write(f'\n{type(error).__name__}: {error}\n'.encode())
+            status = 1
+        context['checks'].append(dict(argv=command, cwd=str(args.source), exit_code=status, log=log))
+        save()
+        return status
+
     save()
     for height in heights:
         command = [sys.executable, str(args.source / 'tools/native-replay/replay.py'), 'capture',
@@ -60,11 +75,7 @@ def main():
                    '--height', str(height), '--repeat', str(shape.repeat), '--output', str(args.output / str(height))]
         if height == heights[0]:
             command.append('--documentation')
-        log = args.output / f'{height}.log'
-        with log.open('wb') as stream:
-            result = subprocess.run(command, cwd=args.source, stdout=stream, stderr=subprocess.STDOUT)
-        context['checks'].append(dict(argv=command, cwd=str(args.source), exit_code=result.returncode,
-                                      log=log.name))
+        status = invoke(command, f'{height}.log', timeout=1800)
         for filename in ('libnative_replay.so', 'native-replay-image'):
             source = args.output / str(height) / 'driver-build' / filename
             if source.is_file():
@@ -73,14 +84,10 @@ def main():
                 retained[destination.relative_to(args.output).as_posix()] = sha256(destination)
         save()
         # Verification is independent, so a failed capture cannot suppress the other size.
-        if result.returncode == 0:
+        if status == 0:
             command = [sys.executable, str(args.source / 'tools/native-replay/calibration.py'),
                        '--verify', str(args.output / str(height))]
-            with (args.output / f'{height}-integrity.log').open('wb') as stream:
-                checked = subprocess.run(command, cwd=args.source, stdout=stream, stderr=subprocess.STDOUT)
-            context['checks'].append(dict(argv=command, cwd=str(args.source), exit_code=checked.returncode,
-                                          log=f'{height}-integrity.log'))
-            save()
+            invoke(command, f'{height}-integrity.log', timeout=120)
     ledger = assemble(args.output, shape=shape)
     write_json(args.output / 'acceptance-ledger.json', ledger)
     context['finished_at_utc'] = datetime.now(timezone.utc).isoformat()
@@ -92,4 +99,5 @@ def main():
 
 
 if __name__ == '__main__':
+    signal.signal(signal.SIGTERM, interrupt)
     raise SystemExit(main())

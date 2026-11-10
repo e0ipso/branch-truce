@@ -158,6 +158,10 @@ grep -qF 'arch-pkg check: ok' "$work/result"
 NATIVE_WAIT_SECONDS=20 bash "$runner" --format arch-pkg --version 1.2.3 --output "$work/interrupted" > "$work/result" 2>&1 &
 runner_pid=$!
 for _ in $(seq 100); do grep -q '^wait ' "$work/engine.log" && break; sleep 0.1; done
+if ! grep -q '^wait ' "$work/engine.log"; then
+    echo 'FAIL: interruption readiness deadline exceeded before container wait' >&2
+    kill -TERM "$runner_pid" 2>/dev/null || true; wait "$runner_pid" || true; exit 1
+fi
 interrupted_at=$SECONDS
 kill -TERM "$runner_pid"
 status=0; wait "$runner_pid" || status=$?

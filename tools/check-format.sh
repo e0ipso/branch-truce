@@ -3,10 +3,10 @@
 set -euo pipefail
 root=$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)
 required=23.1.3
-case "${1:-}" in
-    '') mode=(--dry-run -Werror) done=checked ;;
-    --fix) mode=(-i) done=formatted ;;
-    -h|--help) echo "Usage: $0 [--fix]"; exit 0 ;;
+case "$#:${1:-}" in
+    0:) mode=(--dry-run -Werror) done=checked ;;
+    1:--fix) mode=(-i) done=formatted ;;
+    1:-h|1:--help) echo "Usage: $0 [--fix]"; exit 0 ;;
     *) echo "Usage: $0 [--fix]" >&2; exit 2 ;;
 esac
 command -v clang-format >/dev/null || {

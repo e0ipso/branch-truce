@@ -5,7 +5,7 @@ import json
 import math
 from pathlib import Path
 import shutil
-import subprocess
+import signal
 import sys
 
 if __name__ == '__main__':
@@ -14,6 +14,7 @@ if __name__ == '__main__':
 
 import capture_profile  # noqa: E402
 from fixture import sha256  # noqa: E402
+from processes import interrupt, run  # noqa: E402
 from reports import write_json  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -35,7 +36,8 @@ class ImageTool:
         self.path = Path(path)
 
     def _json(self, *args):
-        return json.loads(subprocess.check_output([str(self.path), *map(str, args)]))
+        return json.loads(run([str(self.path), *map(str, args)],
+                              timeout=30, max_output=1024 * 1024, check=True).stdout)
 
     def decode(self, image):
         return self._json('decode', image)
@@ -44,7 +46,8 @@ class ImageTool:
         return self._json('compare', image, other)
 
     def crop(self, image, output, rect):
-        subprocess.run([str(self.path), 'crop', '--rect=' + rect_argument(rect), str(image), str(output)], check=True)
+        run([str(self.path), 'crop', '--rect=' + rect_argument(rect), str(image), str(output)],
+            timeout=30, max_output=65536, check=True)
 
     def artifacts(self, reference, native, prefix, *, reference_rect, native_rect,
                   reference_replication, native_replication, reference_grid):
@@ -120,8 +123,8 @@ def build_provenance(source, build):
     # Record observed source identity separately from the binary's embedded build identity.
     # A source checkout's HEAD alone cannot prove which bytes produced an executable.
     def git_at(root, *args):
-        result = subprocess.run(['git', '-C', str(root), *args], capture_output=True, text=True)
-        return result.stdout.strip() if result.returncode == 0 else None
+        result = run(['git', '-C', str(root), *args], timeout=10, max_output=65536)
+        return result.stdout.decode().strip() if result.returncode == 0 else None
     source_files = [p for p in (source / 'src').rglob('*') if p.is_file()]
     equal = bool(source_files) and all((build_source / p.relative_to(source)).is_file()
         and sha256(p) == sha256(build_source / p.relative_to(source)) for p in source_files)
@@ -278,6 +281,7 @@ def cleanup_confirmed(receipts):
             return False
         receipt = json.loads(Path(path).read_text())
         if (receipt.get('private_root_removed') is not True or receipt.get('owned_processes_reaped') is not True
+                or receipt.get('owned_readers_stopped') is not True or receipt.get('errors') != []
                 or Path(receipt['private_root']).exists()):
             return False
     return bool(receipts)
@@ -319,4 +323,5 @@ def main():
 
 
 if __name__ == '__main__':
+    signal.signal(signal.SIGTERM, interrupt)
     main()

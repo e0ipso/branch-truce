@@ -29,11 +29,11 @@ fallback() {
     echo "previous package: $*; the upgrade check uses a build of this source as 0.0.0 instead" >&2
     exit 0
 }
-for tool in gh jq sha256sum; do
+for tool in gh jq sha256sum timeout; do
     command -v "$tool" > /dev/null || fallback "$tool is not installed"
 done
 
-if ! tags="$(gh release list --exclude-drafts --exclude-pre-releases --limit 1000 \
+if ! tags="$(timeout --kill-after=5s 30s gh release list --exclude-drafts --exclude-pre-releases --limit 1000 \
     --json tagName --jq '.[].tagName' 2>&1)"; then
     fallback "cannot list the releases ($(head -n 1 <<<"$tags"))"
 fi
@@ -55,7 +55,7 @@ candidates=()
 # name and label and a SHA-256 digest, as JSON, or nothing.
 asset_of() {
     local assets name
-    if ! assets="$(gh release view "$1" --json assets 2>&1)"; then
+    if ! assets="$(timeout --kill-after=5s 30s gh release view "$1" --json assets 2>&1)"; then
         head -n 1 <<<"$assets" >&2
         return 1
     fi
@@ -86,10 +86,9 @@ size="$(jq -r .size <<<"$asset")"
 digest="$(jq -r '.digest | ltrimstr("sha256:")' <<<"$asset")"
 mkdir -p "$output"
 file="$output/$name"
-rm -f "$file"
 download="$(mktemp -d "$output/.download.XXXXXX")"
 trap 'rm -rf "$download"' EXIT
-if ! gh release download "$chosen" --pattern "$name" --dir "$download" >&2; then
+if ! timeout --kill-after=5s 120s gh release download "$chosen" --pattern "$name" --dir "$download" >&2; then
     fallback "downloading $name from $chosen failed"
 fi
 if [ ! -f "$download/$name" ] || [ "$(stat -c %s "$download/$name")" != "$size" ] \
@@ -97,6 +96,6 @@ if [ ! -f "$download/$name" ] || [ "$(stat -c %s "$download/$name")" != "$size" 
     echo "error: $name from $chosen does not match its published size $size and SHA-256 $digest" >&2
     exit 1
 fi
-mv "$download/$name" "$file"
+mv -T -- "$download/$name" "$file"
 echo "previous package: $name from $chosen, SHA-256 $digest, for the upgrade to $version" >&2
 echo "$file"
