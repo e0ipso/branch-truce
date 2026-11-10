@@ -89,10 +89,9 @@ public:
     // Canonicalization coalesces symlink aliases. Replacing cancels old work
     // without releasing an active mutation's queue slot prematurely.
     bool replaceSession(const QString &worktree, const QString &operation, std::vector<FileSession> files);
-    // Complete a current load of the same initial placeholders, including
-    // failed open commits. Captured files replace their pending placeholders;
-    // pending edits and unrelated session replacements remain protected.
-    bool completeSessionLoad(const TaskStamp &stamp, std::vector<FileSession> files);
+    // Completes a current load of the same initial placeholders, including
+    // failed open commits, with the restored files or else the observed ones.
+    // Pending edits and unrelated session replacements remain protected.
     bool completeRecoveryLoad(const TaskStamp &stamp, std::vector<FileSession> observed, RecoveryRestore restore);
     [[nodiscard]] quint64 generation() const;
     [[nodiscard]] int pendingTasks() const;

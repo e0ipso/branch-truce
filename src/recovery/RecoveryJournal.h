@@ -84,8 +84,6 @@ public:
     // Writes every record queued behind now, on this thread, after the one a
     // worker is writing, and runs their callbacks.
     void finishBehind();
-    // Whether a record queued behind is not yet durable or kept pending.
-    [[nodiscard]] bool writingBehind() const { return !behind_.empty(); }
     // Commits a file's pending queue in order under the records' original
     // transactions and returns the file as the last committed record left it.
     // Empty when nothing was pending or the first commit failed again. A

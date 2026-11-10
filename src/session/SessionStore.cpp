@@ -205,14 +205,11 @@ Transition SessionStore::retryRecovery(const std::string &id)
     return journal_.pending(id) ? Transition::Blocked : Transition::Applied;
 }
 
-bool SessionStore::canCompleteLoad(const std::vector<FileSession> &files) const
+bool SessionStore::canRestoreLoad() const
 {
-    if (files.size() != files_.size()) return false;
-    for (std::size_t row = 0; row < files_.size(); ++row) {
-        const auto &file = files_[row];
-        if (file.id() != files[row].id() || file.path() != files[row].path() || file.support() != Support::Unreadable
-            || file.snapshots() || file.current().id != 1 || file.current().draft != Draft{}
-            || !file.publication().untouched())
+    for (const auto &file : files_) {
+        if (file.support() != Support::Unreadable || file.snapshots() || file.current().id != 1
+            || file.current().draft != Draft{} || !file.publication().untouched())
             return false;
     }
     return journal_.onlyOpenCapturesPending();

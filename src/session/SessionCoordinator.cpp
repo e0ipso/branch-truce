@@ -335,14 +335,6 @@ bool SessionCoordinator::replaceSession(const QString &worktree, const QString &
     return replaceSession(worktree, operation, std::move(files), false);
 }
 
-bool SessionCoordinator::completeSessionLoad(const TaskStamp &stamp, std::vector<FileSession> files)
-{
-    if (!d->owningThread() || d->replacing || d->disposition(stamp) != TaskDisposition::Current
-        || !d->store.canCompleteLoad(files))
-        return false;
-    return replaceSession(d->worktree, d->operation, std::move(files), true);
-}
-
 bool SessionCoordinator::completeRecoveryLoad(const TaskStamp &stamp, std::vector<FileSession> observed,
                                               RecoveryRestore restore)
 {
@@ -404,7 +396,7 @@ TaskId SessionCoordinator::submitGit(const std::string &fileId, RevisionId expec
 {
     if (!d->owningThread() || d->replacing) return 0;
     const auto *file = d->store.file(fileId);
-    const bool mutation = request.operation == git::Operation::StageFile;
+    const bool mutation = git::isMutation(request.operation);
     if (!file || (mutation && request.path != QByteArray::fromStdString(file->path()))) return 0;
     request.directory = d->worktree;
     request.sessionGeneration = d->generation;

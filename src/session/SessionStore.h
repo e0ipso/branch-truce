@@ -115,11 +115,9 @@ public:
     // Applied once none is left; Blocked when a commit failed again.
     Transition retryRecovery(const std::string &id);
 
-    // Whether files may complete the current load: every file is still the
-    // untouched placeholder for the same ID and path, and only its open
-    // capture waits for recovery retry.
-    [[nodiscard]] bool canCompleteLoad(const std::vector<FileSession> &files) const;
-    [[nodiscard]] bool canRestoreLoad() const { return canCompleteLoad(files_); }
+    // Whether a load may still complete: every file is an untouched
+    // placeholder, and only its open capture waits for recovery retry.
+    [[nodiscard]] bool canRestoreLoad() const;
     // Resets every file and drops pending input and recovery errors. With a
     // restore that adopted a store, moves to that store, takes its errors and
     // commits only its new files.
