@@ -9,6 +9,7 @@
 #include "fixtures/GitOnPath.h"
 #include "fixtures/GitRepository.h"
 #include "fixtures/RecoveryJournal.h"
+#include "fixtures/ScriptedGit.h"
 #include "recovery/RecoveryRestore.h"
 #include "session/SessionCoordinator.h"
 #include <QCoreApplication>
@@ -639,6 +640,51 @@ public:
                 CHECK(result.indexAfter == "100644 " + expected + " 0\t" + path + QByteArray(1, '\0'));
                 CHECK(f.coordinator->mutationOutcomes().size() == 1);
             }
+        });
+        test("a Git task that times out fails with an uncertain mutation and releases the worktree queue", [] {
+            test_support::GitRepository repository;
+            test_support::writeFile(repository.path("tracked.txt"), "before\n");
+            repository.git({"add", "--", "tracked.txt"});
+            test_support::TestSession model;
+            int answered = 0;
+            const auto timedOut = [&answered](const git::Request &) {
+                ++answered;
+                git::Result result;
+                result.outcome = git::Outcome::TimedOut;
+                result.mutation = git::Mutation::Uncertain;
+                result.diagnostic = QStringLiteral("Git did not finish within the request deadline.");
+                return result;
+            };
+            SessionCoordinator coordinator(model,
+                                           test_support::ScriptedGitRunner::runners(git::Operation::StageFile, timedOut,
+                                                                                    test_support::gitExecutable()));
+            std::vector<TaskCompletion> finished;
+            QObject::connect(&coordinator, &SessionCoordinator::taskFinished, &model,
+                             [&](const TaskCompletion &value) { finished.push_back(value); });
+            CHECK(
+                coordinator.replaceSession(repository.root(), "merge", {FileSession("file", "tracked.txt", draft())}));
+            const auto indexBefore = repository.index();
+            git::Request stage{
+                git::Operation::StageFile, repository.root(), "tracked.txt", {}, coordinator.generation(), 1};
+            int applied = 0;
+            CHECK(coordinator.submitGit("file", 1, stage, [&](const TaskCompletion &) { ++applied; }) != 0);
+            // A worker mutation queued behind it runs once the Git task's slot is released.
+            CHECK(coordinator.submitMutation(
+                      "file", 1, [](const TaskInput &, const TaskControl &) { return TaskResult{}; }, changed)
+                  != 0);
+            // The answer comes from the event loop, never inside submitGit.
+            CHECK(answered == 0 && finished.empty());
+            waitUntil([&] { return finished.size() == 2 && coordinator.pendingTasks() == 0; },
+                      "the timed-out task and the one queued behind it did not finish");
+            CHECK(answered == 1 && applied == 1);
+            const auto &timed = finished.front();
+            CHECK(timed.result.status == TaskStatus::Failed);
+            CHECK(timed.result.mutation == MutationObservation::Uncertain);
+            CHECK(timed.result.gitResult && timed.result.gitResult->outcome == git::Outcome::TimedOut);
+            CHECK(timed.result.gitResult->request.path == "tracked.txt");
+            CHECK(finished.back().result.status == TaskStatus::Succeeded);
+            CHECK_EQ(coordinator.mutationOutcomes().size(), 2u);
+            CHECK(repository.index() == indexBefore);
         });
         return suite.report();
     }

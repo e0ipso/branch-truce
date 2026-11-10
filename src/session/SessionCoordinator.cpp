@@ -54,15 +54,15 @@ public:
         bool mutation;
         bool running = false;
         std::optional<git::Request> gitRequest;
-        git::GitAdapter *adapter = nullptr;
+        git::GitRunner *adapter = nullptr;
         // The store the intent went to, held until the observation is recorded there too.
         std::shared_ptr<storage::RecoveryLease> recoveryLease;
         std::optional<MutationFact> fact;
         std::optional<FileSession> mutationTarget;
     };
 
-    State(SessionCoordinator &owner, SessionStore &store, QString executable)
-        : owner(owner), store(store), executable(std::move(executable))
+    State(SessionCoordinator &owner, SessionStore &store, git::GitRunners git)
+        : owner(owner), store(store), git(std::move(git))
     {}
 
     [[nodiscard]] bool owningThread() const
@@ -237,9 +237,10 @@ public:
     }
     void startGit(const std::shared_ptr<Job> &job)
     {
-        auto *adapter = new git::GitAdapter(executable, &owner);
+        // The coordinator owns the runner as its child until the result is in.
+        auto *adapter = git(&owner).release();
         job->adapter = adapter;
-        QObject::connect(adapter, &git::GitAdapter::finished, &owner, [this, job, adapter](const git::Result &value) {
+        QObject::connect(adapter, &git::GitRunner::finished, &owner, [this, job, adapter](const git::Result &value) {
             TaskResult result;
             result.status = value.outcome == git::Outcome::Success ? TaskStatus::Succeeded
                 : value.outcome == git::Outcome::Cancelled         ? TaskStatus::Cancelled
@@ -310,7 +311,7 @@ public:
 
     SessionCoordinator &owner;
     SessionStore &store;
-    const QString executable;
+    const git::GitRunners git;
     quint64 generation = 0;
     TaskId nextId = 1;
     QString worktree;
@@ -323,7 +324,10 @@ public:
 };
 
 SessionCoordinator::SessionCoordinator(SessionStore &store, QString gitExecutable, QObject *parent)
-    : QObject(parent), d(std::make_unique<State>(*this, store, std::move(gitExecutable)))
+    : SessionCoordinator(store, git::gitAdapters(std::move(gitExecutable)), parent)
+{}
+SessionCoordinator::SessionCoordinator(SessionStore &store, git::GitRunners git, QObject *parent)
+    : QObject(parent), d(std::make_unique<State>(*this, store, std::move(git)))
 {}
 SessionCoordinator::~SessionCoordinator()
 {

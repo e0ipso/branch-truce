@@ -189,6 +189,9 @@ private:
 
 // Runners that are GitAdapters for program.
 [[nodiscard]] GitRunners gitAdapters(GitProgram program);
+// Runners that are GitAdapters for executable, each reading the configuration the process
+// environment selects when it is built.
+[[nodiscard]] GitRunners gitAdapters(QString executable);
 
 // Runs one request to completion in a nested event loop and returns its
 // result. The adapter's own deadline bounds the wait. For headless callers

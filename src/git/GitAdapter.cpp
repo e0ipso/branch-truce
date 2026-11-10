@@ -151,6 +151,13 @@ GitRunners gitAdapters(GitProgram program)
     };
 }
 
+GitRunners gitAdapters(QString executable)
+{
+    return [executable = std::move(executable)](QObject *parent) -> std::unique_ptr<GitRunner> {
+        return std::make_unique<GitAdapter>(executable, parent);
+    };
+}
+
 Result runBlocking(const GitProgram &program, const Request &request)
 {
     GitAdapter adapter(program);

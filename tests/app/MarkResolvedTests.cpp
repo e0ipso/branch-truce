@@ -9,6 +9,7 @@
 #include "fixtures/ConflictedRepository.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/ScopedEnvironment.h"
+#include "fixtures/ScriptedGit.h"
 #include "fixtures/SyncFaults.h"
 #include "mergetool/MergetoolProtocol.h"
 #include "recovery/RecoveryRestore.h"
@@ -553,6 +554,46 @@ int main(int argc, char **argv)
         };
         CHECK_EQ(count(MutationKind::Publication), 1);
         CHECK_EQ(count(MutationKind::Staging), 1);
+    });
+    suite.run("staging that times out leaves the outcome uncertain, the conflict in place and a retry refused", [] {
+        Repository repo;
+        ScopedEnvironment environment(repo.environment);
+        const auto diagnostic = QStringLiteral("Git did not finish within the request deadline.");
+        // Git add hangs past the adapter's deadline: the index may or may not have changed.
+        const auto timedOut = [diagnostic](const git::Request &) {
+            git::Result result;
+            result.outcome = git::Outcome::TimedOut;
+            result.mutation = git::Mutation::Uncertain;
+            result.diagnostic = diagnostic;
+            return result;
+        };
+        Application controller{Application::Config{
+            .gitExecutable = gitOnPath(),
+            .recoveryDirectory = newRecoveryDirectory(),
+            .correspondence = {},
+            .sessionGit = test_support::ScriptedGitRunner::runners(git::Operation::StageFile, timedOut, gitOnPath())}};
+        openController(controller, repo);
+        const auto id = selectTracked(controller);
+        auto draft = openedFile(controller).current().draft;
+        draft.text = "written before the time out\n";
+        draft.unresolvedMarkers = 0;
+        CHECK(controller.store()->replaceDraft(id.toStdString(), openedFile(controller).current().id, draft)
+              == Transition::Applied);
+        const auto revision = revisionOf(openedFile(controller));
+        CHECK(controller.commands()->markResolved(id, revision, true));
+        waitFor(controller, [&] { return !controller.commands()->resolutionBusy(); });
+        const auto &file = openedFile(controller);
+        CHECK(file.writeOutcome() && file.writeOutcome()->outcome == Outcome::Succeeded);
+        CHECK(file.stageOutcome() && file.stageOutcome()->outcome == Outcome::Uncertain);
+        CHECK_EQ(QString::fromStdString(file.stageOutcome()->detail), diagnostic);
+        CHECK(!file.facts().resolved);
+        CHECK(readFile(repo.path("tracked.txt")) == "written before the time out\n");
+        CHECK(unmerged(repo).contains("tracked.txt"));
+        // An uncertain outcome has to be inspected before Mark resolved runs on that revision again.
+        CHECK(!controller.commands()->markResolved(id, revision, true));
+        CHECK_EQ(controller.feedback()->message(),
+                 QStringLiteral("Outcome uncertain. Inspect the repository file and index before retrying."));
+        CHECK(!controller.commands()->resolutionBusy());
     });
     suite.run("a destination that differs from the published bytes fails closed", [] {
         Session session;

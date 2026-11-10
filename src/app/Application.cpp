@@ -6,7 +6,7 @@ Application::Application(Config config, QObject *parent)
     : QObject(parent),
       store_(std::move(config.recoveryDirectory), config.files, this),
       files_(store_, this),
-      coordinator_(store_, config.gitExecutable, this),
+      coordinator_(store_, config.sessionGit ? config.sessionGit : git::gitAdapters(config.gitExecutable), this),
       publisher_(store_, coordinator_, config.gitExecutable, config.files, this),
       mergetool_(
           publisher_, store_, coordinator_, [this] { return loader_.repository(); },
