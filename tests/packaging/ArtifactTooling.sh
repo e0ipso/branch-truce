@@ -413,6 +413,23 @@ sourced 'tags=$(symbol_tags <<<"$1"); echo "tags=[$tags]"' "$objdump_head"
 expect_status 0
 expect_only_output 'tags=[]'
 
+# owner_of names the package that ships a path, and prints nothing, without
+# failing the caller under set -e and pipefail, when no package ships it. The
+# merged-/usr fallbacks of the ELF closure depend on that.
+mkdir -p -- "$work/dpkg"
+cat > "$work/dpkg/dpkg-query" <<'DPKG'
+#!/usr/bin/env bash
+[[ "$1 $2" == "-S /usr/lib/x86_64-linux-gnu/libowned.so.6" ]] || exit 1
+echo 'libowned6:amd64: /usr/lib/x86_64-linux-gnu/libowned.so.6'
+DPKG
+chmod +x "$work/dpkg/dpkg-query"
+sourced 'PATH=$1:$PATH; owner=$(owner_of /usr/lib/x86_64-linux-gnu/libowned.so.6); echo "owner=[$owner]"' "$work/dpkg"
+expect_status 0
+expect_only_output 'owner=[libowned6]'
+sourced 'PATH=$1:$PATH; owner=$(owner_of /lib/x86_64-linux-gnu/libowned.so.6); echo "owner=[$owner]"' "$work/dpkg"
+expect_status 0
+expect_only_output 'owner=[]'
+
 # check_private_abi on the tags of a dump, as container_main calls it.
 private_abi() { sourced 'check_private_abi "$(symbol_tags <<<"$1")" "$2"; echo "failures=$failures"' "$@"; }
 no_pin='libc6 (>= 2.34), libqt6core6t64 (>= 6.10.2), qml6-module-org-kde-kirigami, git'

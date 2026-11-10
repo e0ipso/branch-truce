@@ -195,7 +195,9 @@ fail() { printf 'FAIL %s\n' "$*"; failures=$((failures + 1)); }
 installed_set() { dpkg-query -W -f='${db:Status-Status}\t${Package}\t${Version}\n' | awk -F '\t' '$1 == "installed" {print $2 "\t" $3}' | LC_ALL=C sort; }
 # Package names in a Depends field, without versions or alternatives' order.
 depends_names() { tr ',|' '\n\n' <<<"$1" | sed 's/(.*//; s/:any//; s/[[:space:]]//g' | sed '/^$/d' | LC_ALL=C sort -u; }
-owner_of() { dpkg-query -S "$1" 2>/dev/null | head -1 | cut -d: -f1; }
+# owner_of PATH: the package that ships PATH, or nothing. A path no package
+# ships is an answer, not an error, so the merged-/usr fallbacks can run.
+owner_of() { { dpkg-query -S "$1" 2>/dev/null || true; } | head -1 | cut -d: -f1; }
 # The symbol version tags in `objdump -T` output on stdin, sorted and unique.
 # Output without any tag gives an empty list rather than grep's status 1.
 symbol_tags() {
