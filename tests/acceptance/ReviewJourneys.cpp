@@ -137,7 +137,7 @@ void outsideAppFileKeepsItsReason(Scene &scene)
 
 void fullInventoryKeepsTruthfulSources(Sandbox &sandbox)
 {
-    Repository repo(GitOperation::Merge, journeyPaths());
+    Repository repo(journeyPaths());
     const auto launched = repo.snapshot();
     Scene scene(sandbox, repo);
     auto &app = scene.app();
@@ -186,12 +186,13 @@ void fullInventoryKeepsTruthfulSources(Sandbox &sandbox)
 
 void rebaseKeepsTheArrangement(Sandbox &sandbox)
 {
-    Repository repo(GitOperation::Rebase,
-                    {
-                        {"story.txt", storyBase, storyLeft, storyRight, std::nullopt},
-                        {"added.txt", std::nullopt, QByteArray("added on the left\n"),
-                         QByteArray("added on the right\n"), std::nullopt},
-                    });
+    Repository repo(
+        {
+            {"story.txt", storyBase, storyLeft, storyRight, std::nullopt},
+            {"added.txt", std::nullopt, QByteArray("added on the left\n"), QByteArray("added on the right\n"),
+             std::nullopt},
+        },
+        Repository::Stop::RebaseMerge);
     Scene scene(sandbox, repo);
     CHECK(scene.app().loader()->operation() == QStringLiteral("Rebase"));
     expectText(scene.text("repositorySubtitle"), "Rebasing side onto main", "rebase operation with branches");
@@ -356,7 +357,7 @@ void undoAndRedoWalkTheHistory(Scene &scene, const std::vector<Work> &history, c
 
 void scopedChoicesShareOneHistory(Sandbox &sandbox)
 {
-    Repository repo(GitOperation::Merge, journeyPaths());
+    Repository repo(journeyPaths());
     Scene scene(sandbox, repo);
     clickFile(scene, "notes.txt");
     const auto notes = scene.file("notes.txt").current();
@@ -382,7 +383,7 @@ void scopedChoicesShareOneHistory(Sandbox &sandbox)
 
 void typingMarksTheRegionManual(Sandbox &sandbox)
 {
-    Repository repo(GitOperation::Merge, journeyPaths());
+    Repository repo(journeyPaths());
     Scene scene(sandbox, repo);
     clickFile(scene, "story.txt");
     CHECK(scene.app().selectedFile()->fileName() == QStringLiteral("story.txt"));
@@ -442,7 +443,7 @@ void typingMarksTheRegionManual(Sandbox &sandbox)
 
 void saveKeepsAnAppOnlyDraftAndMarkResolvedPublishes(Sandbox &sandbox)
 {
-    Repository repo(GitOperation::Merge, journeyPaths());
+    Repository repo(journeyPaths());
     const auto launched = repo.snapshot();
     Scene scene(sandbox, repo);
     auto &app = scene.app();
@@ -456,7 +457,7 @@ void saveKeepsAnAppOnlyDraftAndMarkResolvedPublishes(Sandbox &sandbox)
     CHECK(scene.progress().saved && !scene.progress().reviewed && !scene.progress().resolved);
     CHECK(scene.progress().undecided > 0);
     CHECK(repo.snapshot() == launched);
-    CHECK(!repo.unmerged("notes.txt").isEmpty());
+    CHECK(repo.unmerged("notes.txt"));
 
     // Mark resolved with undecided choices asks for confirmation; cancelling keeps everything.
     clickFile(scene, "story.txt");
@@ -481,13 +482,13 @@ void saveKeepsAnAppOnlyDraftAndMarkResolvedPublishes(Sandbox &sandbox)
     expectContains(rowText(scene, "story.txt"), "Resolved", "resolved status");
     CHECK(work(scene, "story.txt") == edited);
     CHECK(readFile(repo.path("story.txt")) == edited.shown.toUtf8());
-    CHECK(repo.unmerged("story.txt").isEmpty());
+    CHECK(!repo.unmerged("story.txt"));
     const auto staged = repo.git({"ls-files", "-s", "--", "story.txt"});
     CHECK(staged.startsWith("100644 " + repo.git({"hash-object", "--", "story.txt"}).trimmed() + " 0\t"));
     CHECK(app.files()->resolvedFiles() == 1);
     // Only that file changed; the saved draft stays off the repository.
     CHECK(readFile(repo.path("notes.txt")) == launched.value("notes.txt"));
-    CHECK(!repo.unmerged("notes.txt").isEmpty() && !repo.unmerged("reading.txt").isEmpty());
+    CHECK(repo.unmerged("notes.txt") && repo.unmerged("reading.txt"));
 
     // Editing again makes a newer draft that invalidates review and is distinguished from Git's copy.
     appendToResult(scene, "+");
@@ -669,7 +670,7 @@ void clipboardAndHistoryKeys(Scene &scene, const Untouched &untouched)
 
 void readingAidsKeepTheWork(Sandbox &sandbox)
 {
-    Repository repo(GitOperation::Merge, journeyPaths());
+    Repository repo(journeyPaths());
     const auto launched = repo.snapshot();
     Scene scene(sandbox, repo);
     clickFile(scene, "story.txt");

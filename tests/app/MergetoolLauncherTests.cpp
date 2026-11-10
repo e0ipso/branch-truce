@@ -132,11 +132,6 @@ QString select(Application &controller, const QByteArray &path)
     return id;
 }
 
-bool unmerged(const Repository &repo, const QByteArray &path)
-{
-    return repo.git({"diff", "--name-only", "--diff-filter=U", "-z"}).split('\0').contains(path);
-}
-
 std::unique_ptr<QProcess> startMergetool(const Repository &repo, const QStringList &paths)
 {
     auto process = std::make_unique<QProcess>();
@@ -255,7 +250,7 @@ void rejectDuplicate(const Repository &repo, Application &controller, QProcess &
     CHECK(parent.state() == QProcess::Running);
     CHECK(controller.mergetoolSession()->waitingPath() == "tracked.txt");
     CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
-    CHECK(unmerged(repo, "tracked.txt"));
+    CHECK(repo.unmerged("tracked.txt"));
 }
 
 void makeExecutable(const QString &path)
@@ -488,20 +483,20 @@ int main(int argc, char **argv)
             CHECK(controller.commands()->saveDraft(id, revisionOf(opened(controller, "tracked.txt"))));
             CHECK(controller.feedback()->message().contains(QStringLiteral("repository file unchanged")));
             CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
-            CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
+            CHECK(repo.unmerged("tracked.txt") && repo.unmerged("excluded.txt"));
             CHECK(parent->state() == QProcess::Running);
             rejectDuplicate(repo, controller, *parent);
             CHECK(controller.mergetoolSession()->intake("tracked.txt") == firstIntake);
             CHECK(readFile(firstIntake + "/merged") == firstMerged);
             CHECK(controller.commands()->markResolved(id, revisionOf(opened(controller, "tracked.txt")), true));
             CHECK(parent->state() == QProcess::Running);
-            CHECK(unmerged(repo, "tracked.txt"));
+            CHECK(repo.unmerged("tracked.txt"));
             waitFinished(*parent, 0, controller);
-            CHECK(!unmerged(repo, "tracked.txt"));
+            CHECK(!repo.unmerged("tracked.txt"));
             pump([&] { return opened(controller, "tracked.txt").facts().resolved; }, controller.feedback()->message());
             CHECK(repo.git({"show", ":tracked.txt"}) == repo.tracked);
             CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
-            CHECK(unmerged(repo, "excluded.txt"));
+            CHECK(repo.unmerged("excluded.txt"));
             CHECK(repo.git({"rev-parse", ":notes.txt"}).trimmed() == repo.notesObject);
             // The launcher removed its copies when it exited.
             CHECK(!QFileInfo::exists(firstIntake));
@@ -518,7 +513,7 @@ int main(int argc, char **argv)
             CHECK(controller.mergetool()->leave());
             waitFinished(*again, 1, controller);
             CHECK(readFile(repo.path("excluded.txt")) == repo.excluded);
-            CHECK(unmerged(repo, "excluded.txt"));
+            CHECK(repo.unmerged("excluded.txt"));
             CHECK(opened(controller, "excluded.txt").publication().checkpoint());
             CHECK(!opened(controller, "excluded.txt").facts().resolved);
             CHECK(!QFileInfo::exists(secondIntake));
@@ -539,7 +534,7 @@ int main(int argc, char **argv)
         CHECK(controller.mergetool()->leave());
         waitFinished(*parent, 1, controller);
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
-        CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
+        CHECK(repo.unmerged("tracked.txt") && repo.unmerged("excluded.txt"));
         CHECK(opened(controller, "tracked.txt").publication().checkpoint());
         CHECK(!opened(controller, "tracked.txt").facts().resolved);
         CHECK(!QFileInfo::exists(intake));
@@ -565,7 +560,7 @@ int main(int argc, char **argv)
         const auto other = select(controller, second);
         CHECK(!controller.commands()->markResolved(other, revisionOf(opened(controller, second)), true));
         CHECK(controller.feedback()->message().contains(QStringLiteral("Waiting for Git to launch this path")));
-        CHECK(unmerged(repo, first) && unmerged(repo, second));
+        CHECK(repo.unmerged(first) && repo.unmerged(second));
         CHECK(parent->state() == QProcess::Running);
         CHECK(controller.mergetoolSession()->waitingPath() == first);
         const auto firstId = select(controller, first);
@@ -585,8 +580,8 @@ int main(int argc, char **argv)
         CHECK(select(controller, second) == QString::fromLatin1(second.toHex()));
         CHECK(controller.mergetool()->leave());
         waitFinished(*parent, 1, controller);
-        CHECK(!unmerged(repo, first));
-        CHECK(unmerged(repo, second));
+        CHECK(!repo.unmerged(first));
+        CHECK(repo.unmerged(second));
         CHECK(readFile(repo.path(QString::fromLatin1(second))) == secondText);
         CHECK(opened(controller, first).publication().checkpoint());
         CHECK(!opened(controller, second).facts().resolved);
@@ -641,7 +636,7 @@ int main(int argc, char **argv)
         seen.clear();
         select(controller, "tracked.txt");
         CHECK(!seen.isEmpty() && seen.last().staging == QStringLiteral("tracked.txt"));
-        CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
+        CHECK(repo.unmerged("tracked.txt") && repo.unmerged("excluded.txt"));
     });
     // The reload replaces the publisher's files, which used to drop the parent's
     // staging assignment while the waiter stayed assigned. Mark resolved then
@@ -692,7 +687,7 @@ int main(int argc, char **argv)
         CHECK(offer && offer->path == "tracked.txt");
         CHECK(readFile(repo.path("tracked.txt")) == QByteArray::fromStdString(expected));
         // Only the parent stages the path, and the app waits for that acknowledgment.
-        CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
+        CHECK(repo.unmerged("tracked.txt") && repo.unmerged("excluded.txt"));
         CHECK(!opened(controller, "tracked.txt").facts().resolved);
     });
     // a store captured tracked.txt before Git replaced it by a copy
@@ -747,7 +742,7 @@ int main(int argc, char **argv)
                                                               true));
                     waitFinished(launcher, 0, controller);
                     CHECK(readFile(target) == QByteArray::fromStdString(expected));
-                    CHECK(unmerged(repo, "tracked.txt"));
+                    CHECK(repo.unmerged("tracked.txt"));
                     continue;
                 }
                 CHECK(controller.store()->hasRecoveryFailure(fileId.toStdString()));
@@ -792,7 +787,7 @@ int main(int argc, char **argv)
         CHECK(controller.commands()->markResolved(launched, revisionOf(opened(controller, "tracked.txt")), true));
         launcher.finish(0);
         CHECK(readFile(target) == QByteArray::fromStdString(expected));
-        CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
+        CHECK(repo.unmerged("tracked.txt") && repo.unmerged("excluded.txt"));
     });
     // the load validated Git's copy of tracked.txt. Before the
     // launcher attached, the file changed again: a new same-byte copy, which
@@ -914,7 +909,7 @@ int main(int argc, char **argv)
         launcher.finish(1);
         CHECK(!launcher.errors.contains("No Branch Truce session is listening"));
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
-        CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
+        CHECK(repo.unmerged("tracked.txt") && repo.unmerged("excluded.txt"));
     });
     suite.run("a started session that never listens fails after the --session-wait deadline", [] {
         Repository repo("nobody listens\n", "excluded stays conflicted\n");
@@ -927,7 +922,7 @@ int main(int argc, char **argv)
         CHECK(launcher.errors.contains("mergetool: No Branch Truce session is listening for this repository.\n"));
         CHECK_GE(launcher.elapsed, 400);
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
-        CHECK(unmerged(repo, "tracked.txt"));
+        CHECK(repo.unmerged("tracked.txt"));
     });
     suite.run("a leave after a longer write restores exactly the launch bytes", [] {
         Repository repo("short launch\n", "excluded stays conflicted\n");
@@ -950,7 +945,7 @@ int main(int argc, char **argv)
         waitFinished(launcher, 1, controller);
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
         CHECK(QFileInfo(repo.path("tracked.txt")).size() == repo.tracked.size());
-        CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
+        CHECK(repo.unmerged("tracked.txt") && repo.unmerged("excluded.txt"));
     });
     suite.run("a GUI and launcher with different long TMPDIR values attach for the same worktree", [] {
         Repository repo("attached across TMPDIR values\n", "excluded stays conflicted\n");
@@ -991,22 +986,18 @@ int main(int argc, char **argv)
         CHECK(controller.mergetool()->leave());
         waitFinished(launcher, 1, controller);
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
-        CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
+        CHECK(repo.unmerged("tracked.txt") && repo.unmerged("excluded.txt"));
     });
     suite.run("a socket that cannot listen is reported and the launcher exits non-zero", [] {
         Repository repo("nobody can attach\n", "excluded stays conflicted\n");
-        // Short enough for the socket path, so the file below blocks the directory the session uses.
-        QTemporaryDir runtime(QStringLiteral("/tmp/bt-run-XXXXXX"));
-        CHECK(runtime.isValid());
         // A regular file where the socket directory belongs makes listening impossible.
-        writeFile(runtime.filePath(QStringLiteral("branch-truce")), "not a directory\n");
-        repo.environment.insert("XDG_RUNTIME_DIR", runtime.path());
+        writeFile(repo.runtime.path() + QStringLiteral("/branch-truce"), "not a directory\n");
         ScopedEnvironment environment(repo.environment);
         Application controller{test_support::windowConfig()};
         startController(controller, repo);
         CHECK(controller.loader()->startupState() == SessionLoader::StartupState::ReadyWithoutMergetool);
         CHECK(controller.loader()->detail().startsWith(
-            QStringLiteral("Mergetool attach is unavailable: The mergetool socket directory ") + runtime.path()
+            QStringLiteral("Mergetool attach is unavailable: The mergetool socket directory ") + repo.runtime.path()
             + QStringLiteral("/branch-truce is not a directory.")));
         CHECK(!controller.mergetoolSession()->listening());
         CHECK(controller.files()->totalFiles() == 2);
@@ -1019,12 +1010,12 @@ int main(int argc, char **argv)
         waitFinished(launcher, 1, controller);
         // The launcher cannot keep its inputs in that directory either. Qt may warn about the C
         // locale first.
-        const auto refusal = QByteArray("mergetool: The mergetool socket directory ") + runtime.path().toUtf8()
+        const auto refusal = QByteArray("mergetool: The mergetool socket directory ") + repo.runtime.path().toUtf8()
             + "/branch-truce is not a directory.\n";
         const auto errors = launcher.readAllStandardError();
         CHECK(errors == refusal || errors.endsWith('\n' + refusal));
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
-        CHECK(unmerged(repo, "tracked.txt"));
+        CHECK(repo.unmerged("tracked.txt"));
     });
     suite.run("a session socket answered by another uid is refused before the launcher sends anything", [] {
         Repository repo("never attached\n", "excluded stays conflicted\n");
@@ -1037,7 +1028,7 @@ int main(int argc, char **argv)
         // The launcher refused before it sent a byte.
         CHECK(!session.attached());
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
-        CHECK(unmerged(repo, "tracked.txt"));
+        CHECK(repo.unmerged("tracked.txt"));
     });
     // The reply phase: what the launcher does with each answer to its attach and to the wait.
     suite.run("a session that never answers the attach fails the launcher after the reply wait", [] {
@@ -1097,7 +1088,7 @@ int main(int argc, char **argv)
                 CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
             }
             CHECK(object.size() == 40 || object.size() == 64);
-            CHECK(unmerged(repo, "tracked.txt"));
+            CHECK(repo.unmerged("tracked.txt"));
         }
     });
     suite.run("a launcher answered by a session of another protocol version asks for a restart", [] {
@@ -1135,7 +1126,7 @@ int main(int argc, char **argv)
                               + QByteArray::number(kMergetoolProtocolVersion)));
         CHECK(errors.contains("Restart Branch Truce"));
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
-        CHECK(unmerged(repo, "tracked.txt"));
+        CHECK(repo.unmerged("tracked.txt"));
     });
     return suite.report();
 }

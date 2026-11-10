@@ -73,9 +73,7 @@ class Launch {
 public:
     explicit Launch(const QString &probe)
     {
-        CHECK(home.isValid() && runtime.isValid());
-        CHECK(QFile::setPermissions(runtime.path(),
-                                    QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+        CHECK(home.isValid());
         environment.insert("PATH", "/usr/bin:/bin");
         environment.insert("HOME", home.path());
         environment.insert("XDG_CONFIG_HOME", home.path() + "/config");
@@ -116,8 +114,7 @@ public:
         return document.object();
     }
     QTemporaryDir home;
-    // A short base keeps the session socket path under its length limit.
-    QTemporaryDir runtime{QStringLiteral("/tmp/bt-run-XXXXXX")};
+    test_support::RuntimeDirectory runtime;
     QProcessEnvironment environment;
 };
 

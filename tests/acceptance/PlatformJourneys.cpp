@@ -68,7 +68,7 @@ qreal leftEdge(Scene &scene, const char *name) { return sceneOrigin(scene.item(n
 void rightToLeftMirrorsTheWindow(Sandbox &sandbox)
 {
     const LayoutDirection rightToLeft(Qt::RightToLeft);
-    Repository repo(GitOperation::Merge, journeyPaths());
+    Repository repo(journeyPaths());
     Scene scene(sandbox, repo);
     clickFile(scene, "story.txt");
     // Each pair of toolbar steps reads from the right: the earlier step sits right of the later one.
@@ -88,7 +88,7 @@ void scaledWindowKeepsEveryControlReachable(Sandbox &sandbox)
     bool parsed = false;
     const auto factor = requested.toDouble(&parsed);
     if (!parsed || factor == 1.0) test_support::skip("set QT_SCALE_FACTOR to a factor other than 1 to run this");
-    Repository repo(GitOperation::Merge, journeyPaths());
+    Repository repo(journeyPaths());
     Scene scene(sandbox, repo);
     // The window renders at the requested scale, so the fit below is measured scaled.
     if (std::abs(scene.window()->devicePixelRatio() - factor) > 0.01)
@@ -121,7 +121,7 @@ bool buttonRole(QAccessible::Role role)
 void controlsHaveRolesAndTakeKeyboardFocus(Sandbox &sandbox)
 {
     const AccessibilityActive accessibility;
-    Repository repo(GitOperation::Merge, journeyPaths());
+    Repository repo(journeyPaths());
     Scene scene(sandbox, repo);
     clickFile(scene, "story.txt");
     const auto chain = focusChain(scene.window());

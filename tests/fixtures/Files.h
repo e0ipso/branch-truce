@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QFileDevice>
 #include <QString>
+#include <QTemporaryDir>
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -45,6 +46,23 @@ inline void writeRawFile(const QByteArray &path, const QByteArray &bytes)
     const int closed = ::close(fd);
     CHECK(count == bytes.size() && closed == 0);
 }
+
+// An owner-only directory under /tmp, for XDG_RUNTIME_DIR. A QTemporaryDir under a long TMPDIR
+// would push a session socket path past its length limit, and the session would fall back to the
+// shared /tmp/branch-truce-<uid> directory instead of this private one.
+class RuntimeDirectory {
+public:
+    RuntimeDirectory()
+    {
+        CHECK(directory_.isValid());
+        CHECK(QFile::setPermissions(directory_.path(),
+                                    QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    }
+    QString path() const { return directory_.path(); }
+
+private:
+    QTemporaryDir directory_{QStringLiteral("/tmp/bt-run-XXXXXX")};
+};
 
 // `value` as one single-quoted POSIX shell word.
 inline QString shellQuote(const QString &value)
