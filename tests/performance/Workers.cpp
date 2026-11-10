@@ -181,18 +181,13 @@ const char *gitOutcome(branch_truce::git::Outcome outcome)
     return "Unknown";
 }
 
+// Fixture Git in the run's scratch directory as its home, reading no configuration at all.
 QProcessEnvironment gitEnvironment(const QString &home)
 {
-    QProcessEnvironment env;
-    env.insert(QStringLiteral("PATH"), QStringLiteral("/usr/bin:/bin"));
-    env.insert(QStringLiteral("HOME"), home);
-    env.insert(QStringLiteral("XDG_CONFIG_HOME"), home + QStringLiteral("/config"));
-    env.insert(QStringLiteral("GIT_CONFIG_NOSYSTEM"), QStringLiteral("1"));
-    env.insert(QStringLiteral("GIT_CONFIG_GLOBAL"), QStringLiteral("/dev/null"));
-    env.insert(QStringLiteral("GIT_CONFIG_SYSTEM"), QStringLiteral("/dev/null"));
-    env.insert(QStringLiteral("GIT_TERMINAL_PROMPT"), QStringLiteral("0"));
-    env.insert(QStringLiteral("LC_ALL"), QStringLiteral("C"));
-    return env;
+    QProcessEnvironment environment;
+    for (const auto &[name, value] : test_support::isolatedGitVariables(home.toStdString(), "/dev/null"))
+        environment.insert(QString::fromStdString(name), QString::fromStdString(value));
+    return environment;
 }
 
 bool runGit(const QString &repo, const QString &home, const QStringList &arguments, const QByteArray &input,

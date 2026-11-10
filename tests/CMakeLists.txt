@@ -292,6 +292,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
         set_tests_properties(acceptance.journeys-${journey_group} PROPERTIES TIMEOUT 120 LABELS acceptance
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;LC_ALL=C.UTF-8")
     endforeach()
+    # The handoff group runs two more mergetool and recovery journeys than when 120 s was set.
+    set_tests_properties(acceptance.journeys-handoff PROPERTIES TIMEOUT 180)
     set_tests_properties(acceptance.journeys-window PROPERTIES ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;LC_ALL=C.UTF-8;QT_QUICK_CONTROLS_STYLE=org.kde.desktop")
     set_tests_properties(acceptance.journeys-platform PROPERTIES ENVIRONMENT
