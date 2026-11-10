@@ -11,6 +11,9 @@ source "$here/compiler-cache.sh"
 builder_args "$0" "$@" || exit 2
 format=$1 version=$2 output=$3
 native=$(package_native_version "$format" "$version") || exit 2
+# The changelog's distribution is the release of the build image.
+suite=$(. /etc/os-release && printf '%s' "${VERSION_CODENAME-}")
+[ -n "$suite" ] || { echo 'error: /etc/os-release of the build image has no VERSION_CODENAME' >&2; exit 1; }
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 
@@ -18,7 +21,7 @@ tree=$work/branch-truce-$native
 "$here/stage-source.sh" --from "$root" --to "$tree" packaging/debian
 mv -- "$tree/packaging/debian" "$tree/debian"
 cat > "$tree/debian/changelog" <<CHANGELOG
-branch-truce ($native) resolute; urgency=medium
+branch-truce ($native) $suite; urgency=medium
 
   * Branch Truce $version.
 
