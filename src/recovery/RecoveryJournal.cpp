@@ -9,8 +9,9 @@
 #include <utility>
 
 namespace branch_truce {
-RecoveryJournal::RecoveryJournal(QString directory, std::shared_ptr<const storage::FileSystem> files)
-    : directory_(std::move(directory)), files_(std::move(files))
+RecoveryJournal::RecoveryJournal(QString directory, std::shared_ptr<const storage::FileSystem> files,
+                                 storage::RecoveryLimits storageLimits)
+    : directory_(std::move(directory)), files_(std::move(files)), storageLimits_(storageLimits)
 {
     // One worker writes records behind in queue order.
     worker_.setMaxThreadCount(1);
@@ -99,7 +100,8 @@ void RecoveryJournal::writeNext()
     const auto ticket = nextTicket_++;
     auto terminal = std::make_shared<Receipt>();
     auto entry = behind_.front();
-    auto work = [directory = directory_, files = files_, lease = lease_, entry, blocked = hasPending()]() mutable {
+    auto work = [directory = directory_, files = files_, lease = lease_, storageLimits = storageLimits_, entry,
+                 blocked = hasPending()]() mutable {
         try {
             if (entry->record && entry->record->prepare) {
                 entry->record->prepare(*entry->record);
@@ -109,7 +111,7 @@ void RecoveryJournal::writeNext()
             if (blocked) return Receipt{{false, ProblemCode::TaskRecoveryBlocked}, lease};
             if (!lease) {
                 auto failure = storage::RecoveryLease::Failure::None;
-                lease = storage::RecoveryLease::acquire(directory, files, &failure);
+                lease = storage::RecoveryLease::acquire(directory, files, &failure, storageLimits);
                 if (!lease)
                     return Receipt{{false,
                                     failure == storage::RecoveryLease::Failure::Held

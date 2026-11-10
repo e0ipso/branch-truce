@@ -15,6 +15,15 @@
 
 namespace branch_truce {
 
+// The two publication facts not exposed as user-facing outcomes. Replay tracks
+// them at the same domain transitions that change PublicationState.
+struct RecoveryBoundary {
+    RevisionId floor = 1;
+    bool reviewSaved = false;
+};
+[[nodiscard]] storage::RecoveryTransaction recoveryCheckpoint(const storage::RecoveryStore &store);
+[[nodiscard]] storage::RecoveryTransaction recoveryFileCheckpoint(const FileSession &file, RecoveryBoundary boundary);
+
 // The repository mutation a mutation record is about. An intent has no
 // observation; the observation record repeats the intent with one.
 struct MutationFact {
@@ -52,7 +61,10 @@ void requireRecord(bool condition, const char *detail);
 class RecoveryRecordReader {
 public:
     RecoveryRecordReader(const storage::RecoveryStore &store, const QJsonObject &state,
-                         qint64 retainedBytes = 256 * 1024 * 1024);
+                         qint64 retainedBytes = 256 * 1024 * 1024,
+                         const QMap<QByteArray, QByteArray> *encodedPayloads = nullptr);
+    [[nodiscard]] std::pair<FileSession, RecoveryBoundary>
+    checkpointFile(std::shared_ptr<const CorrespondenceAlgorithm> correspondence = {}) const;
     [[nodiscard]] RecoveryAction action() const;
     [[nodiscard]] std::string fileId() const;
     [[nodiscard]] std::string path() const;
@@ -80,6 +92,7 @@ public:
     [[nodiscard]] std::optional<MutationFact> mutation() const;
 
 private:
+    [[nodiscard]] QByteArray payload(const QByteArray &digest, Problem *problem, qint64 maxBytes) const;
     [[nodiscard]] std::string bytes(const QJsonValue &value) const;
     [[nodiscard]] quint64 number(const QJsonValue &value) const;
     [[nodiscard]] qint64 signedNumber(const QJsonValue &value) const;
@@ -91,5 +104,6 @@ private:
     const storage::RecoveryStore &store_;
     const QJsonObject &state_;
     mutable qint64 remainingBytes_;
+    const QMap<QByteArray, QByteArray> *encodedPayloads_;
 };
 }

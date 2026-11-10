@@ -250,6 +250,46 @@ void FileSession::open(Launch opened) noexcept
     history_ = std::move(opened.history);
 }
 
+void FileSession::restoreHistory(RevisionHistory::Checkpoint checkpoint, std::vector<RecordedRevision> revisions,
+                                 PublicationState publication)
+{
+    const auto found = std::find_if(revisions.begin(), revisions.end(),
+                                    [&](const auto &revision) { return revision.id == checkpoint.launch; });
+    if (found == revisions.end()) throw std::invalid_argument("Missing checkpoint launch");
+    auto restored = *this;
+    restored.open(launch(checkpoint.launch, found->draft, support_, loadFailure_, false));
+    std::size_t retained = 0;
+    for (auto &recorded : revisions) {
+        if (!validDecisions(recorded.draft.decisions)
+            || (restored.support_ == Support::Supported && !editableText(recorded.draft.text)))
+            throw std::invalid_argument("Invalid checkpoint draft");
+        std::shared_ptr<const CorrespondenceMap> mapping;
+        if (const auto *base = restored.correspondence()) {
+            auto map = base->recomputed(recorded.id, recorded.draft.text);
+            if (!map.restoreHandEdits(recorded.handEdited) || !map.restoreHandEditedRanges(recorded.handEditedRanges))
+                throw std::invalid_argument("Invalid checkpoint hand edits");
+            mapping = std::make_shared<const CorrespondenceMap>(std::move(map));
+        } else if (!recorded.handEdited.empty() || !recorded.handEditedRanges.empty()) {
+            throw std::invalid_argument("Checkpoint hand edits without correspondence");
+        }
+        auto scan = restored.support_ == Support::Supported
+            ? resultMarkers(recorded.draft.text, restored.markerSize_, mapping.get(), restored.launchFrames_.get())
+            : MarkerScan{};
+        auto draft = std::move(recorded.draft);
+        draft.unresolvedMarkers = scan.count();
+        auto revision = std::make_shared<const Revision>(Revision{recorded.id, recorded.result, recorded.decisions,
+                                                                  std::move(draft), std::move(mapping),
+                                                                  std::make_shared<const MarkerScan>(std::move(scan))});
+        const auto bytes = RevisionHistory::retainedBytes(*revision);
+        if (bytes > kMaxHistoryBytes - retained) throw std::length_error("Live checkpoint history exceeds 256 MiB.");
+        retained += bytes;
+        checkpoint.revisions.push_back(std::move(revision));
+    }
+    restored.history_ = RevisionHistory::restore(std::move(checkpoint), publication.held());
+    restored.publication_ = std::move(publication);
+    *this = std::move(restored);
+}
+
 std::vector<ByteRange> FileSession::conflictRegions() const
 {
     if (support_ != Support::Supported) return {};

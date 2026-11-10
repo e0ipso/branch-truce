@@ -48,8 +48,9 @@ bool SessionStore::repositions(Action action)
     return false;
 }
 
-SessionStore::SessionStore(QString recoveryDirectory, std::shared_ptr<const storage::FileSystem> files, QObject *parent)
-    : QObject(parent), journal_(std::move(recoveryDirectory), std::move(files))
+SessionStore::SessionStore(QString recoveryDirectory, std::shared_ptr<const storage::FileSystem> files, QObject *parent,
+                           storage::RecoveryLimits recoveryLimits)
+    : QObject(parent), journal_(std::move(recoveryDirectory), std::move(files), recoveryLimits)
 {
     alignment_ = std::make_unique<BackgroundAlignment>(*this);
     pause_.setSingleShot(true);

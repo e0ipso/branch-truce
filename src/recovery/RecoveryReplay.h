@@ -20,6 +20,7 @@ struct RecoveryMutation {
     std::optional<MutationObservation> observation;
     FileSession target;
     bool completed = false;
+    RecoveryBoundary boundary;
 };
 
 struct RecoveryReplay {
@@ -36,6 +37,7 @@ struct RecoveryReplay {
     std::set<std::string> editedFiles;
     std::vector<FileSession> files;
     std::vector<RecoveryMutation> mutations;
+    std::map<std::string, RecoveryBoundary> boundaries;
 };
 
 // Repeats each record's domain transition on the file it names and compares
