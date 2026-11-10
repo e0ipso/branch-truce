@@ -100,10 +100,10 @@ replacement.
 
 For every applied model command other than typing:
 
-1. Apply the domain command to a private candidate, retaining the acknowledged
+1. Write every typed record that is still waiting (see Typing below), so the
+   journal keeps the order in which the edits were made.
+2. Apply the domain command to a private candidate, retaining the acknowledged
    model state. Text and decisions are one candidate, including undo and redo.
-2. Write every typed record that is still waiting (see below), so the journal
-   keeps the order in which the edits were made.
 3. Commit and validate all referenced payloads, then synchronize the
    directories that gained an entry.
 4. Append one complete journal frame under the store's lease. Flush and
