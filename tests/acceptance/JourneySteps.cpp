@@ -11,6 +11,7 @@
 #include <QFont>
 #include <QGuiApplication>
 #include <QQuickTextDocument>
+#include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTest>
 #include <QTextBlock>
@@ -232,8 +233,20 @@ void appendToResult(Scene &scene, const char *text)
 void markResolvedByMouse(Scene &scene)
 {
     auto &app = scene.app();
+    QSignalSpy changed(app.commands(), &FileCommands::resolutionChanged);
+    const auto path = scene.text("selectedPath").toStdString();
     scene.click("markResolved");
-    settleFor("resolution confirmation", [&] { return app.commands()->resolutionConfirmation(); });
+    waitFor(
+        "resolution confirmation for " + path, [&] { return app.commands()->resolutionConfirmation(); },
+        [&] {
+            return "changed=" + std::to_string(changed.count())
+                + " busy=" + std::to_string(app.commands()->resolutionBusy())
+                + " recording=" + std::to_string(app.store()->recording())
+                + " pending=" + std::to_string(app.store()->hasPendingRecovery())
+                + " revision=" + app.selectedFile()->currentRevision().toStdString()
+                + " message=" + app.feedback()->message().toStdString() + "; "
+                + test_support::controlGeometry(scene.window(), QStringLiteral("markResolved"));
+        });
     scene.click("confirmResolution");
     waitFor(
         "the resolution of " + scene.text("selectedPath").toStdString(),

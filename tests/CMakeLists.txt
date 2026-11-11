@@ -168,6 +168,10 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     endif()
     # The app suites build sessions whose default recovery store, mergetool socket and Qt settings
     # live under the XDG directories, so every one runs through with-private-xdg.sh.
+    branch_truce_add_unit_test(fixtures.quick-scene fixtures/QuickSceneTests.cpp
+        LIBS Qt6::Quick Qt6::QuickControls2 Qt6::Test PRIVATE_XDG LABELS ui)
+    set_tests_properties(fixtures.quick-scene PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;LC_ALL=C.UTF-8")
     branch_truce_add_unit_test(app.session-model app/SessionModelTests.cpp LIBS branch_truce_controller
         PRIVATE_XDG LABELS app)
     # Its process-exit case starts this executable again as the child that exits.
