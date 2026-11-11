@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <string_view>
 
 using namespace test_support;
 using namespace std::chrono_literals;
@@ -48,6 +49,15 @@ int childMode(const std::string &mode)
     return 99;
 }
 
+bool deadProcessState(std::string_view stat)
+{
+    const auto end = stat.rfind(')');
+    if (end == std::string_view::npos || end + 2 >= stat.size()) return false;
+    // Reaping can change a zombie to the terminal X state before proc removes it.
+    const auto state = stat[end + 2];
+    return state == 'Z' || state == 'X';
+}
+
 bool stopped(pid_t pid)
 {
     // A killed orphan may remain a zombie until the host's init reaps it.
@@ -55,8 +65,7 @@ bool stopped(pid_t pid)
     std::string line;
     // An interrupted or empty proc read is not proof of process death.
     if (!std::getline(stat, line)) return ::kill(pid, 0) < 0 && errno == ESRCH;
-    const auto end = line.rfind(')');
-    return end != std::string::npos && line.substr(end + 2, 1) == "Z";
+    return deadProcessState(line);
 }
 } // namespace
 
@@ -66,6 +75,16 @@ int main(int argc, char **argv)
     configure(argc, argv);
     const auto executable = std::filesystem::canonical("/proc/self/exe").string();
     Suite suite("fixture-process");
+    suite.run("process death observation survives the zombie to dead transition", [] {
+        CHECK(deadProcessState("123 (fixture child) Z 1"));
+        CHECK(deadProcessState("123 (fixture child) X 1"));
+        CHECK(!deadProcessState("123 (fixture child) S 1"));
+        CHECK(!deadProcessState("123 (fixture child) R 1"));
+        CHECK(!deadProcessState("123 (fixture child) T 1"));
+        CHECK(!deadProcessState(""));
+        CHECK(!deadProcessState("123 (fixture child)"));
+        CHECK(!stopped(::getpid()));
+    });
     suite.run("empty commands and start failures have bounded diagnostics", [] {
         for (const auto &arguments : {std::vector<std::string>{}, {""}, {"/no/such/fixture-program"}}) {
             const auto result = readProcess(arguments);
