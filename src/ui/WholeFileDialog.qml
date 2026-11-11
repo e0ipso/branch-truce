@@ -9,7 +9,7 @@ import org.kde.kirigami as Kirigami
 
 PreviewDialog {
     id: wholeFileDialog
-    required property ChoicePreviewFlow choices
+    scope: ChoicePreviewFlow.Scope.WholeFile
     required property CommandFeedback feedback
     objectName: "wholeFileDialog"
     title: qsTr("Replace whole file from %1").arg(wholeFileDialog.choices.wholeFilePreview.side || "")

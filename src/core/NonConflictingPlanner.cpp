@@ -60,11 +60,13 @@ struct BatchPlanner {
             }))
             return std::nullopt;
         const auto *anchor = input.mapping->anchor(target.earlier.contributionId);
-        if (!mappedRange(anchor)) return std::nullopt;
-        const auto source = slice(input.snapshots->source(target.source.side)->worktree.utf8, target.source.range);
+        const auto mapped = mappedRange(anchor);
+        const auto &captured = input.snapshots->source(target.source.side);
+        if (!mapped || !captured || !input.snapshots->earlier) return std::nullopt;
+        const auto source = slice(captured->worktree.utf8, target.source.range);
         const auto base = slice(input.snapshots->earlier->worktree.utf8, target.earlier.range);
         // Includes repeated comparisons in indexed grouping, candidate copies and command output.
-        const auto bytes = source.size() + base.size() + anchor->result->end - anchor->result->begin;
+        const auto bytes = source.size() + base.size() + mapped->end - mapped->begin;
         if (bytes > budget.bytes / 16 || !take(bytes, bytes * 16)) {
             refused = true;
             return std::nullopt;

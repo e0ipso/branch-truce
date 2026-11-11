@@ -7,6 +7,7 @@
 #include "fixtures/ConflictedRepository.h"
 #include "fixtures/EventLoop.h"
 #include "fixtures/Files.h"
+#include "fixtures/FixtureProcess.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/GitRepository.h"
 #include "fixtures/ScopedEnvironment.h"
@@ -458,20 +459,9 @@ void checkRefusal(const QByteArray &errors, const QByteArray &message)
 }
 }
 
-int main(int argc, char **argv)
+namespace {
+void addParentResolutionCases(test_support::Suite &suite)
 {
-    if (argc == 2
-        && (std::strcmp(argv[1], kForeignPeerLauncher) == 0 || std::strcmp(argv[1], kShortReplyLauncher) == 0))
-        return runChildLauncher(argc, argv);
-    QCoreApplication application(argc, argv);
-    // The English catalog supplies the plural forms these checks read.
-    branch_truce::installTranslations(application);
-    if (argc != 2) {
-        QTextStream(stderr) << "usage: mergetool-launcher-tests <branch-truce>\n";
-        return 2;
-    }
-    launcherBinary = QString::fromLocal8Bit(argv[1]);
-    test_support::Suite suite("MergetoolLauncherTests");
     suite.run(
         "installed Git stages only after an explicit resolution and a repeated launch keeps the first inputs", [] {
             Repository repo("resolved from the app\n", "excluded stays conflicted\n");
@@ -708,6 +698,9 @@ int main(int argc, char **argv)
     // with the same bytes, and the window restored it before the launcher
     // attached. The attach used to recheck only the file, so staging the path or
     // changing core.autocrlf in between still cleared the recovery error.
+}
+void addRecoveredLaunchCases(test_support::Suite &suite)
+{
     suite.run(
         "a late launcher clears a copied launch path's recovery error only while its index and conversion policy match",
         [] {
@@ -903,6 +896,22 @@ int main(int argc, char **argv)
             checkCopiedLaunchRefused(controller, launcher, target, outside, "launch bytes\n");
         }
     });
+}
+void rejectsInvalidSessionWaits()
+{
+    for (const char *invalid : {"nan", "NaN", "inf", "-inf", "-0.01", "3600.01", "garbage"}) {
+        const auto result = test_support::readProcess({QFile::encodeName(launcherBinary).toStdString(), "--mergetool",
+                                                       "--no-window", std::string("--session-wait=") + invalid},
+                                                      std::nullopt, {}, {}, std::chrono::seconds(5));
+        CHECK(result.diagnostic.empty());
+        CHECK(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 1);
+        CHECK(result.error.find("--session-wait takes a number of seconds from 0 to 3600.") != std::string::npos);
+    }
+}
+
+void addLauncherFailureCases(test_support::Suite &suite)
+{
+    suite.run("non-finite and out-of-range session waits are refused before intake", rejectsInvalidSessionWaits);
     suite.run("a session that listens after the GUI start is attached within the deadline", [] {
         Repository repo("attached after the spawn\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
@@ -1148,5 +1157,25 @@ int main(int argc, char **argv)
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
         CHECK(repo.unmerged("tracked.txt"));
     });
+}
+}
+
+int main(int argc, char **argv)
+{
+    if (argc == 2
+        && (std::strcmp(argv[1], kForeignPeerLauncher) == 0 || std::strcmp(argv[1], kShortReplyLauncher) == 0))
+        return runChildLauncher(argc, argv);
+    QCoreApplication application(argc, argv);
+    // The English catalog supplies the plural forms these checks read.
+    branch_truce::installTranslations(application);
+    if (argc != 2) {
+        QTextStream(stderr) << "usage: mergetool-launcher-tests <branch-truce>\n";
+        return 2;
+    }
+    launcherBinary = QString::fromLocal8Bit(argv[1]);
+    test_support::Suite suite("MergetoolLauncherTests");
+    addParentResolutionCases(suite);
+    addRecoveredLaunchCases(suite);
+    addLauncherFailureCases(suite);
     return suite.report();
 }

@@ -7,6 +7,7 @@
 namespace branch_truce::FileStates {
 Q_NAMESPACE
 QML_ELEMENT
+Q_CLASSINFO("RegisterEnumClassesUnscoped", "false")
 
 // What a file's status says. The values up to ReviewNeeded mirror the
 // engine's FileStatus; the recovery states outrank every file status.

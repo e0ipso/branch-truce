@@ -243,7 +243,7 @@ void MergetoolSession::attachReceived(quint64 connection, const AttachMessage &m
             }
             intakeChecked(connection, message, check);
         },
-        [](std::exception_ptr) noexcept { return IntakeCheck{{}, ProblemCode::MergetoolIntakeCheckFailed}; });
+        [](const std::exception_ptr &) noexcept { return IntakeCheck{{}, ProblemCode::MergetoolIntakeCheckFailed}; });
 }
 
 void MergetoolSession::intakeChecked(quint64 connection, const AttachMessage &message, const IntakeCheck &check)

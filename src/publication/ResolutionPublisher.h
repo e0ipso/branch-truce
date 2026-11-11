@@ -99,6 +99,7 @@ private:
     [[nodiscard]] const FileSession *file(const std::string &id) const;
     [[nodiscard]] bool parentOwns(const QByteArray &path) const;
     [[nodiscard]] bool previouslyWritten(const FileSession &session, RevisionId revision) const;
+    [[nodiscard]] bool matchesWrittenBaseline(const FileSession &session, const Attempt &attempt) const;
     [[nodiscard]] bool preserveWrite() const;
     [[nodiscard]] static StartResult result(Transition transition, const QString &detail);
     void fail(Outcome outcome, const QString &detail, bool stage);
@@ -115,7 +116,7 @@ private:
     void verified(const git::TextConversionResult &result);
     void discovered(const TaskCompletion &completion);
     void indexed(const TaskCompletion &completion);
-    void published(const TaskCompletion &completion, const storage::PublicationResult &evidence);
+    void published(const TaskCompletion &completion, const storage::PublicationResult &published);
     void staged(const TaskCompletion &completion);
     void parentPreflight(const TaskCompletion &completion);
     void noteStale(const TaskCompletion &completion);

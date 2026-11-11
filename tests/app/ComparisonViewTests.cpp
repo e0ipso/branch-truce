@@ -36,16 +36,16 @@ int main(int argc, char **argv)
     // No argument runs every case; "scenes" and "boundary" select one ctest entry's share.
     // "display" runs the viewport cases on whatever platform Qt was given, such as a real
     // Wayland session.
-    const auto arguments = QCoreApplication::arguments();
+    const auto arguments = test_support::configure(argc, argv);
     auto selection = SceneSet::All;
-    if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("scenes"))
+    if (arguments.size() == 2 && arguments.at(1) == "scenes")
         selection = SceneSet::Scenes;
-    else if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("boundary"))
+    else if (arguments.size() == 2 && arguments.at(1) == "boundary")
         selection = SceneSet::Boundary;
-    else if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("display"))
+    else if (arguments.size() == 2 && arguments.at(1) == "display")
         selection = SceneSet::Display;
     else if (arguments.size() != 1) {
-        std::cerr << "usage: branch_truce_comparison_tests [scenes | boundary | display]\n";
+        std::cerr << "usage: branch_truce_comparison_tests [scenes | boundary | display] [--filter text] [--list]\n";
         return 2;
     }
     // Synthetic offscreen integration owns its own clipboard. Physical desktop

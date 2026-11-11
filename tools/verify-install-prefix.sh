@@ -160,7 +160,7 @@ isolated env "${launcher_env[@]}" branch-truce --mergetool --no-window &
 launcher=$!
 expect_blocked "$launcher" "installed launcher"
 pass "installed launcher attached to the desktop-launched GUI and is blocking"
-intakes=$(find "$home/data/branch-truce/mergetool" -mindepth 2 -maxdepth 2 -type d | wc -l)
+intakes=$(find "$home/runtime/branch-truce/intake" -mindepth 2 -maxdepth 2 -type d | wc -l)
 ((intakes == 1)) || die "expected one launcher intake, found $intakes"
 stop_gui
 status=0; wait "$launcher" || status=$?

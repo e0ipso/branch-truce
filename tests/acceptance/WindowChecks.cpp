@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cstring>
 #include <functional>
+#include <span>
 #include <stdexcept>
 
 using namespace branch_truce;
@@ -223,12 +224,9 @@ int expectWholeWords(QQuickItem *root, const std::string &where)
     return wrapped;
 }
 
-std::string firstUndecidedInView(Scene &scene, bool snapshot)
+namespace {
+void firstUndecidedPositions(Scene &scene, std::span<Pane> panes)
 {
-    auto &app = scene.app();
-    Pane panes[] = {{"stage2", "stage2Viewport", "stage2Text"},
-                    {"result", "resultViewport", "resultText"},
-                    {"stage3", "stage3Viewport", "stage3Text"}};
     for (const auto &region : scene.regions()) {
         if (region.state != QStringLiteral("undecided")) continue;
         for (auto &pane : panes) {
@@ -243,94 +241,108 @@ std::string firstUndecidedInView(Scene &scene, bool snapshot)
             pane.resultLine = region.result.lineBegin;
         }
     }
+}
+
+std::string undecidedPaneInView(Scene &scene, const Pane &pane, bool snapshot)
+{
+    auto &app = scene.app();
+    auto *view = scene.item(pane.viewport);
+    auto *editor = scene.item(pane.text);
+    QRectF rect;
+    if (pane.position >= 0)
+        CHECK(QMetaObject::invokeMethod(editor, "positionToRectangle", Q_RETURN_ARG(QRectF, rect),
+                                        Q_ARG(int, pane.position)));
+    auto top = editor->y() + rect.top() - view->property("contentY").toReal();
+    auto height = rect.height();
+    bool shown = pane.position >= 0;
+    const auto *blocks =
+        scene.item((std::string(pane.side) + "Gutter").c_str())->property("blocks").value<TextBlocks *>();
+    CHECK(blocks);
+    QVariantMap laidOut;
+    for (const auto &value : blocks->between(0, 1e9))
+        if (value.toMap().value("number").toInt() == pane.line) laidOut = value.toMap();
+    // Keep the cursor-rectangle assertion as well as the complete block.
+    const bool cursorShown = shown && top >= 0 && top + height <= view->height();
+    qreal blockTop = top, blockHeight = height;
+    if (!laidOut.isEmpty()) {
+        blockTop = editor->y() + editor->property("topPadding").toReal() + laidOut.value("top").toReal()
+            - view->property("contentY").toReal();
+        blockHeight = laidOut.value("height").toReal();
+    }
+    int foldedFirst = 0, foldedEnd = 0;
+    // A result line inside a folded marker block is represented by its visible conflict row,
+    // not by the hidden QTextBlock's positionToRectangle.
+    if (std::strcmp(pane.side, "result") == 0 && shown) {
+        for (const auto &block : scene.markerBlocks()) {
+            if (!block.folded || pane.line < block.resultLineBegin || pane.line >= block.resultLineEnd) continue;
+            foldedFirst = block.resultLineBegin;
+            foldedEnd = block.resultLineEnd;
+            auto *row = test_support::visualItem(scene.item("resultFoldedRows"),
+                                                 QStringLiteral("resultConflictRow-") + QString::number(foldedFirst));
+            shown = row && row->isVisible();
+            if (shown) {
+                top = sceneOrigin(row).y() - sceneOrigin(view).y();
+                height = row->height();
+            }
+            break;
+        }
+    }
+    const bool folded = foldedFirst > 0;
+    const bool fullBlockShown = !laidOut.isEmpty() && blockTop >= 0 && blockTop + blockHeight <= view->height();
+    const bool inView =
+        shown && top >= 0 && top + height <= view->height() && (folded || (cursorShown && fullBlockShown));
+    if (inView && !snapshot) return {};
+    const auto cursor = editor->property("cursorRectangle").toRectF();
+    const auto origin = sceneOrigin(view);
+    QJsonObject diagnostic{
+        {"schema", 1},
+        {"pane", pane.side},
+        {"inView", inView},
+        {"screen", QJsonObject{{"width", scene.window()->width()}, {"height", scene.window()->height()}}},
+        {"selectedFileId", app.selection()->fileId()},
+        {"editorPlacement", QJsonObject::fromVariantMap(app.editor()->placement())},
+        {"navigation", QJsonObject::fromVariantMap(app.navigator()->target())},
+        {"line", pane.line},
+        {"utf16Position", pane.position},
+        {"mappedSourceLine", pane.sourceLine},
+        {"mappedResultLine", pane.resultLine},
+        {"block", QJsonObject::fromVariantMap(laidOut)},
+        {"fullBlockViewportTop", blockTop},
+        {"fullBlockViewportBottom", blockTop + blockHeight},
+        {"foldedFirst", foldedFirst},
+        {"foldedEndExclusive", foldedEnd},
+        {"visibleTop", top},
+        {"visibleHeight", height},
+        {"positionRectangle", QJsonObject{{"y", rect.y()}, {"height", rect.height()}}},
+        {"cursorRectangle", QJsonObject{{"y", cursor.y()}, {"height", cursor.height()}}},
+        {"viewport",
+         QJsonObject{{"x", origin.x()}, {"y", origin.y()}, {"width", view->width()}, {"height", view->height()}}},
+        {"editorY", editor->y()},
+        {"editorWidth", editor->width()},
+        {"editorHeight", editor->height()},
+        {"activeFocus", editor->hasActiveFocus()},
+        {"rowHeight", blocks->rowHeight()}};
+    for (const auto *key : {"contentY", "contentHeight", "moving", "dragging", "flicking"})
+        diagnostic[key] = QJsonValue::fromVariant(view->property(key));
+    for (const auto *key :
+         {"cursorPosition", "selectionStart", "selectionEnd", "topPadding", "bottomPadding", "wrapMode"})
+        diagnostic[key] = QJsonValue::fromVariant(editor->property(key));
+    QQmlExpression scrollbar(qmlContext(view), view, "ScrollBar.vertical ? ScrollBar.vertical.pressed : false");
+    diagnostic["verticalScrollbarPressed"] = QJsonValue::fromVariant(scrollbar.evaluate());
+    return QJsonDocument(diagnostic).toJson(QJsonDocument::Compact).toStdString();
+}
+} // namespace
+
+std::string firstUndecidedInView(Scene &scene, bool snapshot)
+{
+    Pane panes[] = {{"stage2", "stage2Viewport", "stage2Text"},
+                    {"result", "resultViewport", "resultText"},
+                    {"stage3", "stage3Viewport", "stage3Text"}};
+    firstUndecidedPositions(scene, panes);
     std::string failures;
     for (const auto &pane : panes) {
-        auto *view = scene.item(pane.viewport);
-        auto *editor = scene.item(pane.text);
-        QRectF rect;
-        if (pane.position >= 0)
-            CHECK(QMetaObject::invokeMethod(editor, "positionToRectangle", Q_RETURN_ARG(QRectF, rect),
-                                            Q_ARG(int, pane.position)));
-        auto top = editor->y() + rect.top() - view->property("contentY").toReal();
-        auto height = rect.height();
-        bool shown = pane.position >= 0;
-        const auto *blocks =
-            scene.item((std::string(pane.side) + "Gutter").c_str())->property("blocks").value<TextBlocks *>();
-        CHECK(blocks);
-        QVariantMap laidOut;
-        for (const auto &value : blocks->between(0, 1e9))
-            if (value.toMap().value("number").toInt() == pane.line) laidOut = value.toMap();
-        // Keep the cursor-rectangle assertion as well as the complete block.
-        const bool cursorShown = shown && top >= 0 && top + height <= view->height();
-        qreal blockTop = top, blockHeight = height;
-        if (!laidOut.isEmpty()) {
-            blockTop = editor->y() + editor->property("topPadding").toReal() + laidOut.value("top").toReal()
-                - view->property("contentY").toReal();
-            blockHeight = laidOut.value("height").toReal();
-        }
-        int foldedFirst = 0, foldedEnd = 0;
-        // A result line inside a folded marker block is represented by its visible conflict row,
-        // not by the hidden QTextBlock's positionToRectangle.
-        if (std::strcmp(pane.side, "result") == 0 && shown) {
-            for (const auto &block : scene.markerBlocks()) {
-                if (!block.folded || pane.line < block.resultLineBegin || pane.line >= block.resultLineEnd) continue;
-                foldedFirst = block.resultLineBegin;
-                foldedEnd = block.resultLineEnd;
-                auto *row =
-                    test_support::visualItem(scene.item("resultFoldedRows"),
-                                             QStringLiteral("resultConflictRow-") + QString::number(foldedFirst));
-                shown = row && row->isVisible();
-                if (shown) {
-                    top = sceneOrigin(row).y() - sceneOrigin(view).y();
-                    height = row->height();
-                }
-                break;
-            }
-        }
-        const bool folded = foldedFirst > 0;
-        const bool fullBlockShown = !laidOut.isEmpty() && blockTop >= 0 && blockTop + blockHeight <= view->height();
-        const bool inView =
-            shown && top >= 0 && top + height <= view->height() && (folded || (cursorShown && fullBlockShown));
-        if (inView && !snapshot) continue;
-        const auto cursor = editor->property("cursorRectangle").toRectF();
-        const auto origin = sceneOrigin(view);
-        QJsonObject diagnostic{
-            {"schema", 1},
-            {"pane", pane.side},
-            {"inView", inView},
-            {"screen", QJsonObject{{"width", scene.window()->width()}, {"height", scene.window()->height()}}},
-            {"selectedFileId", app.selection()->fileId()},
-            {"editorPlacement", QJsonObject::fromVariantMap(app.editor()->placement())},
-            {"navigation", QJsonObject::fromVariantMap(app.navigator()->target())},
-            {"line", pane.line},
-            {"utf16Position", pane.position},
-            {"mappedSourceLine", pane.sourceLine},
-            {"mappedResultLine", pane.resultLine},
-            {"block", QJsonObject::fromVariantMap(laidOut)},
-            {"fullBlockViewportTop", blockTop},
-            {"fullBlockViewportBottom", blockTop + blockHeight},
-            {"foldedFirst", foldedFirst},
-            {"foldedEndExclusive", foldedEnd},
-            {"visibleTop", top},
-            {"visibleHeight", height},
-            {"positionRectangle", QJsonObject{{"y", rect.y()}, {"height", rect.height()}}},
-            {"cursorRectangle", QJsonObject{{"y", cursor.y()}, {"height", cursor.height()}}},
-            {"viewport",
-             QJsonObject{{"x", origin.x()}, {"y", origin.y()}, {"width", view->width()}, {"height", view->height()}}},
-            {"editorY", editor->y()},
-            {"editorWidth", editor->width()},
-            {"editorHeight", editor->height()},
-            {"activeFocus", editor->hasActiveFocus()},
-            {"rowHeight", blocks->rowHeight()}};
-        for (const auto *key : {"contentY", "contentHeight", "moving", "dragging", "flicking"})
-            diagnostic[key] = QJsonValue::fromVariant(view->property(key));
-        for (const auto *key :
-             {"cursorPosition", "selectionStart", "selectionEnd", "topPadding", "bottomPadding", "wrapMode"})
-            diagnostic[key] = QJsonValue::fromVariant(editor->property(key));
-        QQmlExpression scrollbar(qmlContext(view), view, "ScrollBar.vertical ? ScrollBar.vertical.pressed : false");
-        diagnostic["verticalScrollbarPressed"] = QJsonValue::fromVariant(scrollbar.evaluate());
-        failures +=
-            (failures.empty() ? "" : "\n") + QJsonDocument(diagnostic).toJson(QJsonDocument::Compact).toStdString();
+        const auto diagnostic = undecidedPaneInView(scene, pane, snapshot);
+        if (!diagnostic.empty()) failures += (failures.empty() ? "" : "\n") + diagnostic;
     }
     return failures;
 }

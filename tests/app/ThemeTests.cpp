@@ -318,7 +318,7 @@ int checkCues()
             auto *gutter = scene.item(name + QStringLiteral("Gutter"));
             auto *slot = scene.item(gutter->objectName() + QStringLiteral("MarkerSlot"));
             test_support::settleFor(std::string("the ") + pane + " gutter rows",
-                                    [&] { return gutter->property("rows").toList().size() > 0; });
+                                    [&] { return !gutter->property("rows").toList().isEmpty(); });
             test_support::waitForFrames(scene.window, std::string("the ") + pane + " glyphs are drawn");
             const auto lines = colouredLines(backgrounds);
             const auto glyphs = glyphLines(slot);
@@ -705,7 +705,7 @@ bool writeColourScheme(const QString &configHome, const QString &scheme)
 }
 
 int main(int argc, char **argv)
-{
+try {
     // Unbuffered, so a run that times out still shows how far it got.
     std::cout << std::unitbuf;
     const QString mode = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QString();
@@ -743,4 +743,10 @@ int main(int argc, char **argv)
     if (mode == QStringLiteral("cost") && argc == 2) return checkCost();
     std::cerr << "usage: branch_truce_theme_tests icons <icon list> | roles <scheme> | cues | cost\n";
     return 2;
+} catch (const std::exception &error) {
+    std::cerr << "FAIL theme test setup: " << error.what() << '\n';
+    return 1;
+} catch (...) {
+    std::cerr << "FAIL theme test setup: unknown exception\n";
+    return 1;
 }

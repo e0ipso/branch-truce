@@ -171,7 +171,7 @@ void aSkipAfterAFailedExpectationIsAFailure()
 void anExceptionOfAnyTypeFailsOnlyItsCase()
 {
     const auto result = captured({}, [](Suite &inner) {
-        inner.run("throws an int", [] { throw 5; });
+        inner.run("throws an int", [] { std::rethrow_exception(std::make_exception_ptr(5)); });
         inner.run("passes", [] {});
     });
     CHECK_EQ(result.status, 1);

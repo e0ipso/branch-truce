@@ -67,13 +67,13 @@ struct RecoveryCommit {
 // Hard admission limits, also used by readers. Smaller values allow boundary tests.
 // Domain continuation replaces accumulated records with their complete live checkpoint.
 struct RecoveryLimits {
-    qint64 frameBytes = 4 * 1024 * 1024;
-    qint64 journalBytes = 32 * 1024 * 1024;
-    qint64 stateBytes = 16 * 1024 * 1024;
-    qint64 expandedBytes = 256 * 1024 * 1024;
+    qint64 frameBytes = 4LL * 1024 * 1024;
+    qint64 journalBytes = 32LL * 1024 * 1024;
+    qint64 stateBytes = 16LL * 1024 * 1024;
+    qint64 expandedBytes = 256LL * 1024 * 1024;
     qint64 transactions = 8192;
     qint64 payloadFiles = 32768;
-    qint64 storeBytes = 256 * 1024 * 1024;
+    qint64 storeBytes = 256LL * 1024 * 1024;
 };
 
 // App-owned data only. Reading validates frames and payloads, but neither the
@@ -87,8 +87,7 @@ public:
     // firstRecordOnly checks at most 64 KiB of the first frame, without reading
     // payloads or scanning retention. It is a hint for inventory filtering only.
     [[nodiscard]] RecoveryRead read(bool firstRecordOnly = false) const;
-    [[nodiscard]] QByteArray payload(const QByteArray &digest, Problem *problem = nullptr,
-                                     qint64 maxBytes = 8388608) const;
+    [[nodiscard]] QByteArray payload(const QByteArray &hash, Problem *error = nullptr, qint64 maxBytes = 8388608) const;
     [[nodiscard]] static QByteArray digest(const QByteArray &bytes);
 
 private:
@@ -123,15 +122,21 @@ private:
     // transaction ID already in the journal appends nothing: the same state is
     // synced again and succeeds, different state is refused.
     [[nodiscard]] RecoveryCommit commit(const RecoveryTransaction &transaction);
+    struct AppendAdmission;
+    [[nodiscard]] Problem writePayloads(const RecoveryTransaction &transaction, const QString &payloadDirectory);
+    [[nodiscard]] RecoveryCommit appendPrepared(const RecoveryTransaction &transaction, const JournalEnd &current,
+                                                const AppendAdmission &admission);
     [[nodiscard]] RecoveryCommit append(const RecoveryTransaction &transaction, bool continuing = true);
     [[nodiscard]] RecoveryCommit rollover(const RecoveryTransaction &transaction);
     [[nodiscard]] Problem reclaim(const std::set<QByteArray> &reachable);
     [[nodiscard]] bool openJournal(QFile &file, RecoveryRead &result) const;
-    [[nodiscard]] RecoveryRead parse(QIODevice &journal, std::set<QByteArray> &payloads, bool firstRecordOnly = false,
+    [[nodiscard]] Problem readPayloads(const QJsonObject &record, std::set<QByteArray> &payloads,
+                                       qint64 &payloadBytes) const;
+    [[nodiscard]] RecoveryRead parse(QIODevice &file, std::set<QByteArray> &payloads, bool firstRecordOnly = false,
                                      qint64 *stateBytes = nullptr) const;
     [[nodiscard]] Problem retention(qint64 journalBytes, const QMap<QByteArray, QByteArray> &additional = {},
                                     qint64 generations = 1) const;
-    [[nodiscard]] const JournalEnd *refreshEnd(Problem *problem);
+    [[nodiscard]] const JournalEnd *refreshEnd(Problem *error);
     [[nodiscard]] std::optional<FileStamp> stampOf(const QFile &file) const;
 
     QString directory_;

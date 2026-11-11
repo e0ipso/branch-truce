@@ -104,6 +104,8 @@ std::optional<Run> current;
 
 QJsonValue value(const QVariant &variant)
 {
+    // QString is iterable too; keep scalar text scalar in the wire format.
+    if (variant.metaType() == QMetaType::fromType<QString>()) return variant.toString();
     if (variant.metaType() == QMetaType::fromType<QJSValue>())
         return QJsonValue::fromVariant(variant.value<QJSValue>().toVariant());
     if (variant.metaType().flags().testFlag(QMetaType::IsEnumeration)) return variant.toInt();
@@ -247,94 +249,95 @@ Item {
             {"screenName", screen->name()},
             {"physicalDesktop", false}};
 }
+QJsonArray syntaxFormats(QQuickItem *item)
+{
+    auto *quick = item->property("textDocument").value<QQuickTextDocument *>();
+    QJsonArray formats;
+    if (quick)
+        for (auto block = quick->textDocument()->begin(); block.isValid(); block = block.next()) {
+            for (const auto &range : block.layout()->formats())
+                formats.append(QJsonObject{{"line", block.blockNumber() + 1},
+                                           {"start", range.start},
+                                           {"length", range.length},
+                                           {"foreground", range.format.foreground().color().name()},
+                                           {"weight", range.format.fontWeight()}});
+        }
+    return formats;
+}
+QJsonObject renderedItem(QQuickItem *item)
+{
+    const auto pos = item->mapToScene(QPointF());
+    bool painted = true;
+    for (auto *ancestor = item; ancestor; ancestor = ancestor->parentItem())
+        painted = painted && ancestor->isVisible() && ancestor->opacity() > 0;
+    QJsonObject row{{"name", item->objectName()},
+                    {"x", pos.x()},
+                    {"y", pos.y()},
+                    {"width", item->width()},
+                    {"height", item->height()},
+                    {"enabled", item->isEnabled()},
+                    {"activeFocus", item->hasActiveFocus()},
+                    {"opacity", item->opacity()},
+                    {"onScreen", reachable(item) && painted},
+                    {"clip", item->clip()},
+                    {"className", item->metaObject()->className()}};
+    QStringList ancestors;
+    for (auto *parent = item->parentItem(); parent; parent = parent->parentItem())
+        if (!parent->objectName().isEmpty()) ancestors.append(parent->objectName());
+    row["ancestors"] = QJsonArray::fromStringList(ancestors);
+    if (auto *accessible = QAccessible::queryAccessibleInterface(item)) {
+        row["accessibleName"] = accessible->text(QAccessible::Name);
+        row["accessibleDescription"] = accessible->text(QAccessible::Description);
+    }
+    for (const auto *key :
+         {"text",       "path",         "fileId",        "contentY",         "cursorPosition", "checked",
+          "rows",       "folds",        "rowHeight",     "lineSpacing",      "color",          "schemeBackground",
+          "line",       "kind",         "truncated",     "explanation",      "implicitWidth",  "baselineOffset",
+          "textFormat", "readOnly",     "selectByMouse", "selectByKeyboard", "sourceTop",      "sourceBottom",
+          "resultTop",  "resultBottom", "sourceX",       "resultX",          "middleX",        "radius",
+          "orientation"}) {
+        const auto property = item->property(key);
+        if (property.isValid()) row[key] = value(property);
+    }
+    const auto textFormat = item->property("textFormat");
+    if (textFormat.isValid()) {
+        bool converted = false;
+        const auto format = textFormat.toInt(&converted);
+        row["plainText"] = converted && format == int(Qt::PlainText);
+    }
+    if (item->property("font").isValid()) row["font"] = item->property("font").value<QFont>().toString();
+    if (item->objectName().endsWith("Label") && item->parentItem() && item->parentItem()->parentItem()) {
+        auto *header = item->parentItem()->parentItem()->parentItem();
+        if (header) {
+            const auto p = header->mapToScene(QPointF());
+            row["ancestorGeometry"] = QJsonArray{p.x(), p.y(), header->width(), header->height()};
+            row["ancestorColor"] = value(header->property("color"));
+        }
+    }
+    if (item->objectName() == "stage2Text" || item->objectName() == "stage3Text"
+        || item->objectName() == "resultText") {
+        row["syntaxFormats"] = syntaxFormats(item);
+    }
+    return row;
+}
+void collectRenderedItems(QQuickItem *item, QJsonArray &items, QJsonArray &details)
+{
+    if (!item->isVisible()) return;
+    if (!item->objectName().isEmpty() || item->property("line").isValid() || item->property("text").isValid()
+        || item->property("color").isValid()) {
+        const auto row = renderedItem(item);
+        if (!item->objectName().isEmpty())
+            items.append(row);
+        else
+            details.append(row);
+    }
+    for (auto *child : item->childItems()) collectRenderedItems(child, items, details);
+}
 QJsonObject snapshot()
 {
     QJsonObject state;
     QJsonArray items, details;
-    auto walk = [&](auto &&self, QQuickItem *item) -> void {
-        if (!item->isVisible()) return;
-        if (!item->objectName().isEmpty() || item->property("line").isValid() || item->property("text").isValid()
-            || item->property("color").isValid()) {
-            const auto pos = item->mapToScene(QPointF());
-            bool painted = true;
-            for (auto *ancestor = item; ancestor; ancestor = ancestor->parentItem())
-                painted = painted && ancestor->isVisible() && ancestor->opacity() > 0;
-            QJsonObject row{{"name", item->objectName()},
-                            {"x", pos.x()},
-                            {"y", pos.y()},
-                            {"width", item->width()},
-                            {"height", item->height()},
-                            {"enabled", item->isEnabled()},
-                            {"activeFocus", item->hasActiveFocus()},
-                            {"opacity", item->opacity()},
-                            {"onScreen", reachable(item) && painted},
-                            {"clip", item->clip()},
-                            {"className", item->metaObject()->className()}};
-            QStringList ancestors;
-            for (auto *parent = item->parentItem(); parent; parent = parent->parentItem())
-                if (!parent->objectName().isEmpty()) ancestors.append(parent->objectName());
-            row["ancestors"] = QJsonArray::fromStringList(ancestors);
-            if (auto *accessible = QAccessible::queryAccessibleInterface(item)) {
-                row["accessibleName"] = accessible->text(QAccessible::Name);
-                row["accessibleDescription"] = accessible->text(QAccessible::Description);
-            }
-            for (const auto *key : {"text",           "path",
-                                    "fileId",         "contentY",
-                                    "cursorPosition", "checked",
-                                    "rows",           "folds",
-                                    "rowHeight",      "lineSpacing",
-                                    "color",          "schemeBackground",
-                                    "line",           "kind",
-                                    "truncated",      "explanation",
-                                    "implicitWidth",  "baselineOffset",
-                                    "textFormat",     "readOnly",
-                                    "selectByMouse",  "selectByKeyboard",
-                                    "sourceTop",      "sourceBottom",
-                                    "resultTop",      "resultBottom",
-                                    "sourceX",        "resultX",
-                                    "middleX",        "radius",
-                                    "orientation"}) {
-                const auto property = item->property(key);
-                if (property.isValid()) row[key] = value(property);
-            }
-            const auto textFormat = item->property("textFormat");
-            if (textFormat.isValid()) {
-                bool converted = false;
-                const auto format = textFormat.toInt(&converted);
-                row["plainText"] = converted && format == int(Qt::PlainText);
-            }
-            if (item->property("font").isValid()) row["font"] = item->property("font").value<QFont>().toString();
-            if (item->objectName().endsWith("Label") && item->parentItem() && item->parentItem()->parentItem()) {
-                auto *header = item->parentItem()->parentItem()->parentItem();
-                if (header) {
-                    const auto p = header->mapToScene(QPointF());
-                    row["ancestorGeometry"] = QJsonArray{p.x(), p.y(), header->width(), header->height()};
-                    row["ancestorColor"] = value(header->property("color"));
-                }
-            }
-            if (item->objectName() == "stage2Text" || item->objectName() == "stage3Text"
-                || item->objectName() == "resultText") {
-                auto *quick = item->property("textDocument").value<QQuickTextDocument *>();
-                QJsonArray formats;
-                if (quick)
-                    for (auto block = quick->textDocument()->begin(); block.isValid(); block = block.next()) {
-                        for (const auto &range : block.layout()->formats())
-                            formats.append(QJsonObject{{"line", block.blockNumber() + 1},
-                                                       {"start", range.start},
-                                                       {"length", range.length},
-                                                       {"foreground", range.format.foreground().color().name()},
-                                                       {"weight", range.format.fontWeight()}});
-                    }
-                row["syntaxFormats"] = formats;
-            }
-            if (!item->objectName().isEmpty())
-                items.append(row);
-            else
-                details.append(row);
-        }
-        for (auto *child : item->childItems()) self(self, child);
-    };
-    walk(walk, window->contentItem());
+    collectRenderedItems(window->contentItem(), items, details);
     state["items"] = items;
     state["renderedDetails"] = details;
     state["width"] = window->width();
@@ -448,8 +451,7 @@ Outcome captureReady(const Request &, Progress &progress, QQuickItem *)
 
 Outcome quit(const Request &, Progress &, QQuickItem *)
 {
-    // Queued, so the reply is written before the event loop stops.
-    QTimer::singleShot(0, QCoreApplication::instance(), &QCoreApplication::quit);
+    // reply() drains the full response before stopping the event loop.
     return Outcome::done();
 }
 
@@ -527,11 +529,19 @@ QString readRequest(const QByteArray &line, Request &request, const Handler *&ha
 
 void reply(const QString &error = {})
 {
+    const bool quitting = current && current->request.action == QLatin1String("quit") && error.isEmpty();
     QJsonObject result{{"error", error}};
     if (window) result["state"] = snapshot();
     channel->write(QJsonDocument(result).toJson(QJsonDocument::Compact) + '\n');
     channel->flush();
     current.reset();
+    if (quitting) {
+        const auto quitWhenDrained = [] {
+            if (channel->bytesToWrite() == 0) QCoreApplication::quit();
+        };
+        QObject::connect(channel, &QLocalSocket::bytesWritten, QCoreApplication::instance(), quitWhenDrained);
+        QTimer::singleShot(0, QCoreApplication::instance(), quitWhenDrained);
+    }
 }
 
 // Serves queued requests in order. An invalid one gets its error reply at once.

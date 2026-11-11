@@ -19,6 +19,7 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <charconv>
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>
@@ -303,7 +304,7 @@ int gitWorker(const WorkerArgs &args)
         }
         oid = oid.trimmed();
         request.operation = Operation::ReadObject;
-        request.objectId = oid;
+        request.objectId = std::move(oid);
     }
     QEventLoop loop;
     QTimer deadline;
@@ -384,8 +385,8 @@ int recoveryWorker(const WorkerArgs &args)
             return 0;
         }
         struct rlimit limit{};
-        limit.rlim_cur = 256 * 1024;
-        limit.rlim_max = 256 * 1024;
+        limit.rlim_cur = rlim_t{256} * 1024;
+        limit.rlim_max = rlim_t{256} * 1024;
         if (setrlimit(RLIMIT_FSIZE, &limit) != 0) {
             auto record = baseRecord("recovery", name, mode, payloadBytes, 1, payloadBytes);
             record.outcome = "explicit-failure";
@@ -481,7 +482,7 @@ const Kind kKinds[] = {
     {"self-check", singleRecord, {}, selfCheckWorker},
 };
 
-WorkerArgs parseWorkerArgs(int argc, char **argv)
+std::optional<WorkerArgs> parseWorkerArgs(int argc, char **argv)
 {
     WorkerArgs args;
     args.argc = argc;
@@ -503,9 +504,11 @@ WorkerArgs parseWorkerArgs(int argc, char **argv)
             args.lines = static_cast<std::size_t>(std::strtoull(argv[++i], nullptr, 10));
         else if (key == "--bytes" && i + 1 < argc)
             args.bytes = static_cast<std::size_t>(std::strtoull(argv[++i], nullptr, 10));
-        else if (key == "--timeout-ms" && i + 1 < argc)
-            args.timeoutMs = std::atoi(argv[++i]);
-        else if (key == "--startup")
+        else if (key == "--timeout-ms" && i + 1 < argc) {
+            const std::string_view value(argv[++i]);
+            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), args.timeoutMs);
+            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size()) return std::nullopt;
+        } else if (key == "--startup")
             args.startup = true;
     }
     return args;
@@ -522,7 +525,11 @@ const Kind *findKind(std::string_view name)
 int workerMain(int argc, char **argv)
 {
     const auto args = parseWorkerArgs(argc, argv);
-    if (const auto *kind = findKind(args.kind)) return kind->worker(args);
+    if (!args) {
+        std::cerr << "invalid worker timeout\n";
+        return 2;
+    }
+    if (const auto *kind = findKind(args->kind)) return kind->worker(*args);
     std::cerr << "unknown worker\n";
     return 2;
 }

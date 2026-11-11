@@ -4,7 +4,6 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import BranchTruce.App
-import QtQuick.Controls
 import QtQuick.Layouts
 import QtQml.Models
 import org.kde.kirigami as Kirigami

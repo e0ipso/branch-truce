@@ -29,7 +29,7 @@ def main():
                                      env=env, log=owned.root / 'app.log', pass_fds=(child.fileno(),))
             child.close()
             before = client.command(path='src/net/retry.cpp', target='choiceAccept-section/1/392/446')
-            assert before['path'] == 'src/net/retry.cpp' and before['items']
+            assert before['path'] == 'src/net/retry.cpp' and before['items'], before
             assert not before['pendingInput'] and before['recoveryState'] == 0
             after = client.command('click', target='choiceAccept-section/1/392/446')
             assert after['resultText'] == before['resultText'], 'Accept duplicated an already merged local range'

@@ -113,8 +113,10 @@ bool SessionStore::hasPendingRecovery() const
 
 const Draft *SessionStore::pendingDraft(const std::string &id) const
 {
-    if (const auto entry = typing_.find(id); entry != typing_.end() && entry->second.refused)
-        return &entry->second.refused->current().draft;
+    if (const auto entry = typing_.find(id); entry != typing_.end()) {
+        const auto &refused = entry->second.refused;
+        if (refused) return &refused->current().draft;
+    }
     const auto *candidate = journal_.pendingCandidate(id, retrying_);
     return candidate ? &candidate->current().draft : nullptr;
 }
@@ -208,7 +210,7 @@ QFuture<RecoveryJournal::Receipt> SessionStore::commitRecord(const storage::Reco
     promise->start();
     auto future = promise->future();
     journal_.commit([transaction] { return transaction; },
-                    [promise](RecoveryJournal::Receipt result) {
+                    [promise](const RecoveryJournal::Receipt &result) {
                         promise->addResult(result);
                         promise->finish();
                     });
@@ -223,7 +225,7 @@ QFuture<RecoveryJournal::Receipt> SessionStore::commitMutation(const FileSession
     auto promise = std::make_shared<QPromise<RecoveryJournal::Receipt>>();
     promise->start();
     journal_.commit([file, fact = std::move(fact)] { return mutationRecoveryTransaction(file, fact); },
-                    [promise](RecoveryJournal::Receipt result) {
+                    [promise](const RecoveryJournal::Receipt &result) {
                         promise->addResult(result);
                         promise->finish();
                     });
@@ -320,9 +322,8 @@ void SessionStore::replaceFiles(std::vector<FileSession> files, RecoveryRestore 
         rows_.emplace(files_[row].id(), row);
     }
     nextOpen_ = 0;
-    for (std::size_t row = 0; row < files_.size(); ++row) {
-        if (restore && !restore->newFiles.contains(files_[row].id())) restored_.insert(files_[row].id());
-    }
+    for (const auto &file : files_)
+        if (restore && !restore->newFiles.contains(file.id())) restored_.insert(file.id());
     admitOpenCaptures();
     Q_EMIT replaced();
 }
@@ -424,7 +425,7 @@ QFuture<Transition> SessionStore::editResult(const std::string &id, RevisionId e
         return file.editResult(expected, edit, {.realignment = Realignment::Deferred});
     });
 }
-Transition SessionStore::typeResult(const std::string &id, RevisionId expected, ResultEdit edit)
+Transition SessionStore::typeResult(const std::string &id, RevisionId expected, const ResultEdit &edit)
 {
     const auto found = rowOf(id);
     if (found < 0) return Transition::StaleRevision;

@@ -4,6 +4,7 @@
 // user's and the system's configuration, and a way to run it without a shell. Qt-free, so the
 // engine tests use it for `git merge-file` too.
 
+#include "TestEnvironment.h"
 #include "fixtures/FixtureProcess.h"
 
 #include <algorithm>
@@ -22,13 +23,13 @@ namespace test_support {
 inline const std::string &fixtureGit()
 {
     static const std::string selected = [] {
-        if (const char *chosen = std::getenv("BRANCH_TRUCE_TEST_GIT"); chosen && chosen[0] == '/')
-            return std::string(chosen);
-        const std::string_view path = std::getenv("PATH") ? std::getenv("PATH") : "";
+        if (auto chosen = launchEnvironment("BRANCH_TRUCE_TEST_GIT"); chosen && chosen->starts_with('/'))
+            return std::move(*chosen);
+        const auto path = launchEnvironment("PATH").value_or("");
         std::size_t begin = 0;
         while (begin <= path.size()) {
             const auto end = std::min(path.find(':', begin), path.size());
-            const auto directory = path.substr(begin, end - begin);
+            const auto directory = std::string_view(path).substr(begin, end - begin);
             if (directory.starts_with('/')) {
                 const auto candidate = std::string(directory) + "/git";
                 struct stat status{};

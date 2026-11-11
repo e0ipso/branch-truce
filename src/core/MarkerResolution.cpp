@@ -185,7 +185,9 @@ private:
         for (const auto side : {SourceSide::Stage2, SourceSide::Stage3})
             if (const auto *target = choices_.section(section, side)) addSide(*target, order, accepted);
         complete_ = complete_ && accepted;
-        rightFirst_.push_back(found_.sections.size() > 1 && order[0] && order[1] && *order[1] < *order[0]);
+        const auto &leftOrder = order[0];
+        const auto &rightOrder = order[1];
+        rightFirst_.push_back(found_.sections.size() > 1 && leftOrder && rightOrder && *rightOrder < *leftOrder);
     }
 
     void addSide(const ChoiceTarget &target, std::array<std::optional<std::uint64_t>, 2> &order, bool &accepted)

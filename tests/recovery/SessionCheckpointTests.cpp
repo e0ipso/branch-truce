@@ -11,6 +11,7 @@ namespace {
 std::vector<RecordedRevision> recorded(SessionCheckpoint &checkpoint)
 {
     std::vector<RecordedRevision> result;
+    result.reserve(checkpoint.history.revisions.size());
     for (const auto &revision : checkpoint.history.revisions)
         result.push_back(
             {revision->id, revision->result, revision->draft,

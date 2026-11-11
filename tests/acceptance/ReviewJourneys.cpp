@@ -169,9 +169,9 @@ void fullInventoryKeepsTruthfulSources(Sandbox &sandbox)
         scene.click("saveDraft");
         settleFor(std::string("save of ") + path, [&] { return scene.progress().saved; });
         // Save writes the buffer, folded marker lines included.
-        CHECK(scene.file(path).publication().checkpoint()
-              && QString::fromStdString(
-                     scene.file(path).revision(*scene.file(path).publication().checkpoint())->draft.text)
+        const auto checkpoint = scene.file(path).publication().checkpoint();
+        CHECK(checkpoint
+              && QString::fromStdString(scene.file(path).revision(*checkpoint)->draft.text)
                   == scene.text("resultText"));
     }
     CHECK(!scene.item("inventoryWarning")->isVisible());

@@ -52,6 +52,7 @@ void metadataAdmissionHasIndependentCountAndByteBoundaries()
     CHECK(!partsFit(std::array{std::string_view(dense), std::string_view("\n")}));
     const auto file = test_support::choiceFile("left\n", "right\n");
     const auto &sources = *file.snapshots();
+    if (!sources.stage2 || !sources.stage3) throw test_support::Failure("fixture sources are absent");
     const auto bytes = 16
         * (512 + sources.path.size() + sources.provenance.sessionId.size() + sources.stage2->objectId.size()
            + sources.stage3->objectId.size());
@@ -82,7 +83,9 @@ void denseCapturesKeepTheirBytesWhenComparisonMetadataIsRefused()
     CHECK(file.loadLargeFile() == Transition::Applied && file.support() == Support::OutsideApp);
     CHECK(file.loadFailure() == LoadFailure{LoadFailureReason::MetadataTooLarge});
     CHECK(file.current().draft.text == left && file.snapshots()->launchResult.text.utf8 == left);
-    CHECK(file.snapshots()->stage2->worktree.bytes == left && file.snapshots()->stage3->worktree.bytes == right);
+    const auto &snapshots = *file.snapshots();
+    if (!snapshots.stage2 || !snapshots.stage3) throw test_support::Failure("fixture sources are absent");
+    CHECK(snapshots.stage2->worktree.bytes == left && snapshots.stage3->worktree.bytes == right);
     CHECK(file.choices().empty() && !file.correspondence() && file.markers().count() == 0);
     CHECK(file.editResult(file.current().id, {{0, 0}, "manual"}) == Transition::Blocked);
 }
@@ -136,6 +139,6 @@ int main()
     suite.run("empty decision history obeys the entry cap",
               [] { emptyHistoryIsBoundedAndKeepsProtectedRevisions(1, kMaxHistoryEntries + 16); });
     suite.run("decision metadata consumes the byte budget before the entry cap",
-              [] { emptyHistoryIsBoundedAndKeepsProtectedRevisions(2 * 1024 * 1024, 140); });
+              [] { emptyHistoryIsBoundedAndKeepsProtectedRevisions(2UL * 1024 * 1024, 140); });
     return suite.report();
 }

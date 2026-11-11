@@ -9,8 +9,8 @@
 
 namespace branch_truce {
 
-// What a journal record did. Every file command records one of the first
-// twelve; the coordinator records the two mutation facts.
+// What a journal record did. The file store records editing and publication
+// commands; the coordinator records the two mutation facts.
 enum class RecoveryAction {
     Open,
     ReplaceDraft,
@@ -53,7 +53,7 @@ template <typename Enum, std::size_t Size>
     return std::nullopt;
 }
 
-inline constexpr NameTable<RecoveryAction, 14> recoveryActionNames{{
+inline constexpr auto recoveryActionNames = std::to_array<std::pair<RecoveryAction, std::string_view>>({
     {RecoveryAction::Open, "open"},
     {RecoveryAction::ReplaceDraft, "replace-draft"},
     {RecoveryAction::Undo, "undo"},
@@ -67,7 +67,7 @@ inline constexpr NameTable<RecoveryAction, 14> recoveryActionNames{{
     {RecoveryAction::LoadLarge, "load-large"},
     {RecoveryAction::MutationIntent, "mutation-intent"},
     {RecoveryAction::MutationObservation, "mutation-observation"},
-}};
+});
 
 inline constexpr NameTable<MutationKind, 2> mutationKindNames{{
     {MutationKind::Publication, "publication"},

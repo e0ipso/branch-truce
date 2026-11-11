@@ -17,40 +17,44 @@ struct EncodingCase {
     QByteArray tab;
 };
 
-const std::array<EncodingCase, 6> encodings{
-    {{TextEncoding::Utf8, false, {}, {}, QByteArray::fromHex("41c3a9f09f9982"), "\n", "\r", "\t"},
-     {TextEncoding::Utf8, true, "uTf8", QByteArray::fromHex("efbbbf"), QByteArray::fromHex("41c3a9f09f9982"), "\n",
-      "\r", "\t"},
-     {TextEncoding::Utf16LittleEndian,
-      false,
-      "utf16le",
-      {},
-      QByteArray::fromHex("4100e9003dd842de"),
-      QByteArray::fromHex("0a00"),
-      QByteArray::fromHex("0d00"),
-      QByteArray::fromHex("0900")},
-     {TextEncoding::Utf16BigEndian,
-      false,
-      "uTf-16be",
-      {},
-      QByteArray::fromHex("004100e9d83dde42"),
-      QByteArray::fromHex("000a"),
-      QByteArray::fromHex("000d"),
-      QByteArray::fromHex("0009")},
-     {TextEncoding::Utf16LittleEndian, true, "UTF-16", QByteArray::fromHex("fffe"),
-      QByteArray::fromHex("4100e9003dd842de"), QByteArray::fromHex("0a00"), QByteArray::fromHex("0d00"),
-      QByteArray::fromHex("0900")},
-     {TextEncoding::Utf16BigEndian, true, "UTF16", QByteArray::fromHex("feff"), QByteArray::fromHex("004100e9d83dde42"),
-      QByteArray::fromHex("000a"), QByteArray::fromHex("000d"), QByteArray::fromHex("0009")}}};
+const std::array<EncodingCase, 6> &encodings()
+{
+    static const std::array<EncodingCase, 6> cases{
+        {{TextEncoding::Utf8, false, {}, {}, QByteArray::fromHex("41c3a9f09f9982"), "\n", "\r", "\t"},
+         {TextEncoding::Utf8, true, "uTf8", QByteArray::fromHex("efbbbf"), QByteArray::fromHex("41c3a9f09f9982"), "\n",
+          "\r", "\t"},
+         {TextEncoding::Utf16LittleEndian,
+          false,
+          "utf16le",
+          {},
+          QByteArray::fromHex("4100e9003dd842de"),
+          QByteArray::fromHex("0a00"),
+          QByteArray::fromHex("0d00"),
+          QByteArray::fromHex("0900")},
+         {TextEncoding::Utf16BigEndian,
+          false,
+          "uTf-16be",
+          {},
+          QByteArray::fromHex("004100e9d83dde42"),
+          QByteArray::fromHex("000a"),
+          QByteArray::fromHex("000d"),
+          QByteArray::fromHex("0009")},
+         {TextEncoding::Utf16LittleEndian, true, "UTF-16", QByteArray::fromHex("fffe"),
+          QByteArray::fromHex("4100e9003dd842de"), QByteArray::fromHex("0a00"), QByteArray::fromHex("0d00"),
+          QByteArray::fromHex("0900")},
+         {TextEncoding::Utf16BigEndian, true, "UTF16", QByteArray::fromHex("feff"),
+          QByteArray::fromHex("004100e9d83dde42"), QByteArray::fromHex("000a"), QByteArray::fromHex("000d"),
+          QByteArray::fromHex("0009")}}};
+    return cases;
+}
 }
 
-int main(int argc, char **argv)
+namespace {
+void addRoundTripCases(test_support::Suite &suite)
 {
-    test_support::configure(argc, argv);
-    test_support::Suite suite("TextFormatTests");
     suite.run("supported encodings preserve Unicode, BOM, separators and final newline", [] {
         const auto line = QByteArray::fromHex("41c3a9f09f9982");
-        for (const auto &encoding : encodings) {
+        for (const auto &encoding : encodings()) {
             for (const auto newline : {Newline::Lf, Newline::CrLf}) {
                 for (const bool final : {false, true}) {
                     const auto separator = (newline == Newline::CrLf ? encoding.cr : QByteArray{}) + encoding.lf;
@@ -71,7 +75,7 @@ int main(int argc, char **argv)
     });
     suite.run("empty files and lines without separators do not acquire a final newline", [] {
         const auto line = QByteArray::fromHex("41c3a9f09f9982");
-        for (const auto &encoding : encodings) {
+        for (const auto &encoding : encodings()) {
             for (const bool empty : {false, true}) {
                 const auto editable = empty ? QByteArray{} : line;
                 const auto bytes = encoding.prefix + (empty ? QByteArray{} : encoding.line);
@@ -86,6 +90,9 @@ int main(int argc, char **argv)
             }
         }
     });
+}
+void addRejectionAndSelectionCases(test_support::Suite &suite)
+{
     suite.run("invalid encodings, controls and ambiguous newlines have explicit rejection reasons", [] {
         struct Invalid {
             QByteArray bytes;
@@ -159,5 +166,14 @@ int main(int argc, char **argv)
         CHECK(decodeText("plain\n").problem.isEmpty());
         CHECK(!resultFormat(launch, {}, "native", diagnostic) && !diagnostic.isEmpty());
     });
+}
+}
+
+int main(int argc, char **argv)
+{
+    test_support::configure(argc, argv);
+    test_support::Suite suite("TextFormatTests");
+    addRoundTripCases(suite);
+    addRejectionAndSelectionCases(suite);
     return suite.report();
 }

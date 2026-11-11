@@ -41,7 +41,7 @@ std::optional<QString> responsePath(const QByteArray &output)
 {
     if (!output.endsWith('\n')) return std::nullopt;
     const auto bytes = output.first(output.size() - 1);
-    const auto path = QFile::decodeName(bytes);
+    auto path = QFile::decodeName(bytes);
     if (bytes.isEmpty() || bytes.contains('\0') || QFile::encodeName(path) != bytes || !QDir::isAbsolutePath(path))
         return std::nullopt;
     return path;

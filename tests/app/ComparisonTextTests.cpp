@@ -13,9 +13,9 @@ using test_support::visualLines;
 
 using namespace comparison_scene;
 
-void comparison_scene::addTextCases(Groups groups)
+namespace {
+void addSearchAndWrapCases(Group &scenes)
 {
-    auto &scenes = groups.scenes;
     scenes.run("search scope switches the pane Find selects", [] {
         Application controller(test_support::windowConfig());
         Fixture fixture(controller);
@@ -166,6 +166,10 @@ void comparison_scene::addTextCases(Groups groups)
         settle([&] { return visualLines(editor, 6) == 1; });
         aligned("unwrapped again");
     });
+}
+
+void addTextAppearanceCases(Group &scenes)
+{
     scenes.run("tabs stop every four characters at the same column in every pane", [] {
         const std::string shared = "abcde\n\tone\nabc\ttwo\nabcde\tthree\n\t\tfour\n";
         Application controller(test_support::windowConfig());
@@ -260,4 +264,12 @@ void comparison_scene::addTextCases(Groups groups)
         CHECK(fixture.item("resultText")->property("text").toString().toStdString() == result);
         checkUnchanged(fixture, *controller.selectedFile(), before);
     });
+}
+
+}
+
+void comparison_scene::addTextCases(Groups groups)
+{
+    addSearchAndWrapCases(groups.scenes);
+    addTextAppearanceCases(groups.scenes);
 }

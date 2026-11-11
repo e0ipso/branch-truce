@@ -38,8 +38,9 @@ int childMode(const std::string &mode)
         return ::read(ready[0], &byte, 1) == 1 ? 0 : 98;
     }
     if (mode == "echo") {
-        if (std::getenv("HOME")) return 98;
-        std::cout << std::filesystem::current_path().string() << '\n' << std::getenv("FIXTURE_VALUE") << '\n';
+        if (launchEnvironment("HOME")) return 98;
+        std::cout << std::filesystem::current_path().string() << '\n'
+                  << launchEnvironment("FIXTURE_VALUE").value_or("") << '\n';
         std::cout << std::cin.rdbuf();
         std::cerr << "stderr";
         return 7;
@@ -52,9 +53,10 @@ bool stopped(pid_t pid)
     // A killed orphan may remain a zombie until the host's init reaps it.
     std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
     std::string line;
-    std::getline(stat, line);
+    // An interrupted or empty proc read is not proof of process death.
+    if (!std::getline(stat, line)) return ::kill(pid, 0) < 0 && errno == ESRCH;
     const auto end = line.rfind(')');
-    return line.empty() || (end != std::string::npos && line.substr(end + 2, 1) == "Z");
+    return end != std::string::npos && line.substr(end + 2, 1) == "Z";
 }
 } // namespace
 
@@ -73,7 +75,7 @@ int main(int argc, char **argv)
         CHECK(badDirectory.status == -1 && !badDirectory.diagnostic.empty());
     });
     suite.run("stdout status stderr input environment and directory remain distinct", [&] {
-        const std::string input(128 * 1024, 'i');
+        const std::string input(128UL * 1024, 'i');
         const auto result = readProcess({executable, "--child", "echo"},
                                         std::vector<std::string>{"FIXTURE_VALUE=explicit"}, "/", input);
         CHECK(result.diagnostic.empty() && WIFEXITED(result.status) && WEXITSTATUS(result.status) == 7);

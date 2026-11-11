@@ -65,7 +65,7 @@ QString envelopeRejection(const QString &text)
 ResultEditorAdapter::ResultEditorAdapter(const SessionStore &store, RevisionWorkers &workers, QObject *parent)
     : QObject(parent), store_(store), words_(store, workers)
 {
-    connect(&words_, &WordDifferenceDecorations::pendingChanged, this, &ResultEditorAdapter::stateChanged);
+    connect(&words_, &WordDifferenceDecorations::pendingChanged, this, &ResultEditorAdapter::decorationPendingChanged);
 }
 
 const FileSession *ResultEditorAdapter::shownFile() const { return store_.file(fileId_.toStdString()); }
@@ -91,7 +91,7 @@ void ResultEditorAdapter::attach(QObject *editor)
     if (editor) {
         editor->installEventFilter(this);
         stateConnections_.push_back(connect(editor, &QObject::destroyed, this, [this] {
-            editable_ = false;
+            setEditable(false);
             Q_EMIT stateChanged();
         }));
         // The selection and the paste offer reach the toolbar and the menu through stateChanged.
@@ -104,7 +104,7 @@ void ResultEditorAdapter::attach(QObject *editor)
     }
     document_ = textDocument(editor);
     if (!document_) {
-        editable_ = false;
+        setEditable(false);
         Q_EMIT stateChanged();
         return;
     }
@@ -137,8 +137,14 @@ bool ResultEditorAdapter::canPaste() const { return editor_ && editor_->property
 void ResultEditorAdapter::setEditable(bool editable)
 {
     if (editable_ == editable) return;
+    // Qt moves the cursor to the end when readOnly changes, including during
+    // command admission. Preserve this location before notifying that binding.
+    const auto kept = location();
     editable_ = editable;
+    Q_EMIT editableChanged();
     Q_EMIT stateChanged();
+    if (kept.valid && editor_ && document_ && documentText(*document_) == kept.text)
+        keepPlace(kept, kept.text, kept.text);
 }
 
 ResultEditorAdapter::Caret ResultEditorAdapter::caret() const
@@ -343,7 +349,7 @@ void ResultEditorAdapter::keepPlace(const Location &place, const QString &before
         viewport->setProperty("contentX", place.contentX);
         viewport->setProperty("contentY", place.contentY);
     }
-    const auto changes = changedRanges(before, after);
+    const auto changes = before == after ? std::vector<TextChange>{} : changedRanges(before, after);
     const int anchor = place.cursor == place.selectionStart ? place.selectionEnd : place.selectionStart;
     (void)select(changedOffset(changes, anchor), changedOffset(changes, place.cursor));
 }
@@ -427,6 +433,8 @@ QVariantMap ResultEditorAdapter::firstUndecidedPlacement(const FileSession *file
     const int begin = first.resultRange ? utf16Offset(result, first.byteBegin) : -1;
     const int end = first.resultRange ? utf16Offset(result, first.byteEnd) : -1;
     return {{QStringLiteral("fileId"), fileId_},
+            {QStringLiteral("revision"), QString::number(file->current().id)},
+            {QStringLiteral("correspondence"), correspondenceIdentity(*file)},
             {QStringLiteral("scope"), first.resultRange ? QStringLiteral("result") : QStringLiteral("unmapped-source")},
             {QStringLiteral("utf16Begin"), begin},
             {QStringLiteral("utf16End"), end},

@@ -75,10 +75,9 @@ void reached(const std::shared_ptr<Gate> &gate)
 }
 }
 
-int main(int argc, char **argv)
+namespace {
+void addCommandWorkerCases(test_support::Suite &suite)
 {
-    QCoreApplication app(argc, argv);
-    test_support::Suite suite("SessionExecutionTests");
     for (const bool large : {false, true})
         suite.run(large ? "large admission computes on the worker" : "choice application computes on the worker", [=] {
             QTemporaryDir directory;
@@ -122,6 +121,9 @@ int main(int argc, char **argv)
         CHECK(replay.succeeded && replay.files.front().publication().checkpoint() == 4);
         CHECK(replay.files.front().current().draft.text == "typed before\n");
     });
+}
+void addAdmissionAndTerminalCases(test_support::Suite &suite)
+{
     for (const bool byteLimit : {false, true})
         for (const bool fail : {false, true})
             suite.run(std::string(byteLimit ? "byte limit: " : "count limit: ")
@@ -189,7 +191,7 @@ int main(int argc, char **argv)
                               ++count;
                               terminal = result;
                           },
-                          [](std::exception_ptr) noexcept { return -1; });
+                          [](const std::exception_ptr &) noexcept { return -1; });
                       reached(gate);
                       if (!throws) future.cancel();
                       gate->release.release();
@@ -198,6 +200,9 @@ int main(int argc, char **argv)
                       QCoreApplication::processEvents();
                       CHECK(count == 1);
                   });
+}
+void addCommandLifecycleCases(test_support::Suite &suite)
+{
     suite.run("canceling command observation preserves its durable write and releases admission", [] {
         QTemporaryDir directory;
         auto gate = std::make_shared<Gate>();
@@ -266,5 +271,15 @@ int main(int argc, char **argv)
         const auto decoded = storage::decodeText("tab\r\nline\t");
         CHECK(decoded.document && decoded.document->utf8 == "tab\nline\t");
     });
+}
+}
+
+int main(int argc, char **argv)
+{
+    QCoreApplication app(argc, argv);
+    test_support::Suite suite("SessionExecutionTests");
+    addCommandWorkerCases(suite);
+    addAdmissionAndTerminalCases(suite);
+    addCommandLifecycleCases(suite);
     return suite.report();
 }

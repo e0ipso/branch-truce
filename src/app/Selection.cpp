@@ -1,6 +1,7 @@
 // The selection names the one file the window shows and every command acts on.
 #include "Selection.h"
 #include "SessionModel.h"
+#include <utility>
 
 namespace branch_truce {
 Selection::Selection(const SessionModel &files, const SelectionGuard &guard, QObject *parent)
@@ -30,7 +31,7 @@ void Selection::filesChanged()
         preferred_.clear();
     }
     if (next == fileId_) return;
-    fileId_ = next;
+    fileId_ = std::move(next);
     Q_EMIT changed();
 }
 }

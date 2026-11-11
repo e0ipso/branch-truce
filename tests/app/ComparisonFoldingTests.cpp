@@ -11,14 +11,13 @@
 #include "fixtures/AppSession.h"
 #include "fixtures/Await.h"
 
-using test_support::await;
 using test_support::commandResult;
 
 using namespace comparison_scene;
 
-void comparison_scene::addFoldingCases(Groups groups)
+namespace {
+void addFoldRenderingCases(Group &scenes)
 {
-    auto &scenes = groups.scenes;
     scenes.run(
         "each marker block folds into one labelled row behind a conflict band, keeps the buffer and shows on the "
         "toggle",
@@ -289,7 +288,8 @@ void comparison_scene::addFoldingCases(Groups groups)
         CHECK(toggle->property("checked").toBool() && foldedLines(fixture).isEmpty());
         CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
         settle([&] { return foldedLines(fixture) == markedFolded().hidden; });
-        CHECK(!controller.commands()->markResolved("choices", QString::number(fixture.file().current().id), true));
+        CHECK(controller.commands()->markResolved("choices", QString::number(fixture.file().current().id), true));
+        settleFor("marker refusal completed", [&] { return !controller.commands()->resolutionBusy(); });
         CHECK(controller.feedback()->markerBlocker().value("line").toInt() == 2);
         const auto before = captureWork(fixture, *controller.selectedFile());
         CHECK(QMetaObject::invokeMethod(fixture.object("showFirstMarker"), "trigger"));
@@ -299,6 +299,10 @@ void comparison_scene::addFoldingCases(Groups groups)
         CHECK(toggle->property("checked").toBool() && foldedLines(fixture).isEmpty());
         checkUnchanged(fixture, *controller.selectedFile(), before);
     });
+}
+
+void addFoldDecisionCases(Group &scenes)
+{
     scenes.run("deciding a section removes its fold and markersRemain, and Save writes the buffer either way", [] {
         const auto remaining = [](const SelectedFile &selected) {
             QStringList found;
@@ -443,6 +447,10 @@ void comparison_scene::addFoldingCases(Groups groups)
         CHECK(fixture.text() == QString::fromStdString(test_support::splitText()) && remain() == atLaunch && folded());
         settle([&] { return foldedLines(fixture) == numbers(3, 11); });
     });
+}
+
+void addFoldNavigationCases(Group &scenes)
+{
     scenes.run("Take both on a folded row previews either order, and the result gutter has none", [] {
         Application controller(test_support::windowConfig());
         Fixture fixture(controller, test_support::markedFile());
@@ -533,4 +541,13 @@ void comparison_scene::addFoldingCases(Groups groups)
         }
         CHECK(fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
     });
+}
+
+}
+
+void comparison_scene::addFoldingCases(Groups groups)
+{
+    addFoldRenderingCases(groups.scenes);
+    addFoldDecisionCases(groups.scenes);
+    addFoldNavigationCases(groups.scenes);
 }

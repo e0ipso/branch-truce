@@ -38,7 +38,8 @@ QFuture<std::invoke_result_t<Work &>> runOffThread(QThreadPool &pool, QObject *c
     static_assert(std::is_nothrow_invocable_r_v<Result, Failed &, std::exception_ptr>);
     auto promise = std::make_shared<QPromise<Result>>();
     auto result = std::make_shared<std::optional<Result>>();
-    auto *watcher = new QFutureWatcher<Result>(context);
+    auto ownedWatcher = std::make_unique<QFutureWatcher<Result>>(context);
+    auto *watcher = ownedWatcher.get();
     QObject::connect(watcher, &QFutureWatcher<Result>::finished, context, [watcher, result, done = std::move(done)] {
         watcher->deleteLater();
         done(**result);
@@ -58,6 +59,7 @@ QFuture<std::invoke_result_t<Work &>> runOffThread(QThreadPool &pool, QObject *c
         }
         promise->finish();
     });
+    ownedWatcher.release();
     return promise->future();
 }
 }

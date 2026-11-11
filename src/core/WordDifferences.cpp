@@ -228,7 +228,7 @@ std::vector<ByteRange> ranges(const std::vector<Token> &all, const std::vector<b
 WordDifferences wordDifferences(std::string_view left, std::string_view right, std::size_t &budget,
                                 WordDifferenceLimits limits)
 {
-    const WordDifferences refused{{}, {}, WordDifferenceState::ResourceLimit};
+    WordDifferences refused{{}, {}, WordDifferenceState::ResourceLimit};
     if (left.size() > limits.inputBytes || right.size() > limits.inputBytes - left.size()) return refused;
     MetadataBudget admission{limits.tokens, limits.retainedBytes};
     std::vector<Token> a, b;

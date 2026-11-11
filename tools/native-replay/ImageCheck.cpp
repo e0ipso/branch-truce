@@ -52,7 +52,8 @@ QJsonObject identity(const QImage &image)
 {
     QCryptographicHash hash(QCryptographicHash::Sha256);
     for (int y = 0; y < image.height(); ++y)
-        hash.addData(QByteArrayView(reinterpret_cast<const char *>(image.constScanLine(y)), image.width() * 4));
+        hash.addData(
+            QByteArrayView(reinterpret_cast<const char *>(image.constScanLine(y)), qsizetype(image.width()) * 4));
     return {{"width", image.width()},
             {"height", image.height()},
             {"decoded_sha256", QString::fromLatin1(hash.result().toHex())}};
@@ -132,7 +133,9 @@ int artifacts(Invocation &in)
     const auto referenceGrid = in.rect("reference-grid");
     const auto referenceReplication = in.replication("reference-replication");
     const auto nativeReplication = in.replication("native-replication");
-    if (!in.usageError.isEmpty()) return UsageError;
+    if (!in.usageError.isEmpty() || !referenceRect || !nativeRect || !referenceGrid || !referenceReplication
+        || !nativeReplication)
+        return UsageError;
     const QImage reference(in.positional[0]), native(in.positional[1]);
     const QString prefix = in.positional[2];
     if (reference.isNull() || native.isNull())

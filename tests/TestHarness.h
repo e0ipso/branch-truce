@@ -17,6 +17,7 @@
 // Cases are selected by name with `--filter <text>` (after test_support::configure) or the
 // BRANCH_TRUCE_TEST_FILTER environment variable, and listed with `--list`.
 
+#include "TestEnvironment.h"
 #include <atomic>
 #include <concepts>
 #include <cstdint>
@@ -118,7 +119,7 @@ inline std::string quoted(std::string_view text)
     constexpr std::size_t shown = 400;
     std::string out = "\"";
     for (std::size_t i = 0; i < text.size() && i < shown; ++i) {
-        const auto byte = static_cast<unsigned char>(text[i]);
+        const auto byte = static_cast<unsigned int>(static_cast<unsigned char>(text[i]));
         switch (byte) {
         case '\n': out += "\\n"; break;
         case '\r': out += "\\r"; break;
@@ -132,8 +133,8 @@ inline std::string quoted(std::string_view text)
             } else {
                 constexpr std::string_view digits = "0123456789abcdef";
                 out += "\\x";
-                out += digits[static_cast<std::size_t>(byte >> 4)];
-                out += digits[static_cast<std::size_t>(byte & 0xf)];
+                out += digits[static_cast<std::size_t>(byte >> 4U)];
+                out += digits[static_cast<std::size_t>(byte & 0xfU)];
             }
         }
     }
@@ -356,7 +357,7 @@ inline Options &options()
 {
     static Options current = [] {
         Options initial;
-        if (const char *filter = std::getenv("BRANCH_TRUCE_TEST_FILTER")) initial.filter = filter;
+        if (auto filter = launchEnvironment("BRANCH_TRUCE_TEST_FILTER")) initial.filter = std::move(*filter);
         return initial;
     }();
     return current;
@@ -384,8 +385,10 @@ inline std::vector<std::string> configure(int argc, char **argv)
 class Suite {
 public:
     explicit Suite(const char *name) : name_(name) {}
-    template <typename Test> void run(const std::string &name, Test test)
+    // Callbacks run synchronously and are never retained.
+    template <typename Test> void run(const std::string &name, Test &&test)
     {
+        if (!launchEnvironment().error.empty()) return;
         const auto &selected = options();
         if (!selected.filter.empty() && name.find(selected.filter) == std::string::npos) return;
         if (selected.list) {
@@ -422,6 +425,10 @@ public:
     // selects nothing is a failure, so a mistyped name cannot pass.
     int report() const
     {
+        if (!launchEnvironment().error.empty()) {
+            std::cerr << "FAIL test configuration: " << launchEnvironment().error << '\n';
+            return 1;
+        }
         if (options().list) return 0;
         const auto stray = detail::takePending();
         if (!stray.empty()) std::cerr << "FAIL outside any case: " << stray << '\n';

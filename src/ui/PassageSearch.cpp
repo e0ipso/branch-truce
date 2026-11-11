@@ -7,10 +7,11 @@
 #include <QScopedValueRollback>
 #include <QTextCharFormat>
 #include <QTextDocument>
+#include <ranges>
 
 namespace branch_truce {
 namespace {
-const QString resultName = QStringLiteral("result");
+QString resultName() { return QStringLiteral("result"); }
 }
 
 PassageSearch::PassageSearch(QObject *parent) : QObject(parent) {}
@@ -42,7 +43,7 @@ void PassageSearch::setEarlierShown(bool shown)
         if (list.at(at).name == current) index = at;
     }
     for (int at = 0; index < 0 && at < list.size(); ++at) {
-        if (list.at(at).name == resultName) index = at;
+        if (list.at(at).name == resultName()) index = at;
     }
     scopeIndex_ = index;
     // Even with the same index, so a selector that moved to its first scope comes back.
@@ -53,7 +54,7 @@ void PassageSearch::setEarlierShown(bool shown)
 QList<PassageSearch::Scope> PassageSearch::scopes() const
 {
     QList<Scope> list{{QStringLiteral("stage2"), tr("Left source")},
-                      {resultName, tr("Editable result")},
+                      {resultName(), tr("Editable result")},
                       {QStringLiteral("stage3"), tr("Right source")}};
     if (earlierShown_) list.append({QStringLiteral("earlier"), tr("Earlier version")});
     return list;
@@ -81,7 +82,7 @@ void PassageSearch::setScopeIndex(int index)
 QString PassageSearch::scope() const
 {
     const auto list = scopes();
-    return scopeIndex_ >= 0 && scopeIndex_ < list.size() ? list.at(scopeIndex_).name : resultName;
+    return scopeIndex_ >= 0 && scopeIndex_ < list.size() ? list.at(scopeIndex_).name : resultName();
 }
 
 QString PassageSearch::labelOf(const QString &name) const
@@ -124,9 +125,9 @@ PassageSearch::Match PassageSearch::search(const QString &text, const QString &q
                 break;
             }
     } else if (selected) {
-        for (auto it = positions.crbegin(); it != positions.crend(); ++it)
-            if (*it < selectionStart) {
-                found = *it;
+        for (const auto at : std::views::reverse(positions))
+            if (at < selectionStart) {
+                found = at;
                 break;
             }
     }

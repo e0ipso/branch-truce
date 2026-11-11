@@ -3,6 +3,9 @@
 #include "StartupRoutes.h"
 #include "fixtures/AppSession.h"
 #include "fixtures/Await.h"
+#include <QScopeGuard>
+#include <QSemaphore>
+#include <atomic>
 
 using test_support::await;
 using test_support::awaitAligned;
@@ -35,7 +38,8 @@ int startup_routes::openEditAndCrash(const QString &root)
     return 7;
 }
 
-void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString &application)
+namespace {
+void addRecoveryRestartCases(test_support::Suite &suite)
 {
     suite.run("a window killed while it holds the session lock leaves its edit for the next start", [] {
         Repository repo;
@@ -180,8 +184,23 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
                     CHECK(journal.open(QIODevice::Append) && journal.write("corrupt complete frame\n") > 0);
                     diagnostic = "integrity";
                 } else {
-                    const auto path =
-                        abandoned + "/payloads/" + QString::fromLatin1(storage::RecoveryStore::digest(oldDraft));
+                    const auto retained = storage::RecoveryStore(abandoned).read();
+                    CHECK(retained.succeeded && !retained.transactions.isEmpty());
+                    const auto insertion = retained.transactions.back()
+                                               .state.value("current")
+                                               .toObject()
+                                               .value("text")
+                                               .toObject()
+                                               .value("insert")
+                                               .toString();
+                    CHECK(!insertion.isEmpty());
+                    const auto path = abandoned + "/payloads/" + insertion;
+                    CHECK(QFileInfo::exists(path));
+                    const auto intact = replayRecovery(storage::RecoveryStore(abandoned));
+                    CHECK(intact.succeeded
+                          && std::any_of(intact.files.begin(), intact.files.end(), [&](const auto &file) {
+                                 return file.current().draft.text == oldDraft.toStdString();
+                             }));
                     if (condition == "missing-payload")
                         CHECK(QFile::remove(path));
                     else
@@ -210,6 +229,10 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
                 }
             });
     }
+}
+
+void addRecoveryInventoryCases(test_support::Suite &suite)
+{
     suite.run("manual retirement outside v1 preserves the complete store and is reversible", [] {
         Repository repo;
         repo.conflict("merge");
@@ -352,6 +375,10 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         }
         CHECK(!QFileInfo::exists(second + "/set-aside") && QFileInfo::exists(first + "/set-aside"));
     });
+}
+
+void addRecoverySelectionCases(test_support::Suite &suite)
+{
     suite.run("a blocked window lists each session and restores the chosen one without a restart", [] {
         Repository repo;
         repo.conflict("merge");
@@ -428,7 +455,8 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         {
             QLockFile held(second + "/session.lock");
             CHECK(held.tryLock(0));
-            CHECK(!controller.loader()->chooseRecoverySession(firstName));
+            CHECK(controller.loader()->chooseRecoverySession(firstName));
+            waitOpened(controller, "the refused recovery choice");
             CHECK(controller.feedback()->message().contains(secondName + " is open in another Branch Truce window"));
         }
         CHECK(controller.store()->recoveryDirectory() == own && controller.loader()->recoveryChoices().size() == 2);
@@ -574,6 +602,10 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         CHECK(onWorkers(replayed(calls, startingWith("first window\n"))));
         CHECK(onWorkers(replayed(calls, startingWith("second window\n"))));
     });
+}
+
+void addRecoveryLeaseChoiceCases(test_support::Suite &suite, const QString &application)
+{
     suite.run("a chosen session locked during the reload restores no other session in its place", [] {
         Repository repo;
         repo.conflict("merge");
@@ -601,16 +633,41 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         const auto retainedFirst = storeContents(first);
         const auto retainedSecond = storeContents(second);
         {
-            Application controller{test_support::windowConfig()};
+            struct ReplayGate final : CorrespondenceAlgorithm {
+                mutable std::atomic_bool armed = false, entered = false;
+                mutable QSemaphore release;
+                std::vector<Passage> compare(std::string_view source, std::string_view result) const override
+                {
+                    if (armed.exchange(false)) {
+                        entered = true;
+                        release.acquire();
+                    }
+                    return ExactLineCorrespondence{}.compare(source, result);
+                }
+                std::string_view identity() const noexcept override { return ExactLineCorrespondence{}.identity(); }
+            };
+            const auto gate = std::make_shared<ReplayGate>();
+            auto config = test_support::windowConfig();
+            config.correspondence = gate;
+            Application controller{std::move(config)};
             openController(controller, repo);
+            for (const auto &file : controller.store()->files()) {
+                const auto aligned = await(controller.store()->awaitAlignment(file.id(), file.current().id));
+                CHECK(aligned == Transition::Applied || aligned == Transition::NoChange);
+            }
+            auto unblock = qScopeGuard([&] { gate->release.release(); });
             CHECK(controller.loader()->recoveryChoices().size() == 2);
             const auto own = controller.store()->recoveryDirectory();
+            gate->armed = true;
             CHECK(controller.loader()->chooseRecoverySession(firstName));
+            test_support::waitUntil([&] { return gate->entered.load(); }, "own replay did not pass lease preflight");
             {
                 // Another window takes the chosen session after the choice
                 // was checked and before the background restore runs.
                 QLockFile held(first + "/session.lock");
                 CHECK(held.tryLock(0));
+                gate->release.release();
+                unblock.dismiss();
                 waitOpened(controller, "the reload after the locked choice");
                 CHECK(!controller.loader()->opening()
                       && controller.loader()->startupState() == SessionLoader::StartupState::Ready);
@@ -695,6 +752,10 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         CHECK(state.value("detail").toString().contains("Recovery session " + unknown
                                                         + " does not match this operation"));
     });
+}
+
+void addRecoveredEditingCases(test_support::Suite &suite)
+{
     suite.run("external resolution blocks only its file across reopenings choices history and mutation admission", [] {
         Repository repo;
         repo.conflict("merge");
@@ -830,6 +891,10 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
             CHECK(restored.current().draft.decisions == vocabulary);
         }
     });
+}
+
+void addInterruptedMutationCases(test_support::Suite &suite)
+{
     for (const auto &kind : {QString("publication"), QString("staging")}) {
         for (const bool resultPresent : {false, true}) {
             suite.run("interrupted " + kind.toStdString() + " remains uncertain against current disk and index "
@@ -900,4 +965,15 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
                       });
         }
     }
+}
+} // namespace
+
+void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString &application)
+{
+    addRecoveryRestartCases(suite);
+    addRecoveryInventoryCases(suite);
+    addRecoverySelectionCases(suite);
+    addRecoveryLeaseChoiceCases(suite, application);
+    addRecoveredEditingCases(suite);
+    addInterruptedMutationCases(suite);
 }

@@ -18,7 +18,10 @@ inline void key(Fixture &fixture, int code, Qt::KeyboardModifiers modifiers = Qt
     editor->forceActiveFocus();
     QKeyEvent event(QEvent::KeyPress, code, modifiers, text);
     QCoreApplication::sendEvent(editor, &event);
-    fixture.settleAligned();
+    if (modifiers.testFlag(Qt::ControlModifier))
+        fixture.settleCommand();
+    else
+        fixture.settleAligned();
 }
 // Types each character with no event-loop turn in between, so no pause ends the burst.
 inline void type(Fixture &fixture, const QString &text)

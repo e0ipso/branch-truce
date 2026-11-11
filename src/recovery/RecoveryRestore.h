@@ -49,8 +49,8 @@ struct InventoryLimits {
     qsizetype sessions = 32;
     qsizetype entries = 65536;
     qsizetype candidates = 16;
-    qint64 bytes = 1024 * 1024 * 1024;
-    qint64 decodedBytes = 512 * 1024 * 1024;
+    qint64 bytes = 1024LL * 1024 * 1024;
+    qint64 decodedBytes = 512LL * 1024 * 1024;
 };
 
 struct RestoreOptions {

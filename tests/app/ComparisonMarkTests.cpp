@@ -8,14 +8,56 @@
 #include "fixtures/Await.h"
 #include "fixtures/WarningCapture.h"
 
-using test_support::await;
 using test_support::commandResult;
 
 using namespace comparison_scene;
 
-void comparison_scene::addMarkCases(Groups groups)
+namespace {
+struct Painted {
+    QSet<QString> kinds;
+    int unmarked = 0;
+};
+Painted paintedGlyphs(Fixture &fixture, const std::string &pane, const QMap<QString, QString> &glyphs)
 {
-    auto &scenes = groups.scenes;
+    Painted found;
+    QMap<QPair<int, QString>, QString> shown;
+    for (auto *glyph : fixture.item((pane + "GutterMarkerSlot").c_str())->childItems()) {
+        if (glyph->isVisible() && glyph->property("kind").isValid())
+            shown.insert({glyph->property("line").toInt(), glyph->property("kind").toString()},
+                         glyph->property("text").toString());
+    }
+    for (const auto *suffix : {"BackgroundsLines", "BackgroundsGaps"}) {
+        for (auto *fill : fixture.item((pane + suffix).c_str())->childItems()) {
+            if (!fill->isVisible() || !fill->property("line").isValid()) continue;
+            const auto kind = fill->property("kind").toString();
+            found.kinds.insert(kind);
+            const auto line = fill->property("line").toInt();
+            const auto glyph = shown.value({line, kind});
+            if (QString::fromLatin1(suffix) == "BackgroundsGaps") {
+                const auto lineKind =
+                    qmlValue(fixture.item((pane + "Gutter").c_str()), QStringLiteral("lineKind(%1)").arg(line))
+                        .toString();
+                if (!lineKind.isEmpty()) {
+                    const auto description = qmlValue(fixture.item((pane + "Gutter").c_str()),
+                                                      QStringLiteral("lineDescription(%1)").arg(line))
+                                                 .toString()
+                                                 .contains(QStringLiteral("Unmatched lines at this boundary"));
+                    if (shown.value({line, lineKind}) != glyphs.value(lineKind)
+                        || shown.contains({line, QStringLiteral("removed")}) || !description)
+                        ++found.unmarked;
+                    continue;
+                }
+            }
+            if (glyph.isEmpty() || glyph != glyphs.value(kind)) ++found.unmarked;
+        }
+    }
+    return found;
+}
+}
+
+namespace {
+void addGutterMarkCases(Group &scenes)
+{
     scenes.run("every coloured line has a gutter glyph of its kind", [] {
         Application controller(test_support::windowConfig());
         Fixture fixture(controller,
@@ -30,51 +72,12 @@ void comparison_scene::addMarkCases(Groups groups)
                                             {"removed", QString(QChar(0x2212))}};
         // Each coloured line has one state glyph. A gap on that same line
         // is described by the glyph instead of adding a second symbol.
-        struct Painted {
-            QSet<QString> kinds;
-            int unmarked = 0;
-        };
-        const auto painted = [&](const std::string &pane) {
-            Painted found;
-            QMap<QPair<int, QString>, QString> shown;
-            for (auto *glyph : fixture.item((pane + "GutterMarkerSlot").c_str())->childItems()) {
-                if (glyph->isVisible() && glyph->property("kind").isValid())
-                    shown.insert({glyph->property("line").toInt(), glyph->property("kind").toString()},
-                                 glyph->property("text").toString());
-            }
-            for (const auto *suffix : {"BackgroundsLines", "BackgroundsGaps"}) {
-                for (auto *fill : fixture.item((pane + suffix).c_str())->childItems()) {
-                    if (!fill->isVisible() || !fill->property("line").isValid()) continue;
-                    const auto kind = fill->property("kind").toString();
-                    found.kinds.insert(kind);
-                    const auto line = fill->property("line").toInt();
-                    const auto glyph = shown.value({line, kind});
-                    if (QString::fromLatin1(suffix) == "BackgroundsGaps") {
-                        const auto lineKind =
-                            qmlValue(fixture.item((pane + "Gutter").c_str()), QStringLiteral("lineKind(%1)").arg(line))
-                                .toString();
-                        if (!lineKind.isEmpty()) {
-                            const auto description = qmlValue(fixture.item((pane + "Gutter").c_str()),
-                                                              QStringLiteral("lineDescription(%1)").arg(line))
-                                                         .toString()
-                                                         .contains(QStringLiteral("Unmatched lines at this boundary"));
-                            if (shown.value({line, lineKind}) != glyphs.value(lineKind)
-                                || shown.contains({line, QStringLiteral("removed")}) || !description)
-                                ++found.unmarked;
-                            continue;
-                        }
-                    }
-                    if (glyph.isEmpty() || glyph != glyphs.value(kind)) ++found.unmarked;
-                }
-            }
-            return found;
-        };
         const auto expect = [&](const std::string &pane, const QSet<QString> &kinds) {
             settleFor(pane + " diff colours and glyphs", [&] {
-                const auto found = painted(pane);
+                const auto found = paintedGlyphs(fixture, pane, glyphs);
                 return found.kinds == kinds && found.unmarked == 0;
             });
-            CHECK(painted(pane).unmarked == 0);
+            CHECK(paintedGlyphs(fixture, pane, glyphs).unmarked == 0);
         };
         // At launch every region is undecided; the right source's extra line is a gap in the result.
         expect("stage2", {});
@@ -143,6 +146,10 @@ void comparison_scene::addMarkCases(Groups groups)
         QCoreApplication::sendPostedEvents();
         CHECK_EQ(anchorErrors.count(), 0);
     });
+}
+
+void addPassageStyleCases(Group &scenes)
+{
     scenes.run(
         "a hand edit outside every region shows the neutral background, one m glyph and inspectable provenance", [] {
             Application controller(test_support::windowConfig());
@@ -277,6 +284,10 @@ void comparison_scene::addMarkCases(Groups groups)
                 });
         }
     }
+}
+
+void addConnectorMarkCases(Group &scenes)
+{
     scenes.run("each non-equal passage gets a band from its source lines to its result lines", [] {
         // In the batch fixture the left source differs from the result on lines 2
         // and 6 and the right source on lines 4 and 6, and every region is undecided.
@@ -335,7 +346,7 @@ void comparison_scene::addMarkCases(Groups groups)
         settlePanes(fixture);
         const auto bands = paintedBands(fixture, "stage2");
         CHECK(!bands.empty());
-        const auto band = bands.front();
+        const auto &band = bands.front();
         auto *source = fixture.item("stage2Viewport");
         auto *editor = fixture.item("resultText");
         select(fixture, 0, 3);
@@ -437,4 +448,13 @@ void comparison_scene::addMarkCases(Groups groups)
         CHECK(std::abs(result->width() - resultWidth) < 1 && std::abs(right->width() - (rightWidth - 80)) < 2);
         expectBands(fixture, "after the drag", "stage2", bandsBefore);
     });
+}
+
+}
+
+void comparison_scene::addMarkCases(Groups groups)
+{
+    addGutterMarkCases(groups.scenes);
+    addPassageStyleCases(groups.scenes);
+    addConnectorMarkCases(groups.scenes);
 }

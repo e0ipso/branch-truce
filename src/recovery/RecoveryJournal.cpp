@@ -64,13 +64,13 @@ RecoveryJournal::Record RecoveryJournal::commitBehind(const FileSession &candida
     };
     ++entries_;
     retained_ += retainedBytes;
-    behind_.push_back(std::make_shared<Behind>(
-        Behind{record, candidate.id(), {}, {}, [record, written = std::move(written)](storage::RecoveryCommit result) {
-                   written(record,
-                           record->transition != Transition::Applied ? record->transition
-                               : result.succeeded                    ? Transition::Applied
-                                                                     : Transition::Blocked);
-               }}));
+    behind_.push_back(std::make_shared<Behind>(Behind{
+        record, candidate.id(), {}, {}, [record, written = std::move(written)](const storage::RecoveryCommit &result) {
+            written(record,
+                    record->transition != Transition::Applied ? record->transition
+                        : result.succeeded                    ? Transition::Applied
+                                                              : Transition::Blocked);
+        }}));
     writeNext();
     return record;
 }
@@ -130,7 +130,7 @@ void RecoveryJournal::writeNext()
                 runOffThread(
                     worker_, &context_, [work = std::move(work), terminal]() mutable { return *terminal = work(); },
                     [this, ticket](const Receipt &) { wroteBehind(ticket); },
-                    [terminal, lease = lease_](std::exception_ptr) noexcept {
+                    [terminal, lease = lease_](const std::exception_ptr &) noexcept {
                         return *terminal = Receipt{{false, ProblemCode::RecoveryCommitFailed}, lease};
                     }),
                 terminal};
@@ -161,7 +161,8 @@ void RecoveryJournal::close()
     }
 }
 
-void RecoveryJournal::retryPending(const std::string &id, std::function<void(FileSession, RecoveryAction)> acknowledged,
+void RecoveryJournal::retryPending(const std::string &id,
+                                   const std::function<void(FileSession, RecoveryAction)> &acknowledged,
                                    std::function<void()> written)
 {
     // Retry the entire dependent queue in its original order, not per-file
@@ -172,19 +173,19 @@ void RecoveryJournal::retryPending(const std::string &id, std::function<void(Fil
     }
     auto records = std::exchange(pending_, {});
     for (auto &record : records) {
-        behind_.push_back(std::make_shared<Behind>(Behind{record,
-                                                          record->candidate.id(),
-                                                          {},
-                                                          {},
-                                                          [acknowledged, record](storage::RecoveryCommit result) {
-                                                              if (result.succeeded)
-                                                                  acknowledged(record->candidate, record->action);
-                                                          },
-                                                          std::make_shared<const FileSession>(record->candidate)}));
+        behind_.push_back(
+            std::make_shared<Behind>(Behind{record,
+                                            record->candidate.id(),
+                                            {},
+                                            {},
+                                            [acknowledged, record](const storage::RecoveryCommit &result) {
+                                                if (result.succeeded) acknowledged(record->candidate, record->action);
+                                            },
+                                            std::make_shared<const FileSession>(record->candidate)}));
     }
     auto &tail = behind_.back()->written;
     tail = [tail = std::move(tail), written = std::move(written)](storage::RecoveryCommit result) {
-        tail(result);
+        tail(std::move(result));
         written();
     };
     writeNext();
@@ -229,7 +230,7 @@ QFuture<bool> RecoveryJournal::discardStore()
                 return false;
             }
         },
-        [](bool) {}, [](std::exception_ptr) noexcept { return false; });
+        [](bool) {}, [](const std::exception_ptr &) noexcept { return false; });
 }
 
 const RecoveryJournal::Pending *RecoveryJournal::pending(const std::string &id) const

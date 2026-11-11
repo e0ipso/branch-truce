@@ -131,6 +131,38 @@ public:
             dispatch();
         });
     }
+    void startMutation(const std::shared_ptr<Job> &job)
+    {
+        store.recordTyping();
+        const auto *file = store.file(job->input.stamp.fileId);
+        if (!file || store.hasPendingRecovery() || store.hasRecoveryFailure(file->id())) {
+            finish(job,
+                   {TaskStatus::Failed, MutationObservation::NotAttempted, {}, ProblemCode::TaskRecoveryBlocked, {}});
+            return;
+        }
+        const MutationFact intent{QUuid::createUuid().toString(QUuid::WithoutBraces),
+                                  job->gitRequest ? MutationKind::Staging : MutationKind::Publication,
+                                  {}};
+        job->mutationTarget = *file;
+        store.commitMutation(*file, intent).then(&owner, [this, job, intent](const RecoveryJournal::Receipt &receipt) {
+            const auto &committed = receipt.commit;
+            if (!committed.succeeded) {
+                if (disposition(job->input.stamp) == TaskDisposition::Current)
+                    store.recordRecoveryFailure(job->input.stamp.fileId, committed.problem);
+                finish(job, {TaskStatus::Failed, MutationObservation::NotAttempted, {}, committed.problem, {}});
+                return;
+            }
+            job->recoveryLease = receipt.lease;
+            job->fact = intent;
+            if (disposition(*job) != TaskDisposition::Current) {
+                observeAndFinish(
+                    job,
+                    {TaskStatus::Cancelled, MutationObservation::NotAttempted, {}, ProblemCode::TaskSuperseded, {}});
+                return;
+            }
+            start(job);
+        });
+    }
     void dispatch()
     {
         const QPointer<SessionCoordinator> alive(&owner);
@@ -153,49 +185,10 @@ public:
             if (job->mutation && queues.at(job->input.stamp.worktree).front() != id) continue;
             if (!job->mutation && store.recording()) continue;
             job->running = true;
-            if (job->mutation) {
-                store.recordTyping();
-                const auto *file = store.file(job->input.stamp.fileId);
-                if (!file || store.hasPendingRecovery() || store.hasRecoveryFailure(file->id())) {
-                    finish(job,
-                           {TaskStatus::Failed,
-                            MutationObservation::NotAttempted,
-                            {},
-                            ProblemCode::TaskRecoveryBlocked,
-                            {}});
-                    if (!alive) return;
-                    continue;
-                }
-                const MutationFact intent{QUuid::createUuid().toString(QUuid::WithoutBraces),
-                                          job->gitRequest ? MutationKind::Staging : MutationKind::Publication,
-                                          {}};
-                job->mutationTarget = *file;
-                store.commitMutation(*file, intent)
-                    .then(&owner, [this, job, intent](const RecoveryJournal::Receipt &receipt) {
-                        const auto &committed = receipt.commit;
-                        if (!committed.succeeded) {
-                            if (disposition(job->input.stamp) == TaskDisposition::Current)
-                                store.recordRecoveryFailure(job->input.stamp.fileId, committed.problem);
-                            finish(job,
-                                   {TaskStatus::Failed, MutationObservation::NotAttempted, {}, committed.problem, {}});
-                            return;
-                        }
-                        job->recoveryLease = receipt.lease;
-                        job->fact = intent;
-                        if (disposition(*job) != TaskDisposition::Current) {
-                            observeAndFinish(job,
-                                             {TaskStatus::Cancelled,
-                                              MutationObservation::NotAttempted,
-                                              {},
-                                              ProblemCode::TaskSuperseded,
-                                              {}});
-                            return;
-                        }
-                        start(job);
-                    });
-            } else {
+            if (job->mutation)
+                startMutation(job);
+            else
                 start(job);
-            }
             if (!alive) return;
         }
     }
@@ -249,7 +242,7 @@ public:
                 return result;
             },
             [this, job](const TaskResult &result) { finish(job, result); },
-            [job](std::exception_ptr) noexcept { return unexpected(*job); });
+            [job](const std::exception_ptr &) noexcept { return unexpected(*job); });
     }
     void startGit(const std::shared_ptr<Job> &job)
     {
@@ -274,7 +267,8 @@ public:
             adapter->deleteLater();
             observeAndFinish(job, std::move(result));
         });
-        if (!adapter->start(*job->gitRequest)) {
+        const auto &request = job->gitRequest;
+        if (!request || !adapter->start(*request)) {
             job->adapter = nullptr;
             adapter->deleteLater();
             observeAndFinish(
@@ -310,7 +304,9 @@ public:
             try {
                 const auto observed = job.inspect(job.input);
                 if (observed != MutationObservation::NotAttempted) result.mutation = observed;
-            } catch (...) {}
+            } catch (...) {
+                result.mutation = MutationObservation::Uncertain;
+            }
         }
         // An admitted Git mutation's supplied observation survives failure of
         // its recording worker too. Never turn it into NotAttempted.
@@ -334,7 +330,7 @@ public:
                 return result;
             },
             [this, job](const TaskResult &result) { finish(job, result); },
-            [job, observed](std::exception_ptr) noexcept { return unexpected(*job, observed->mutation); });
+            [job, observed](const std::exception_ptr &) noexcept { return unexpected(*job, observed->mutation); });
     }
     void finish(const std::shared_ptr<Job> &job, TaskResult result)
     {
@@ -416,11 +412,9 @@ bool SessionCoordinator::completeRecoveryLoad(const TaskStamp &stamp, std::vecto
         return false;
     const bool recovered = restore.found;
     auto files = recovered ? std::move(restore.files) : std::move(observed);
-    if (!replaceSession(d->worktree, d->operation, std::move(files), true, recovered ? &restore : nullptr))
-        return false;
     // Inventory diagnostics describe stores we did not adopt. Only an adopted
     // store's per-file failures may block the loaded files' recovery.
-    return true;
+    return replaceSession(d->worktree, d->operation, std::move(files), true, recovered ? &restore : nullptr);
 }
 
 bool SessionCoordinator::replaceSession(const QString &worktree, const QString &operation,

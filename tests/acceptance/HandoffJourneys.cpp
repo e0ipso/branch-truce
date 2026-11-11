@@ -167,7 +167,8 @@ void handoffSeparatesTheWork(Sandbox &sandbox)
 void newerDraftReturnsToTheStagedResult(Sandbox &sandbox)
 {
     Repository repo({chosenByHand("newer.txt")});
-    Scene scene(sandbox, repo);
+    const auto faults = std::make_shared<test_support::SyncFaults>();
+    Scene scene(sandbox, repo, faults);
     auto &app = scene.app();
     const auto id = fileId("newer.txt");
     clickFile(scene, "newer.txt");
@@ -182,6 +183,9 @@ void newerDraftReturnsToTheStagedResult(Sandbox &sandbox)
         appendToResult(scene, "again");
         settleFor("newer draft", [&] { return scene.progress().earlierResolved; });
         CHECK(scene.text("resultText").endsWith(QStringLiteral("again")));
+        test_support::awaitRecovery(*app.store());
+        CHECK(!app.store()->hasPendingRecovery());
+        CHECK(QString::fromStdString(scene.file("newer.txt").current().draft.text) == scene.text("resultText"));
     };
     newerDraft();
     const auto draft = scene.text("resultText");
@@ -191,7 +195,8 @@ void newerDraftReturnsToTheStagedResult(Sandbox &sandbox)
     clickOverflowAction(scene, "discardToStaged");
     settleFor("discard prompt opened", [&] { return prompt->property("opened").toBool(); });
     expectContains(prompt->property("subtitle").toString(), "The draft of newer.txt is lost", "discard prompt");
-    CHECK(prompt->property("standardButtons").toInt() & QDialogButtonBox::Discard);
+    CHECK(static_cast<unsigned int>(prompt->property("standardButtons").toInt())
+          & static_cast<unsigned int>(QDialogButtonBox::Discard));
     expectText(dialogButton(scene, "discardStagedDialog", "confirmDiscardStaged")->property("text").toString(),
                "Discard draft", "destructive button");
     CHECK(!scene.item("discardStagedError")->isVisible());
@@ -225,11 +230,11 @@ void newerDraftReturnsToTheStagedResult(Sandbox &sandbox)
     // A discard the recovery journal cannot record keeps the draft and shows an error.
     newerDraft();
     {
-        QLockFile busy(app.store()->recoveryDirectory() + QStringLiteral("/journal.lock"));
-        CHECK(busy.tryLock(0));
+        const test_support::ArmedFault failure(*faults, test_support::SyncFaults::Point::JournalSync);
         clickOverflowAction(scene, "discardToStaged");
         test_support::clickItem(scene.window(), dialogButton(scene, "discardStagedDialog", "confirmDiscardStaged"));
         settleFor("discard failure shown", [&] { return scene.item("discardStagedError")->isVisible(); });
+        CHECK(faults->failures == 1);
         CHECK(prompt->property("opened").toBool());
         expectText(scene.item("discardStagedError")->property("text").toString(),
                    "Discard was not completed. The draft is kept until retry finishes the discard.", "discard error");
@@ -396,7 +401,7 @@ void blockedStartupRestoresTheChosenSession(Sandbox &sandbox)
 
 // --- git mergetool -------------------------------------------------------------------------
 
-const QString kWaitText = QStringLiteral("Waiting for Git to launch this path. It is not resolved.");
+constexpr QLatin1StringView kWaitText("Waiting for Git to launch this path. It is not resolved.");
 
 std::function<std::string()> mergetoolState(Scene &scene)
 {
@@ -432,7 +437,7 @@ void resolvedHandoffDropsTheWaitingText(Sandbox &sandbox)
     // A path Git has not launched yet says so while Git is still running.
     clickFile(scene, "later.txt");
     settleFor("waiting text on the unlaunched path", [&] { return scene.item("mergetoolWait")->isVisible(); });
-    expectText(scene.text("mergetoolWait"), kWaitText, "unlaunched path");
+    expectText(scene.text("mergetoolWait"), QString(kWaitText), "unlaunched path");
     clickFile(scene, "launched.txt");
     settleFor("holding text on the launched path", [&] { return scene.item("mergetoolHolding")->isVisible(); });
     CHECK(!scene.item("mergetoolWait")->isVisible());
@@ -463,7 +468,7 @@ void resolvedHandoffDropsTheWaitingText(Sandbox &sandbox)
     // The file Git never launched keeps the waiting text after the handoff.
     clickFile(scene, "later.txt");
     settleFor("waiting text after the handoff", [&] { return scene.item("mergetoolWait")->isVisible(); });
-    expectText(scene.text("mergetoolWait"), kWaitText, "unlaunched path after the handoff");
+    expectText(scene.text("mergetoolWait"), QString(kWaitText), "unlaunched path after the handoff");
     CHECK(scene.item("endParentSession")->isVisible());
     checkOffline(scene);
 }

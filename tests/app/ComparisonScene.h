@@ -3,6 +3,7 @@
 
 #include "ComparisonNetwork.h"
 #include "app/Application.h"
+#include "fixtures/Await.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/QmlWarnings.h"
 #include "fixtures/QuickScene.h"
@@ -19,6 +20,8 @@ public:
         : store_(*controller.store()), selection_(*controller.selection()), choices_(*controller.choices())
     {
         CHECK(controller.store()->appendFile(std::move(file)));
+        test_support::awaitRecovery(store_);
+        CHECK(!store_.hasPendingRecovery());
         CHECK(controller.selection()->select("choices"));
         engine.setNetworkAccessManagerFactory(&network);
         test_support::failOnQmlWarnings(engine);
@@ -55,8 +58,9 @@ public:
     }
     void settleCommand()
     {
-        settleFor("the clicked command committed",
-                  [&] { return !choices_.previewPending() && !store_.commandPending(selection_.id()); });
+        settleFor("the clicked command committed", [&] {
+            return !choices_.previewPending() && !store_.recording() && !store_.commandPending(selection_.id());
+        });
         settleAligned();
     }
     [[nodiscard]] QList<QUrl> networkRequests() const { return network.requests(); }

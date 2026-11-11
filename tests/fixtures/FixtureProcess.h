@@ -26,52 +26,51 @@ struct ProcessOutput {
     std::string diagnostic;
 };
 
-inline ProcessOutput readProcess(std::vector<std::string> arguments,
-                                 const std::optional<std::vector<std::string>> &environment = std::nullopt,
-                                 const std::string &directory = {}, const std::string &input = {},
-                                 std::chrono::milliseconds timeout = std::chrono::seconds(15),
-                                 std::size_t outputLimit = 16 * 1024 * 1024)
-{
-    ProcessOutput output;
-    if (arguments.empty() || arguments.front().empty()) {
-        output.diagnostic = "empty fixture command";
-        return output;
+namespace process_detail {
+// Cleanup also runs if a string allocation throws. Keep the leader unreaped until the group
+// is killed, so its pid cannot be reused as an unrelated process group during cleanup.
+struct Child {
+    pid_t pid = 0;
+    std::array<int, 6> fd{-1, -1, -1, -1, -1, -1};
+    ~Child()
+    {
+        if (pid > 0) {
+            ::kill(-pid, SIGKILL);
+            while (::waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {}
+        }
+        for (const int descriptor : fd)
+            if (descriptor >= 0) ::close(descriptor);
     }
-    // Cleanup also runs if a string allocation throws. Keep the leader unreaped until the group
-    // is killed, so its pid cannot be reused as an unrelated process group during cleanup.
-    struct Child {
-        pid_t pid = 0;
-        std::array<int, 6> fd{-1, -1, -1, -1, -1, -1};
-        ~Child()
-        {
-            if (pid > 0) {
-                ::kill(-pid, SIGKILL);
-                while (::waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {}
-            }
-            for (const int descriptor : fd)
-                if (descriptor >= 0) ::close(descriptor);
-        }
-        void close(std::size_t index)
-        {
-            ::close(fd[index]);
-            fd[index] = -1;
-        }
-    } child;
+    void close(std::size_t index)
+    {
+        ::close(fd[index]);
+        fd[index] = -1;
+    }
+};
+inline bool preparePipes(Child &child, ProcessOutput &output)
+{
     if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, child.fd.data()) != 0
         || ::pipe2(child.fd.data() + 2, O_CLOEXEC) != 0 || ::pipe2(child.fd.data() + 4, O_CLOEXEC) != 0) {
         output.diagnostic = "fixture pipe creation failed: " + std::to_string(errno);
-        return output;
+        return false;
     }
     for (auto &descriptor : child.fd) {
         if (descriptor > STDERR_FILENO) continue;
         const int replacement = ::fcntl(descriptor, F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
         if (replacement < 0) {
             output.diagnostic = "fixture descriptor duplication failed";
-            return output;
+            return false;
         }
         ::close(descriptor);
         descriptor = replacement;
     }
+    return true;
+}
+inline bool spawn(Child &child, std::vector<std::string> &arguments,
+                  const std::optional<std::vector<std::string>> &environment, const std::string &directory,
+                  std::chrono::milliseconds timeout, std::chrono::steady_clock::time_point &deadline,
+                  ProcessOutput &output)
+{
     std::vector<char *> argv, envp;
     for (auto &argument : arguments) argv.push_back(argument.data());
     argv.push_back(nullptr);
@@ -83,13 +82,13 @@ inline ProcessOutput readProcess(std::vector<std::string> arguments,
     int setup = posix_spawn_file_actions_init(&actions);
     if (setup) {
         output.diagnostic = "fixture spawn actions failed: " + std::to_string(setup);
-        return output;
+        return false;
     }
     setup = posix_spawnattr_init(&attributes);
     if (setup) {
         posix_spawn_file_actions_destroy(&actions);
         output.diagnostic = "fixture spawn attributes failed: " + std::to_string(setup);
-        return output;
+        return false;
     }
     const auto record = [&](int result) {
         if (!setup) setup = result;
@@ -101,7 +100,7 @@ inline ProcessOutput readProcess(std::vector<std::string> arguments,
     record(posix_spawn_file_actions_adddup2(&actions, child.fd[5], STDERR_FILENO));
     for (int descriptor : child.fd) record(posix_spawn_file_actions_addclose(&actions, descriptor));
     if (!directory.empty()) record(posix_spawn_file_actions_addchdir_np(&actions, directory.c_str()));
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    deadline = std::chrono::steady_clock::now() + timeout;
     if (!setup)
         setup = posix_spawnp(&child.pid, argv.front(), &actions, &attributes, argv.data(),
                              environment ? envp.data() : environ);
@@ -110,8 +109,66 @@ inline ProcessOutput readProcess(std::vector<std::string> arguments,
     if (setup) {
         child.pid = 0;
         output.diagnostic = "fixture start failed: " + std::to_string(setup);
+        return false;
+    }
+    return true;
+}
+inline bool writeInput(Child &child, const std::string &input, std::size_t &sent, ProcessOutput &output)
+{
+    if (child.fd[0] >= 0) {
+        const auto count = ::send(child.fd[0], input.data() + sent, input.size() - sent, MSG_DONTWAIT | MSG_NOSIGNAL);
+        if (count > 0) sent += static_cast<std::size_t>(count);
+        if (sent == input.size() || (count < 0 && (errno == EPIPE || errno == ECONNRESET)))
+            child.close(0);
+        else if (count < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+            output.diagnostic = "fixture input failed: " + std::to_string(errno);
+            return false;
+        }
+    }
+    return true;
+}
+inline bool readOutput(Child &child, ProcessOutput &output, std::size_t outputLimit)
+{
+    std::array<char, 4096> buffer{};
+    // One read per stream per turn keeps floods from starving deadline and leader checks.
+    for (std::size_t index : {2u, 4u}) {
+        if (child.fd[index] < 0) continue;
+        const auto count = ::read(child.fd[index], buffer.data(), buffer.size());
+        if (count == 0)
+            child.close(index);
+        else if (count > 0) {
+            const auto size = static_cast<std::size_t>(count);
+            const auto retained = std::min(size, outputLimit - output.text.size() - output.error.size());
+            (index == 2 ? output.text : output.error).append(buffer.data(), retained);
+            if (retained < size) {
+                output.diagnostic = "fixture combined output limit exceeded";
+                return false;
+            }
+        } else if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK) {
+            output.diagnostic = "fixture output read failed: " + std::to_string(errno);
+            return false;
+        }
+    }
+    return true;
+}
+}
+
+inline ProcessOutput readProcess(std::vector<std::string> arguments,
+                                 const std::optional<std::vector<std::string>> &environment = std::nullopt,
+                                 const std::string &directory = {}, const std::string &input = {},
+                                 std::chrono::milliseconds timeout = std::chrono::seconds(15),
+                                 std::size_t outputLimit = 16UL * 1024 * 1024)
+{
+    ProcessOutput output;
+    if (arguments.empty() || arguments.front().empty()) {
+        output.diagnostic = "empty fixture command";
         return output;
     }
+    process_detail::Child child;
+    std::chrono::steady_clock::time_point deadline;
+    if (!process_detail::preparePipes(child, output)
+        || !process_detail::spawn(child, arguments, environment, directory, timeout, deadline, output))
+        return output;
     child.close(1);
     child.close(3);
     child.close(5);
@@ -123,42 +180,14 @@ inline ProcessOutput readProcess(std::vector<std::string> arguments,
     }
     std::size_t sent = 0;
     bool exited = false;
-    std::array<char, 4096> buffer{};
     while (true) {
         if (std::chrono::steady_clock::now() >= deadline) {
             output.diagnostic = "fixture process deadline exceeded";
             return output;
         }
-        if (child.fd[0] >= 0) {
-            const auto count =
-                ::send(child.fd[0], input.data() + sent, input.size() - sent, MSG_DONTWAIT | MSG_NOSIGNAL);
-            if (count > 0) sent += static_cast<std::size_t>(count);
-            if (sent == input.size() || (count < 0 && (errno == EPIPE || errno == ECONNRESET)))
-                child.close(0);
-            else if (count < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
-                output.diagnostic = "fixture input failed: " + std::to_string(errno);
-                return output;
-            }
-        }
-        // One read per stream per turn keeps floods from starving deadline and leader checks.
-        for (std::size_t index : {2u, 4u}) {
-            if (child.fd[index] < 0) continue;
-            const auto count = ::read(child.fd[index], buffer.data(), buffer.size());
-            if (count == 0)
-                child.close(index);
-            else if (count > 0) {
-                const auto size = static_cast<std::size_t>(count);
-                const auto retained = std::min(size, outputLimit - output.text.size() - output.error.size());
-                (index == 2 ? output.text : output.error).append(buffer.data(), retained);
-                if (retained < size) {
-                    output.diagnostic = "fixture combined output limit exceeded";
-                    return output;
-                }
-            } else if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK) {
-                output.diagnostic = "fixture output read failed: " + std::to_string(errno);
-                return output;
-            }
-        }
+        if (!process_detail::writeInput(child, input, sent, output)
+            || !process_detail::readOutput(child, output, outputLimit))
+            return output;
         if (!exited) {
             siginfo_t info{};
             if (::waitid(P_PID, static_cast<id_t>(child.pid), &info, WEXITED | WNOHANG | WNOWAIT) < 0

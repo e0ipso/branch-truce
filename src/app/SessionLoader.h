@@ -122,6 +122,7 @@ private:
     void setState(StartupState state, QString detail);
     void classified(const git::ConflictClassificationResult &result);
     void loadWorkingFiles(QList<git::Conflict> conflicts);
+    void showEmptySession(const QString &diagnostics);
     // Why this window cannot switch to session now, judged from memory while
     // it shows state, or empty.
     [[nodiscard]] QString choiceRefusal(const QString &session, StartupState state);

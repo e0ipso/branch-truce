@@ -14,9 +14,9 @@ using test_support::commandResult;
 
 using namespace comparison_scene;
 
-void comparison_scene::addNavigationCases(Groups groups)
+namespace {
+void addFileListNavigationCases(Group &scenes)
 {
-    auto &scenes = groups.scenes;
     scenes.run("revision progress, within-file navigation, unfinished files and file-list location", [] {
         const std::string result = "same\nAAA\nmid\nBBB\n";
         const std::string left = "same\nleftA\nmid\nleftB\n";
@@ -118,7 +118,8 @@ void comparison_scene::addNavigationCases(Groups groups)
                          QStringLiteral("outside"), QStringLiteral("outside-editor"), 0, 1, 0, 0,
                          QStringLiteral("Unfinished file · outside the editor · diagram.png"));
         const auto unfinished = controller.navigator()->target();
-        CHECK(unfinished.value(QStringLiteral("support")).toString() == QStringLiteral("outside-app"));
+        CHECK(unfinished.value(QStringLiteral("support")).value<FileStates::SupportKind>()
+              == FileStates::SupportKind::OutsideApp);
         CHECK(!unfinished.value(QStringLiteral("resolved")).toBool());
         CHECK(unfinished.value(QStringLiteral("path")).toString() == QStringLiteral("diagram.png"));
         CHECK(fixture.item("selectedProblem")->property("text").toString()
@@ -280,6 +281,10 @@ void comparison_scene::addNavigationCases(Groups groups)
         settle([&] { return sidebar->isVisible() && sidebar->width() > 0; });
         CHECK(std::abs(sidebar->width() - chosen) < 2);
     });
+}
+
+void addPaneSynchronizationCases(Group &scenes)
+{
     scenes.run("scrolling the left source moves the result and the right source to the mapped lines", [] {
         Application controller(test_support::windowConfig());
         Fixture fixture(controller, insertionFile());
@@ -367,7 +372,8 @@ void comparison_scene::addNavigationCases(Groups groups)
         CHECK(leftView->setProperty("contentY", 30 * line));
         CHECK(std::abs(contentY(resultView) - 30 * line) < 1);
         qreal previous = contentY(resultView);
-        for (qreal top = 30 * line + 4; top <= 170 * line; top += 4) {
+        for (int offset = 4; 30 * line + offset <= 170 * line; offset += 4) {
+            const qreal top = 30 * line + offset;
             CHECK(leftView->setProperty("contentY", top));
             const auto now = contentY(resultView);
             // The result never runs backwards or ahead of the left.
@@ -482,6 +488,11 @@ void comparison_scene::addNavigationCases(Groups groups)
         CHECK(std::abs(contentY(leftView) - (contentY(result) - 30 * line)) < 1);
         CHECK(std::abs(contentY(rightView) - contentY(result)) < 1);
     });
+}
+
+void addHistoryPlacementCases(Groups groups)
+{
+    auto &scenes = groups.scenes;
     const auto undoRedoKeepViewport = [] {
         Application controller(test_support::windowConfig());
         Fixture fixture(controller, insertionFile());
@@ -503,7 +514,7 @@ void comparison_scene::addNavigationCases(Groups groups)
         key(fixture, Qt::Key_Z, Qt::ControlModifier);
         CHECK(fixture.file().current().draft.text.find("xshared") == std::string::npos);
         settleReplacement(fixture);
-        CHECK(editor->property("cursorPosition").toInt() == offset);
+        CHECK_EQ(editor->property("cursorPosition").toInt(), offset);
         CHECK(editor->property("selectionStart").toInt() == editor->property("selectionEnd").toInt());
         // No pane follows the replaced text to its end.
         for (std::size_t pane = 0; pane < panes.size(); ++pane)
@@ -544,7 +555,7 @@ void comparison_scene::addNavigationCases(Groups groups)
         });
         QObject::disconnect(counter);
         settleReplacement(fixture);
-        CHECK(editor->property("cursorPosition").toInt() == offset);
+        CHECK_EQ(editor->property("cursorPosition").toInt(), offset);
         CHECK(cursorInView(fixture));
         if (std::abs(contentY(result) - typed) >= 1)
             throw std::runtime_error("result viewport moved from " + std::to_string(typed) + " to "
@@ -596,7 +607,7 @@ void comparison_scene::addNavigationCases(Groups groups)
         CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
         CHECK(fixture.text() != before && !fixture.text().contains(QStringLiteral("right only")));
         settleReplacement(fixture);
-        CHECK(editor->property("cursorPosition").toInt() == offset);
+        CHECK_EQ(editor->property("cursorPosition").toInt(), offset);
         CHECK(std::abs(contentY(result) - 10 * line) < 1);
     });
     scenes.run("a choice above the result cursor keeps it on its text and in view", [] {
@@ -617,7 +628,7 @@ void comparison_scene::addNavigationCases(Groups groups)
         CHECK(!fixture.text().contains(QStringLiteral("right only")));
         settleReplacement(fixture);
         // The removed lines took the cursor's line out of the kept view, so the view follows it.
-        CHECK(editor->property("cursorPosition").toInt() == fixture.text().indexOf(QStringLiteral("shared 120\n")));
+        CHECK_EQ(editor->property("cursorPosition").toInt(), fixture.text().indexOf(QStringLiteral("shared 120\n")));
         CHECK(cursorInView(fixture));
     });
     scenes.run("two separate changes keep the result cursor on the unchanged text between them", [] {
@@ -637,7 +648,7 @@ void comparison_scene::addNavigationCases(Groups groups)
         const auto revision = [&] { return QString::number(fixture.file().current().id); };
         const auto kept = [&] {
             settleReplacement(fixture);
-            CHECK(editor->property("cursorPosition").toInt() == fixture.text().indexOf(marker));
+            CHECK_EQ(editor->property("cursorPosition").toInt(), fixture.text().indexOf(marker));
             CHECK(editor->property("selectionStart").toInt() == editor->property("selectionEnd").toInt());
             CHECK(std::abs(contentY(result) - 140 * line) < 1);
         };
@@ -657,4 +668,13 @@ void comparison_scene::addNavigationCases(Groups groups)
               && fixture.text().contains(QStringLiteral("left last\n")));
         kept();
     });
+}
+
+}
+
+void comparison_scene::addNavigationCases(Groups groups)
+{
+    addFileListNavigationCases(groups.scenes);
+    addPaneSynchronizationCases(groups.scenes);
+    addHistoryPlacementCases(groups);
 }

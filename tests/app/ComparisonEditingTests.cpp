@@ -16,9 +16,9 @@ using test_support::commandResult;
 
 using namespace comparison_scene;
 
-void comparison_scene::addEditingCases(Groups groups)
+namespace {
+void addNativeEditingCases(Group &scenes)
 {
-    auto &scenes = groups.scenes;
     scenes.run("native typing and Unicode selection replacement use command-owned undo redo and recovery", [] {
         Application controller(test_support::windowConfig());
         Fixture fixture(controller, test_support::choiceFile("left\n", "right\n", "launch \xf0\x9f\x98\x80\n"));
@@ -160,6 +160,7 @@ void comparison_scene::addEditingCases(Groups groups)
         CHECK(QGuiApplication::clipboard()->text() == "original\n" && fixture.file().current().id == initial.id);
         QGuiApplication::clipboard()->setText(QString::fromUtf8("paste\t\xf0\x9f\x98\x80\n"));
         CHECK(controller.editor()->clipboard(ResultEditorAdapter::ClipboardAction::Paste));
+        fixture.settleCommand();
         const auto pasted = fixture.file().current();
         CHECK(pasted.id == initial.id + 1 && pasted.draft.text == "paste\t\xf0\x9f\x98\x80\n");
         checkRecovered(*controller.store(), *controller.files(), pasted.draft);
@@ -167,6 +168,7 @@ void comparison_scene::addEditingCases(Groups groups)
         key(fixture, Qt::Key_C, Qt::ControlModifier);
         CHECK(QGuiApplication::clipboard()->text() == "paste" && fixture.file().current().id == pasted.id);
         CHECK(controller.editor()->clipboard(ResultEditorAdapter::ClipboardAction::Cut));
+        fixture.settleCommand();
         const auto cut = fixture.file().current();
         CHECK(cut.id == pasted.id + 1 && cut.draft.text == "\t\xf0\x9f\x98\x80\n");
         checkRecovered(*controller.store(), *controller.files(), cut.draft);
@@ -227,6 +229,10 @@ void comparison_scene::addEditingCases(Groups groups)
         key(fixture, Qt::Key_Z, Qt::ControlModifier);
         CHECK(fixture.file().current().draft == before.draft);
     });
+}
+
+void addChoicePreviewCases(Group &scenes)
+{
     for (const auto &[scopeName, scope] :
          {std::pair{QStringLiteral("left"), ChoicePreviewFlow::NonConflicting::LeftChanges},
           std::pair{QStringLiteral("right"), ChoicePreviewFlow::NonConflicting::RightChanges},
@@ -266,7 +272,7 @@ void comparison_scene::addEditingCases(Groups groups)
                            CHECK(file.current().draft == controller.store()->file(file.id())->current().draft);
                    });
     }
-    scenes.run("an immediately ready replacement opens after cancelling a pending preview", [] {
+    scenes.run("a replacement after a canceled preview respects worker admission and opens on retry", [] {
         Application controller(test_support::windowConfig());
         Fixture fixture(controller);
         auto &store = *controller.store();
@@ -284,10 +290,38 @@ void comparison_scene::addEditingCases(Groups groups)
             == Transition::Applied);
         CHECK(QMetaObject::invokeMethod(fixture.window, "chooseWholeFile",
                                         Q_ARG(int, static_cast<int>(ChoicePreviewFlow::Side::RightSide))));
-        settle([&] { return fixture.object("wholeFileDialog")->property("visible").toBool(); });
+        // The canceled request retains its worker slot until completion. A full
+        // visual pool refuses the new request explicitly, without changing work.
+        if (!controller.choices()->previewPending()) {
+            CHECK(!controller.choices()->previewReady());
+            CHECK(controller.feedback()->message()
+                  == QStringLiteral("Computation exceeds the supported work limit. Nothing changed."));
+            auto *workers = controller.revisionWorkers();
+            CHECK(workers->admission.count == workers->admission.maxCount);
+            const auto unchanged = fixture.file().current();
+            test_support::waitUntil([&] { return workers->admission.count == 0; },
+                                    "canceled visual work did not drain");
+            CHECK(!fixture.object("wholeFileDialog")->property("visible").toBool());
+            CHECK(!controller.choices()->previewReady() && fixture.file().current().id == unchanged.id
+                  && fixture.file().current().draft == unchanged.draft);
+            CHECK(QMetaObject::invokeMethod(fixture.window, "chooseWholeFile",
+                                            Q_ARG(int, static_cast<int>(ChoicePreviewFlow::Side::RightSide))));
+        }
+        test_support::waitUntil([&] { return fixture.object("wholeFileDialog")->property("visible").toBool(); },
+                                [&] {
+                                    return std::string("replacement preview did not open: ")
+                                        + controller.feedback()->message().toStdString() + "; pending="
+                                        + std::to_string(controller.choices()->previewPending()) + "; ready="
+                                        + std::to_string(controller.choices()->previewReady()) + "; requested="
+                                        + std::to_string(fixture.window->property("previewRequested").toBool());
+                                });
         CHECK(controller.choices()->wholeFilePreview().value("side").toString() == "Right");
         CHECK(QMetaObject::invokeMethod(fixture.object("wholeFileDialog"), "reject"));
     });
+}
+
+void addDraftPersistenceCases(Group &scenes)
+{
     for (const int operation : {0, 1, 2}) {
         scenes.run(
             std::string("confirmation, cancellation and a stale application preserve the draft: ")
@@ -426,4 +460,13 @@ void comparison_scene::addEditingCases(Groups groups)
         CHECK(controller.selectedFile()->status() == "Draft saved in Branch Truce; repository file unchanged");
         CHECK(!fixture.file().publication().written() && !fixture.file().publication().staged());
     });
+}
+
+}
+
+void comparison_scene::addEditingCases(Groups groups)
+{
+    addNativeEditingCases(groups.scenes);
+    addChoicePreviewCases(groups.scenes);
+    addDraftPersistenceCases(groups.scenes);
 }

@@ -12,16 +12,15 @@
 namespace journey {
 
 // A file whose two conflicts sit on lines 2 and 6, around three shared bridge lines.
-inline const QByteArray storyBase = "header\nbase first\nbridge one\nbridge two\nbridge three\nbase later\ntail\n";
-inline const QByteArray storyLeft = "header\nleft first\nbridge one\nbridge two\nbridge three\nleft later\ntail\n";
-inline const QByteArray storyRight = "header\nright first\nbridge one\nbridge two\nbridge three\nright later\ntail\n";
-
-// A line far wider than any pane, so wrapping changes its layout.
-inline const QByteArray longLine = QByteArray(420, 'L') + "\n";
+inline constexpr char storyBase[] = "header\nbase first\nbridge one\nbridge two\nbridge three\nbase later\ntail\n";
+inline constexpr char storyLeft[] = "header\nleft first\nbridge one\nbridge two\nbridge three\nleft later\ntail\n";
+inline constexpr char storyRight[] = "header\nright first\nbridge one\nbridge two\nbridge three\nright later\ntail\n";
 
 // Three supported files and one modify/delete file the app cannot edit.
 inline std::vector<PathSpec> journeyPaths()
 {
+    // A line far wider than any pane, so wrapping changes its layout.
+    const QByteArray longLine = QByteArray(420, 'L') + "\n";
     return {
         // The user replaced Git's conflict output with the common version before launch.
         {"story.txt", storyBase, storyLeft, storyRight, storyBase},

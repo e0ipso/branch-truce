@@ -128,16 +128,16 @@ QSet<int> PaneMarks::conflictingLines(const QVariantList &passages)
 {
     // Where the result still equals the earlier version, changes from both
     // sources are competing. An undecided choice alone proves no conflict.
-    QMap<int, int> evidence;
+    QMap<int, unsigned> evidence;
     for (const auto &value : passages) {
         const auto p = value.toMap();
         const auto side = string(p, "side"), kind = string(p, "kind");
         const bool earlier = side == QLatin1String("earlier");
         const bool changed = kind == QLatin1String("changed") || kind == QLatin1String("result-only");
-        const int bit = earlier && kind == QLatin1String("equal") ? 1
-            : changed && side == QLatin1String("stage2")          ? 2
-            : changed && side == QLatin1String("stage3")          ? 4
-                                                                  : 0;
+        const unsigned bit = earlier && kind == QLatin1String("equal") ? 1U
+            : changed && side == QLatin1String("stage2")               ? 2U
+            : changed && side == QLatin1String("stage3")               ? 4U
+                                                                       : 0U;
         if (!bit) continue;
         for (int line = number(p, "resultLineBegin"); line < number(p, "resultLineEnd"); ++line) evidence[line] |= bit;
     }
@@ -154,28 +154,26 @@ bool PaneMarks::conflictingRegion(const ComparisonContribution &region, const QS
         if (lines.contains(line)) return true;
     return false;
 }
-QVariantMap PaneMarks::marks(const QString &pane, const QVariantList &passages,
-                             const QList<ComparisonContribution> &contributions, const QVariantList &edited,
-                             const QVariantList &blocks, const QVariantList &orphans) const
-{
-    QVariantMap lines, gaps, letters;
-    QMap<int, int> from;
-    const bool result = pane == QLatin1String("result");
-    const auto mark = [&](int first, int end, const QString &kind) {
+namespace {
+struct MarkedLines {
+    explicit MarkedLines(const QString &selected) : pane(selected), result(selected == QLatin1String("result")) {}
+    void mark(int first, int end, const QString &kind)
+    {
         for (int line = first; line < end; ++line) {
             const auto key = QString::number(line);
-            if (!lines.contains(key) || rank(lines.value(key).toString()) < rank(kind)) lines.insert(key, kind);
+            if (!lines.contains(key) || PaneMarks::rank(lines.value(key).toString()) < PaneMarks::rank(kind))
+                lines.insert(key, kind);
         }
-    };
-    for (const auto &value : decoratedPassages(passages)) {
-        const auto p = value.toMap();
+    }
+    void passage(const QVariantMap &p)
+    {
         const auto side = string(p, "side"), kind = string(p, "kind");
-        if (result ? side == QLatin1String("earlier") : side != pane) continue;
+        if (result ? side == QLatin1String("earlier") : side != pane) return;
         const int first = number(p, result ? "resultLineBegin" : "sourceLineBegin");
         const int end = number(p, result ? "resultLineEnd" : "sourceLineEnd");
         if (p.value(QStringLiteral("comparisonKind"), kind).toString() == QLatin1String("equal")) {
             if (result)
-                for (int line = first; line < end; ++line) from[line] |= side == QLatin1String("stage2") ? 1 : 2;
+                for (int line = first; line < end; ++line) from[line] |= side == QLatin1String("stage2") ? 1U : 2U;
             if (kind != QLatin1String("equal")) mark(first, end, kind);
         } else if (kind == QLatin1String(result ? "source-only" : "result-only"))
             gaps.insert(QString::number(first), true);
@@ -184,11 +182,11 @@ QVariantMap PaneMarks::marks(const QString &pane, const QVariantList &passages,
                  kind == QLatin1String("changed") || kind == QLatin1String("ambiguous") ? QStringLiteral("changed")
                                                                                         : QStringLiteral("added"));
     }
-    const auto conflicts = conflictingLines(passages);
-    for (const auto &r : stylingRegions(contributions)) {
+    void contribution(const ComparisonContribution &r, const QSet<int> &conflicts)
+    {
         const auto state = r.state;
         // Optional contributions retain their underlying passage style.
-        if (state == QLatin1String("undecided") && !conflictingRegion(r, conflicts)) continue;
+        if (state == QLatin1String("undecided") && !PaneMarks::conflictingRegion(r, conflicts)) return;
         if (result && r.mapped) {
             const int first = r.resultLineBegin, end = r.resultLineEnd;
             if (state == QLatin1String("undecided"))
@@ -198,18 +196,19 @@ QVariantMap PaneMarks::marks(const QString &pane, const QVariantList &passages,
             else if (state == QLatin1String("accepted"))
                 mark(first, end, QStringLiteral("accepted"));
             if (r.handEdited)
-                for (int line = first; line < end; ++line) from[line] = 4;
+                for (int line = first; line < end; ++line) from[line] = 4U;
         } else if (!result && r.side == pane && state != QLatin1String("manual")) {
             mark(r.sourceLineBegin, r.sourceLineEnd,
                  state == QLatin1String("undecided") ? QStringLiteral("conflict") : state);
         }
     }
-    if (result) {
+    void resultMarks(const QVariantList &edited, const QVariantList &blocks, const QVariantList &orphans)
+    {
         for (const auto &value : edited) {
             const auto e = value.toMap();
             const int first = number(e, "resultLineBegin"), end = std::max(number(e, "resultLineEnd"), first + 1);
             mark(first, end, QStringLiteral("manual"));
-            for (int line = first; line < end; ++line) from[line] = 4;
+            for (int line = first; line < end; ++line) from[line] = 4U;
         }
         for (const auto &value : blocks) {
             const auto b = value.toMap();
@@ -220,11 +219,31 @@ QVariantMap PaneMarks::marks(const QString &pane, const QVariantList &passages,
             mark(line, line + 1, QStringLiteral("markers"));
         }
     }
-    for (auto it = from.cbegin(); it != from.cend(); ++it) {
-        const char *const glyph[] = {"", "L", "R", "B", "m"};
-        letters.insert(QString::number(it.key()), QString::fromLatin1(glyph[it.value()]));
+    QVariantMap data() const
+    {
+        QVariantMap letters;
+        for (auto it = from.cbegin(); it != from.cend(); ++it) {
+            const char *const glyph[] = {"", "L", "R", "B", "m"};
+            letters.insert(QString::number(it.key()), QString::fromLatin1(glyph[it.value()]));
+        }
+        return {{QStringLiteral("lines"), lines}, {QStringLiteral("gaps"), gaps}, {QStringLiteral("letters"), letters}};
     }
-    return {{QStringLiteral("lines"), lines}, {QStringLiteral("gaps"), gaps}, {QStringLiteral("letters"), letters}};
+    const QString &pane;
+    bool result;
+    QVariantMap lines, gaps;
+    QMap<int, unsigned> from;
+};
+}
+QVariantMap PaneMarks::marks(const QString &pane, const QVariantList &passages,
+                             const QList<ComparisonContribution> &contributions, const QVariantList &edited,
+                             const QVariantList &blocks, const QVariantList &orphans) const
+{
+    MarkedLines projection(pane);
+    for (const auto &value : decoratedPassages(passages)) projection.passage(value.toMap());
+    const auto conflicts = conflictingLines(passages);
+    for (const auto &region : stylingRegions(contributions)) projection.contribution(region, conflicts);
+    if (projection.result) projection.resultMarks(edited, blocks, orphans);
+    return projection.data();
 }
 QVariantMap PaneMarks::folds(const QVariantList &blocks, bool shown) const
 {

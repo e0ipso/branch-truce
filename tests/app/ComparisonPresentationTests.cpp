@@ -3,6 +3,7 @@
 #include "app/ComparisonPresentation.h"
 #include "ui/PaneMarks.h"
 #include <QCoreApplication>
+#include <QPersistentModelIndex>
 #include <QSignalSpy>
 
 using namespace branch_truce;
@@ -124,6 +125,34 @@ int main(int argc, char **argv)
         CHECK(p.contributions().isEmpty() && p.leftRows().isEmpty() && p.rightRows().isEmpty());
         CHECK(!p.accepts({}));
         CHECK(left.size() == 1 && right.size() == 1);
+    });
+    suite.run("source row updates retain indexes and publish current commands before notifications", [] {
+        ComparisonPresentation p;
+        auto d = data();
+        p.publish(d);
+        auto *model = p.leftRowModel();
+        CHECK(model->rowCount() == p.leftRows().size());
+        const QPersistentModelIndex retained(model->index(0, 0));
+        QSignalSpy resets(model, &QAbstractItemModel::modelReset);
+        QSignalSpy updates(model, &QAbstractItemModel::dataChanged);
+        QObject::connect(model, &QAbstractItemModel::dataChanged, &p, [&] {
+            CHECK(p.revision() == "2");
+            CHECK(p.choiceTarget("left-line").value("revision") == "2");
+            CHECK(model->data(retained, Qt::UserRole + 1).value<ComparisonRow>() == p.leftRows().first());
+            CHECK(p.rightRowModel()->data(p.rightRowModel()->index(0, 0), Qt::UserRole + 1).value<ComparisonRow>()
+                  == p.rightRows().first());
+        });
+        d.revision = "2";
+        d.contributions[0].resultUtf16Begin = 17;
+        d.contributions[0].available = false;
+        p.publish(d);
+        CHECK(retained.isValid() && resets.isEmpty() && updates.size() == 1);
+        CHECK(!model->data(retained, Qt::UserRole + 1).value<ComparisonRow>().extras.first().available);
+        d.fileId = "other";
+        p.publish(d);
+        CHECK(!retained.isValid() && resets.size() == 1);
+        p.publish({});
+        CHECK(model->rowCount() == 0 && resets.size() == 2);
     });
     return suite.report();
 }

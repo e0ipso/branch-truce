@@ -88,7 +88,7 @@ void rewriteLastRecord(const QString &directory, void (*mutate)(QJsonObject &))
 }
 
 // Records that keep a valid checksum but break the journal's schema or order.
-const std::pair<const char *, void (*)(QJsonObject &)> invalidRecords[] = {
+constexpr std::pair<const char *, void (*)(QJsonObject &)> invalidRecords[] = {
     {"a sequence out of order", [](QJsonObject &record) { record.insert("sequence", "3"); }},
     {"a broken chain to the previous record",
      [](QJsonObject &record) { record.insert("previous", QString(64, QLatin1Char('0'))); }},

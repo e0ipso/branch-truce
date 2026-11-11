@@ -17,8 +17,8 @@
 namespace branch_truce::storage {
 namespace {
 constexpr int journalVersion = 3;
-const QByteArray headerPrefix("Branch Truce recovery journal v");
-const QByteArray header = headerPrefix + QByteArray::number(journalVersion) + '\n';
+constexpr auto headerPrefix = QByteArrayView("Branch Truce recovery journal v");
+constexpr auto header = QByteArrayView("Branch Truce recovery journal v3\n");
 constexpr auto filePermissions = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
 constexpr auto directoryPermissions = filePermissions | QFileDevice::ExeOwner;
 
@@ -42,7 +42,7 @@ bool validDigest(const QByteArray &value)
 {
     if (value.size() != 64) return false;
     for (const auto c : value)
-        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+        if ((c < '0' || c > '9') && (c < 'a' || c > 'f')) return false;
     return true;
 }
 
@@ -131,6 +131,80 @@ Frame encodeFrame(const RecoveryTransaction &transaction, qint64 sequence, const
             hash, body.size() + transaction.id.size() * 2 + 256};
 }
 
+struct DecodedFrame {
+    QJsonObject record;
+    QByteArray hash;
+    QString id;
+    qint64 expanded;
+};
+std::optional<DecodedFrame> decodeFrame(const QByteArray &line, quint64 sequence, const RecoveryLimits &limits,
+                                        qint64 &retained, RecoveryRead &result)
+{
+    const auto refuse = [&](ProblemCode problem) -> std::optional<DecodedFrame> {
+        result.problem = problem;
+        return {};
+    };
+    QJsonParseError parse;
+    const auto frame = QJsonDocument::fromJson(line, &parse);
+    const auto object = frame.object();
+    const auto encoded = object.value(QStringLiteral("record")).toString().toLatin1();
+    const auto decodedSize = encoded.size() / 4 * 3 - (encoded.endsWith("==") ? 2 : encoded.endsWith('=') ? 1 : 0);
+    if (!charge(retained, decodedSize, limits.stateBytes)) return refuse(ProblemCode::RecoveryResourceLimit);
+    const auto body = QByteArray::fromBase64(encoded, QByteArray::AbortOnBase64DecodingErrors);
+    const auto hash = object.value(QStringLiteral("sha256")).toString().toLatin1();
+    if (parse.error != QJsonParseError::NoError || !frame.isObject() || body.toBase64() != encoded || !validDigest(hash)
+        || hash != RecoveryStore::digest(body)) {
+        return refuse(ProblemCode::RecoveryRecordIntegrity);
+    }
+    const auto recordDocument = QJsonDocument::fromJson(body, &parse);
+    const auto record = recordDocument.object();
+    if (record.value(QStringLiteral("version")).toInt() > journalVersion) {
+        result.newerFormat = true;
+        return refuse(ProblemCode::RecoveryJournalNewer);
+    }
+    const auto id = record.value(QStringLiteral("transaction")).toString();
+    bool retainedOk = false;
+    const auto expanded = record.value(QStringLiteral("retained")).toString().toLongLong(&retainedOk);
+    if (id.size() > 256 || !charge(retained, id.size() * 2 + 256, limits.stateBytes))
+        return refuse(ProblemCode::RecoveryResourceLimit);
+    if (parse.error != QJsonParseError::NoError || !recordDocument.isObject()
+        || record.value(QStringLiteral("version")).toInt() != journalVersion
+        || record.value(QStringLiteral("sequence")).toString() != QString::number(sequence)
+        || record.value(QStringLiteral("previous")).toString().toLatin1() != result.lastDigest
+        || !record.value(QStringLiteral("payloads")).isArray() || !record.value(QStringLiteral("state")).isObject()
+        || id.isEmpty() || !retainedOk
+        || QString::number(expanded) != record.value(QStringLiteral("retained")).toString()) {
+        return refuse(ProblemCode::RecoveryRecordSchema);
+    }
+    if (!charge(result.retainedBytes, expanded, limits.expandedBytes))
+        return refuse(ProblemCode::RecoveryResourceLimit);
+    return DecodedFrame{record, hash, id, expanded};
+}
+bool decodeReceipts(const QJsonObject &record, quint64 sequence, const RecoveryLimits &limits,
+                    std::set<QString> &identities, RecoveryRead &result)
+{
+    const auto state = record.value("state").toObject();
+    if (state.contains("receipts")) {
+        const auto value = state.value("receipts");
+        if (sequence != 1 || !value.isArray() || value.toArray().size() > limits.transactions * 2) {
+            result.problem = ProblemCode::RecoveryRecordSchema;
+            return false;
+        }
+        for (const auto &item : value.toArray()) {
+            const auto receipt = item.toArray();
+            const auto identity = receipt.size() == 2 ? receipt[0].toString() : QString{};
+            const auto hash = receipt.size() == 2 ? receipt[1].toString().toLatin1() : QByteArray{};
+            if (identity.isEmpty() || identity.size() > 256 || !validDigest(hash)
+                || !identities.insert(identity).second) {
+                result.problem = ProblemCode::RecoveryRecordSchema;
+                return false;
+            }
+            result.receipts.emplace(identity, hash);
+        }
+    }
+    return true;
+}
+
 // The format version a header line names, or 0 when it names none.
 int headerVersion(const QByteArray &line)
 {
@@ -169,7 +243,7 @@ QByteArray RecoveryStore::payload(const QByteArray &hash, Problem *error, qint64
         if (error) *error = resourceLimit();
         return {};
     }
-    const auto bytes = file.read(maxBytes + 1);
+    auto bytes = file.read(maxBytes + 1);
     if (bytes.size() > maxBytes || !file.atEnd()) {
         if (error) *error = resourceLimit();
         return {};
@@ -243,6 +317,25 @@ Problem RecoveryStore::retention(qint64 journalBytes, const QMap<QByteArray, QBy
     return {};
 }
 
+Problem RecoveryStore::readPayloads(const QJsonObject &record, std::set<QByteArray> &payloads,
+                                    qint64 &payloadBytes) const
+{
+    for (const auto &reference : record.value(QStringLiteral("payloads")).toArray()) {
+        const auto name = reference.toString().toLatin1();
+        if (payloads.contains(name)) continue;
+        Problem error;
+        const auto bytes = payload(name, &error);
+        if (!charge(payloadBytes, bytes.size(), limits_.storeBytes)
+            || payloads.size() >= static_cast<std::size_t>(limits_.payloadFiles))
+            return resourceLimit();
+        if (!error.isEmpty()) {
+            return error;
+        }
+        payloads.insert(name);
+    }
+    return {};
+}
+
 RecoveryRead RecoveryStore::parse(QIODevice &file, std::set<QByteArray> &payloads, bool firstRecordOnly,
                                   qint64 *stateBytes) const
 {
@@ -281,78 +374,22 @@ RecoveryRead RecoveryStore::parse(QIODevice &file, std::set<QByteArray> &payload
             break;
         }
         if (result.transactions.size() >= limits_.transactions) return limited();
-        QJsonParseError parse;
-        const auto frame = QJsonDocument::fromJson(line, &parse);
-        const auto object = frame.object();
-        const auto encoded = object.value(QStringLiteral("record")).toString().toLatin1();
-        const auto decodedSize = encoded.size() / 4 * 3 - (encoded.endsWith("==") ? 2 : encoded.endsWith('=') ? 1 : 0);
-        if (!charge(retained, decodedSize, limits_.stateBytes)) return limited();
-        const auto body = QByteArray::fromBase64(encoded, QByteArray::AbortOnBase64DecodingErrors);
-        const auto hash = object.value(QStringLiteral("sha256")).toString().toLatin1();
-        if (parse.error != QJsonParseError::NoError || !frame.isObject() || body.toBase64() != encoded
-            || !validDigest(hash) || hash != digest(body)) {
-            result.problem = Problem{ProblemCode::RecoveryRecordIntegrity};
-            return result;
-        }
-        const auto recordDocument = QJsonDocument::fromJson(body, &parse);
-        const auto record = recordDocument.object();
-        if (record.value(QStringLiteral("version")).toInt() > journalVersion) return newer();
-        const auto id = record.value(QStringLiteral("transaction")).toString();
-        bool retainedOk = false;
-        const auto expanded = record.value(QStringLiteral("retained")).toString().toLongLong(&retainedOk);
-        if (id.size() > 256 || !charge(retained, id.size() * 2 + 256, limits_.stateBytes)) return limited();
-        if (parse.error != QJsonParseError::NoError || !recordDocument.isObject()
-            || record.value(QStringLiteral("version")).toInt() != journalVersion
-            || record.value(QStringLiteral("sequence")).toString() != QString::number(sequence)
-            || record.value(QStringLiteral("previous")).toString().toLatin1() != result.lastDigest
-            || !record.value(QStringLiteral("payloads")).isArray() || !record.value(QStringLiteral("state")).isObject()
-            || id.isEmpty() || !retainedOk
-            || QString::number(expanded) != record.value(QStringLiteral("retained")).toString()) {
-            result.problem = Problem{ProblemCode::RecoveryRecordSchema};
-            return result;
-        }
-        if (!charge(result.retainedBytes, expanded, limits_.expandedBytes)) return limited();
+        const auto frame = decodeFrame(line, sequence, limits_, retained, result);
+        if (!frame) return result;
+        const auto &record = frame->record;
+        const auto &id = frame->id;
         if (!identities.insert(id).second) {
             result.problem = Problem{ProblemCode::RecoveryTransactionRepeated};
             return result;
         }
-        const auto state = record.value("state").toObject();
-        if (state.contains("receipts")) {
-            const auto value = state.value("receipts");
-            if (sequence != 1 || !value.isArray() || value.toArray().size() > limits_.transactions * 2) {
-                result.problem = ProblemCode::RecoveryRecordSchema;
-                return result;
-            }
-            for (const auto &item : value.toArray()) {
-                const auto receipt = item.toArray();
-                const auto identity = receipt.size() == 2 ? receipt[0].toString() : QString{};
-                const auto hash = receipt.size() == 2 ? receipt[1].toString().toLatin1() : QByteArray{};
-                if (identity.isEmpty() || identity.size() > 256 || !validDigest(hash)
-                    || !identities.insert(identity).second) {
-                    result.problem = ProblemCode::RecoveryRecordSchema;
-                    return result;
-                }
-                result.receipts.emplace(identity, hash);
-            }
+        if (!decodeReceipts(record, sequence, limits_, identities, result)) return result;
+        if (!firstRecordOnly) {
+            result.problem = readPayloads(record, payloads, payloadBytes);
+            if (!result.problem.isEmpty()) return result;
         }
-        for (const auto &reference :
-             firstRecordOnly ? QJsonArray{} : record.value(QStringLiteral("payloads")).toArray()) {
-            const auto name = reference.toString().toLatin1();
-            if (payloads.contains(name)) continue;
-            Problem error;
-            const auto bytes = payload(name, &error);
-            if (!charge(payloadBytes, bytes.size(), limits_.storeBytes)
-                || payloads.size() >= static_cast<std::size_t>(limits_.payloadFiles))
-                return limited();
-            if (!error.isEmpty()) {
-                result.problem = error;
-                return result;
-            }
-            payloads.insert(name);
-        }
-        result.transactions.push_back({id, record.value(QStringLiteral("state")).toObject(), expanded});
+        result.transactions.push_back({id, record.value(QStringLiteral("state")).toObject(), frame->expanded});
         result.validBytes = file.pos();
-        result.lastDigest = hash;
+        result.lastDigest = frame->hash;
         ++sequence;
         if (firstRecordOnly) break;
     }
@@ -427,6 +464,69 @@ RecoveryCommit RecoveryStore::commit(const RecoveryTransaction &transaction)
     }
 }
 
+struct RecoveryStore::AppendAdmission {
+    QByteArray frame, digest;
+    qint64 size, stateBytes, retainedBytes;
+};
+
+Problem RecoveryStore::writePayloads(const RecoveryTransaction &transaction, const QString &payloadDirectory)
+{
+    for (auto entry = transaction.payloads.cbegin(); entry != transaction.payloads.cend(); ++entry) {
+        if (verified_.contains(entry.key())) continue;
+        const auto path = payloadDirectory + QLatin1Char('/') + QString::fromLatin1(entry.key());
+        if (QFileInfo::exists(path) || QFileInfo(path).isSymLink()) {
+            Problem error;
+            (void)payload(entry.key(), &error);
+            if (!error.isEmpty()) return error;
+        } else {
+            if (!atomicFile(*files_, path, entry.value())) return ProblemCode::RecoveryPayloadCommit;
+            unsynced_.insert(payloadDirectory);
+        }
+        verified_.insert(entry.key());
+    }
+    return {};
+}
+
+RecoveryCommit RecoveryStore::appendPrepared(const RecoveryTransaction &transaction, const JournalEnd &current,
+                                             const AppendAdmission &admission)
+{
+    const auto journalPath = directory_ + QStringLiteral("/journal");
+    // Admission is complete before creating payloads, initializing the journal
+    // or cutting an interrupted tail. Rejections leave the store unchanged.
+    const auto payloadDirectory = directory_ + QStringLiteral("/payloads");
+    if (!privateDirectory(*files_, directory_, unsynced_) || !privateDirectory(*files_, payloadDirectory, unsynced_))
+        return {false, Problem{ProblemCode::RecoveryStorageCreate}};
+    if (!QFileInfo::exists(journalPath)) {
+        if (!atomicFile(*files_, journalPath, QByteArray(header)))
+            return {false, Problem{ProblemCode::RecoveryJournalInitialize}};
+        unsynced_.insert(directory_);
+    }
+    if (const auto error = writePayloads(transaction, payloadDirectory); !error.isEmpty()) return {false, error};
+    for (auto pending = unsynced_.begin(); pending != unsynced_.end(); pending = unsynced_.erase(pending)) {
+        if (!syncDirectory(*files_, *pending)) return {false, Problem{ProblemCode::RecoveryStorageSync}};
+    }
+    QFile journal(journalPath);
+    const auto validBytes = current.size ? current.size : header.size();
+    if (!journal.open(QIODevice::ReadWrite) || (journal.size() != validBytes && !journal.resize(validBytes))
+        || !journal.seek(validBytes))
+        return {false, Problem{ProblemCode::RecoveryCommitBoundary}};
+    if (journal.write(admission.frame) != admission.frame.size() || !synchronize(*files_, journal)) {
+        uncertain_.insert_or_assign(transaction.id, stateDigest(transaction.state, transaction.retainedBytes));
+        end_.reset();
+        return {false, Problem{ProblemCode::RecoveryCommitFailed}};
+    }
+    if (!end_) end_ = current;
+    end_->size = admission.size;
+    ++end_->records;
+    end_->stateBytes = admission.stateBytes;
+    end_->retainedBytes = admission.retainedBytes;
+    end_->lastDigest = admission.digest;
+    end_->committed.emplace(transaction.id, stateDigest(transaction.state, transaction.retainedBytes));
+    end_->stamp = stampOf(journal);
+    uncertain_.erase(transaction.id);
+    return {true, {}};
+}
+
 RecoveryCommit RecoveryStore::append(const RecoveryTransaction &transaction, bool continuing)
 {
     if (!QDir::isAbsolutePath(directory_)) return {false, Problem{ProblemCode::RecoveryStorageLocation}};
@@ -478,51 +578,7 @@ RecoveryCommit RecoveryStore::append(const RecoveryTransaction &transaction, boo
         return {false, error};
     }
 
-    // Admission is complete before creating payloads, initializing the journal
-    // or cutting an interrupted tail. Rejections leave the store unchanged.
-    const auto payloadDirectory = directory_ + QStringLiteral("/payloads");
-    if (!privateDirectory(*files_, directory_, unsynced_) || !privateDirectory(*files_, payloadDirectory, unsynced_))
-        return {false, Problem{ProblemCode::RecoveryStorageCreate}};
-    if (!QFileInfo::exists(journalPath)) {
-        if (!atomicFile(*files_, journalPath, header)) return {false, Problem{ProblemCode::RecoveryJournalInitialize}};
-        unsynced_.insert(directory_);
-    }
-    for (auto entry = transaction.payloads.cbegin(); entry != transaction.payloads.cend(); ++entry) {
-        if (verified_.contains(entry.key())) continue;
-        const auto path = payloadDirectory + QLatin1Char('/') + QString::fromLatin1(entry.key());
-        if (QFileInfo::exists(path) || QFileInfo(path).isSymLink()) {
-            Problem error;
-            (void)payload(entry.key(), &error);
-            if (!error.isEmpty()) return {false, error};
-        } else {
-            if (!atomicFile(*files_, path, entry.value())) return {false, Problem{ProblemCode::RecoveryPayloadCommit}};
-            unsynced_.insert(payloadDirectory);
-        }
-        verified_.insert(entry.key());
-    }
-    for (auto pending = unsynced_.begin(); pending != unsynced_.end(); pending = unsynced_.erase(pending)) {
-        if (!syncDirectory(*files_, *pending)) return {false, Problem{ProblemCode::RecoveryStorageSync}};
-    }
-    QFile journal(journalPath);
-    const auto validBytes = current->size ? current->size : header.size();
-    if (!journal.open(QIODevice::ReadWrite) || (journal.size() != validBytes && !journal.resize(validBytes))
-        || !journal.seek(validBytes))
-        return {false, Problem{ProblemCode::RecoveryCommitBoundary}};
-    if (journal.write(frame) != frame.size() || !synchronize(*files_, journal)) {
-        uncertain_.insert_or_assign(transaction.id, stateDigest(transaction.state, transaction.retainedBytes));
-        end_.reset();
-        return {false, Problem{ProblemCode::RecoveryCommitFailed}};
-    }
-    if (!end_) end_ = *current;
-    end_->size = size;
-    ++end_->records;
-    end_->stateBytes = retained;
-    end_->retainedBytes = expanded;
-    end_->lastDigest = encoded.digest;
-    end_->committed.emplace(transaction.id, stateDigest(transaction.state, transaction.retainedBytes));
-    end_->stamp = stampOf(journal);
-    uncertain_.erase(transaction.id);
-    return {true, {}};
+    return appendPrepared(transaction, *current, {encoded.bytes, encoded.digest, size, retained, expanded});
 }
 
 Problem RecoveryStore::reclaim(const std::set<QByteArray> &reachable)
@@ -558,8 +614,10 @@ RecoveryCommit RecoveryStore::rollover(const RecoveryTransaction &transaction)
         kept.emplace(stored.id, stateDigest(stored.state, stored.retainedBytes));
     // Failed flushes can still be retried after several continuations. Their
     // exact identities remain pinned until a successful retry settles them.
+    if (!end_) return {false, ProblemCode::RecoveryCommitFailed};
+    const auto &committed = end_->committed;
     for (const auto &[id, hash] : uncertain_)
-        if (end_->committed.contains(id)) kept.insert_or_assign(id, hash);
+        if (committed.contains(id)) kept.insert_or_assign(id, hash);
     if (kept.size() > static_cast<std::size_t>(limits_.transactions * 2)) return {false, resourceLimit()};
     for (const auto &[id, hash] : kept) receipts.push_back(QJsonArray{id, QString::fromLatin1(hash)});
     checkpoint.state.insert("receipts", receipts);
@@ -606,7 +664,8 @@ RecoveryCommit RecoveryStore::rollover(const RecoveryTransaction &transaction)
     const auto staging = directory_ + QStringLiteral("/journal-next");
     if (QFileInfo::exists(staging) && files_->unlink(AT_FDCWD, QFile::encodeName(staging).constData(), 0) != 0)
         return {false, ProblemCode::RecoveryStorageSync};
-    if (!atomicFile(*files_, staging, header + head.bytes)) return {false, ProblemCode::RecoveryJournalInitialize};
+    if (!atomicFile(*files_, staging, QByteArray(header) + head.bytes))
+        return {false, ProblemCode::RecoveryJournalInitialize};
     const auto destination = directory_ + QStringLiteral("/journal");
     if (files_->rename(AT_FDCWD, QFile::encodeName(staging).constData(), AT_FDCWD,
                        QFile::encodeName(destination).constData())
@@ -638,8 +697,8 @@ std::shared_ptr<RecoveryLease> RecoveryLease::acquire(const QString &directory, 
         return std::shared_ptr<RecoveryLease>{};
     };
     if (!files || !QDir::isAbsolutePath(directory)) return fail(Failure::Unsafe);
-    std::shared_ptr<RecoveryLease> lease(new RecoveryLease(directory, files, limits));
-    if (!privateDirectory(*files, directory, lease->store_.unsynced_)) return fail(Failure::Unsafe);
+    std::shared_ptr<RecoveryLease> lease(new RecoveryLease(directory, std::move(files), limits));
+    if (!privateDirectory(*lease->store_.files_, directory, lease->store_.unsynced_)) return fail(Failure::Unsafe);
     if (!lease->lock_->tryLock(0)) return fail(Failure::Held);
     if (failure) *failure = Failure::None;
     return lease;

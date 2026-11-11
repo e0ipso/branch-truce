@@ -83,7 +83,7 @@ int main(int argc, char **argv)
         auto snapshots = *test_support::choiceFile("launch\n", "other\n").snapshots();
         snapshots.launchResult.identity = launch.destination->identity();
         FileSession file("choices", "choices.txt", {"launch\n", {}, 0}, {.snapshots = snapshots});
-        CHECK(::truncate(QFile::encodeName(root + "/choices.txt").constData(), off_t{1} << 40) == 0);
+        CHECK(::truncate(QFile::encodeName(root + "/choices.txt").constData(), off_t{1'099'511'627'776}) == 0);
         const auto files = std::make_shared<DestinationReads>();
         const auto baselines = ResolutionPublisher::readBaselines(root, {file}, files);
         CHECK(!baselines.at("choices").destination && !baselines.at("choices").diagnostic.isEmpty());

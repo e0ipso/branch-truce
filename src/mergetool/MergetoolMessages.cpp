@@ -192,9 +192,9 @@ QByteArray mergetoolFrame(const QByteArray &payload)
     const auto length = static_cast<quint32>(payload.size());
     QByteArray frame;
     frame.reserve(4 + payload.size());
-    frame.append(static_cast<char>((length >> 24) & 0xffU));
-    frame.append(static_cast<char>((length >> 16) & 0xffU));
-    frame.append(static_cast<char>((length >> 8) & 0xffU));
+    frame.append(static_cast<char>((length >> 24U) & 0xffU));
+    frame.append(static_cast<char>((length >> 16U) & 0xffU));
+    frame.append(static_cast<char>((length >> 8U) & 0xffU));
     frame.append(static_cast<char>(length & 0xffU));
     frame.append(payload);
     return frame;
@@ -207,7 +207,7 @@ MergetoolFrame takeMergetoolFrame(QByteArray *buffer, QByteArray *payload)
     const auto byte = [buffer](qsizetype index) {
         return static_cast<quint32>(static_cast<unsigned char>(buffer->at(index)));
     };
-    const auto length = (byte(0) << 24) | (byte(1) << 16) | (byte(2) << 8) | byte(3);
+    const auto length = (byte(0) << 24U) | (byte(1) << 16U) | (byte(2) << 8U) | byte(3);
     if (length == 0 || length > static_cast<quint32>(kMergetoolFrameLimit)) return MergetoolFrame::Invalid;
     if (buffer->size() < 4 + static_cast<qsizetype>(length)) return MergetoolFrame::NeedMore;
     *payload = buffer->mid(4, static_cast<qsizetype>(length));

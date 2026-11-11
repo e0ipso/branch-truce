@@ -16,6 +16,7 @@ NamedAction {
     // owns the popup so its entries survive those layout and focus changes.
     readonly property Menu entryMenu: Menu {
         id: entryPopup
+        onAboutToShow: menuAction.stabilizeMenu(entryPopup)
         focus: true
         z: menuAction.containingMenu ? menuAction.containingMenu.z + 1 : Kirigami.OverlayZStacking.z
         onOpened: forceActiveFocus()
@@ -25,6 +26,8 @@ NamedAction {
                 required property MenuEntry modelData
                 objectName: modelData.controlName
                 action: modelData
+                Accessible.role: Accessible.MenuItem
+                Accessible.name: modelData.text
                 onTriggered: {
                     entryPopup.dismiss()
                     if (menuAction.containingMenu)
@@ -38,6 +41,7 @@ NamedAction {
     displayComponent: ToolButton {
         id: menuButton
         readonly property Menu containingMenu: menuAction.ownerMenu(parent)
+        onContainingMenuChanged: menuAction.stabilizeMenu(menuButton.containingMenu)
         objectName: menuAction.controlName
         text: menuAction.text
         icon.name: menuAction.icon.name

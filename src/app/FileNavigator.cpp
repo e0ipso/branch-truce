@@ -22,6 +22,50 @@ QString modeName(FileNavigator::Mode mode)
     }
     return {};
 }
+int initialTargetIndex(const std::vector<ScopeTarget> &targets, const std::string &result,
+                       const ResultEditorAdapter::Caret &caret, int direction)
+{
+    const int count = static_cast<int>(targets.size());
+    const auto at = [&](int index) -> const ScopeTarget & { return targets[static_cast<std::size_t>(index)]; };
+    const auto utfBegin = [&](const ScopeTarget &target) {
+        return target.resultRange ? utf16Offset(result, target.byteBegin) : -1;
+    };
+    const auto utfEnd = [&](const ScopeTarget &target) {
+        return target.resultRange ? utf16Offset(result, target.byteEnd) : -1;
+    };
+    int index = -1;
+    // Only targets the editor can select count. One pass in the walk's
+    // direction finds the first of them, the first past the cursor, and
+    // the one after the selected target, where the selected target is
+    // the last in result order the editor selection covers exactly.
+    int first = -1;
+    int pastCursor = -1;
+    int selected = -1;
+    int afterSelected = -1;
+    for (int step = 0; step < count; ++step) {
+        const int candidate = direction > 0 ? step : count - 1 - step;
+        const int begin = utfBegin(at(candidate));
+        if (begin < 0) continue;
+        if (first < 0) first = candidate;
+        if (pastCursor < 0 && (direction > 0 ? begin >= caret.cursor : begin < caret.cursor)) pastCursor = candidate;
+        if (selected >= 0 && afterSelected < 0) afterSelected = candidate;
+        const int end = utfEnd(at(candidate));
+        if (candidate > selected && end >= 0 && caret.selectionStart == begin && caret.selectionEnd == end) {
+            selected = candidate;
+            afterSelected = -1;
+        }
+    }
+    // Past the last selectable target the walk wraps to the first.
+    if (selected >= 0)
+        index = afterSelected >= 0 ? afterSelected : first;
+    else if (pastCursor >= 0)
+        index = pastCursor;
+    else if (first >= 0)
+        index = first;
+    else
+        index = direction > 0 ? 0 : count - 1;
+    return index;
+}
 }
 FileNavigator::FileNavigator(const SessionStore &store, const SessionModel &files, ResultEditorAdapter &editor,
                              Selection &selection, QObject *parent)
@@ -101,42 +145,8 @@ bool FileNavigator::navigateWithinFile(Mode mode, int direction)
     const auto utfEnd = [&](const ScopeTarget &target) {
         return target.resultRange ? utf16Offset(result, target.byteEnd) : -1;
     };
-    int index = -1;
-    if (continuing) {
-        index = (index_ + direction + count) % count;
-    } else {
-        // Only targets the editor can select count. One pass in the walk's
-        // direction finds the first of them, the first past the cursor, and
-        // the one after the selected target, where the selected target is
-        // the last in result order the editor selection covers exactly.
-        int first = -1;
-        int pastCursor = -1;
-        int selected = -1;
-        int afterSelected = -1;
-        for (int step = 0; step < count; ++step) {
-            const int candidate = direction > 0 ? step : count - 1 - step;
-            const int begin = utfBegin(at(candidate));
-            if (begin < 0) continue;
-            if (first < 0) first = candidate;
-            if (pastCursor < 0 && (direction > 0 ? begin >= caret.cursor : begin < caret.cursor))
-                pastCursor = candidate;
-            if (selected >= 0 && afterSelected < 0) afterSelected = candidate;
-            const int end = utfEnd(at(candidate));
-            if (candidate > selected && end >= 0 && caret.selectionStart == begin && caret.selectionEnd == end) {
-                selected = candidate;
-                afterSelected = -1;
-            }
-        }
-        // Past the last selectable target the walk wraps to the first.
-        if (selected >= 0)
-            index = afterSelected >= 0 ? afterSelected : first;
-        else if (pastCursor >= 0)
-            index = pastCursor;
-        else if (first >= 0)
-            index = first;
-        else
-            index = direction > 0 ? 0 : count - 1;
-    }
+    const int index =
+        continuing ? (index_ + direction + count) % count : initialTargetIndex(targets, result, caret, direction);
     const auto &target = at(index);
     const int begin = utfBegin(target);
     const int end = utfEnd(target);

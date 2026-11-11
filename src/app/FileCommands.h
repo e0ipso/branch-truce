@@ -6,6 +6,7 @@
 #include <QObject>
 #include <QString>
 #include <QtQml/qqmlregistration.h>
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -68,6 +69,7 @@ public:
 Q_SIGNALS:
     // A resolution started, finished or asked for confirmation.
     void resolutionChanged();
+    void stagedDiscardFinished(const QString &fileId, const QString &revision, bool succeeded);
 
 private:
     // The command target for the current revision of a supported file, or a shown refusal.
@@ -76,7 +78,7 @@ private:
     std::optional<ResultEdit> resultEdit(const CommandTarget &target, int begin, int end, const QString &replacement);
     [[nodiscard]] QString discardedMessage(const FileSession &file) const;
     [[nodiscard]] static QString stagedDiscardMessage();
-    bool acknowledge(QFuture<Transition> result, const QString &failure = {});
+    bool acknowledge(QFuture<Transition> result, const QString &failure = {}, std::function<void(bool)> finished = {});
 
     SessionStore &store_;
     const Selection &selection_;

@@ -60,7 +60,7 @@ class PublishFiles final : public test_support::SyncFaults {
 public:
     int exchange(int fromDirectory, const char *from, int toDirectory, const char *to) const override
     {
-        const int result = FileSystem::exchange(fromDirectory, from, toDirectory, to);
+        const int result = test_support::SyncFaults::exchange(fromDirectory, from, toDirectory, to);
         if (result != 0 || !publish_stall::arm.exchange(false)) return result;
         const int ready = publish_stall::readyWrite.load();
         if (ready >= 0) {
@@ -213,7 +213,8 @@ public:
                 pollfd input{};
                 input.fd = ready[0];
                 input.events = POLLIN;
-                return ::poll(&input, 1, 0) > 0 && (input.revents & POLLIN) != 0;
+                return ::poll(&input, 1, 0) > 0
+                    && (static_cast<unsigned int>(input.revents) & static_cast<unsigned int>(POLLIN)) != 0;
             },
             "the publisher did not reach its exchange");
         return true;
@@ -279,7 +280,9 @@ struct RestartedWrite {
                     && file.publication().writeOutcome()->outcome == Outcome::Succeeded
                     && file.publication().stageOutcome();
             });
-            CHECK(openedFile(first).publication().stageOutcome()->outcome != Outcome::Succeeded);
+            const auto &stageOutcome = openedFile(first).publication().stageOutcome();
+            if (!stageOutcome) throw test_support::Failure("the publisher has no staging outcome");
+            CHECK(stageOutcome->outcome != Outcome::Succeeded);
             CHECK(!openedFile(first).facts().resolved);
             CHECK(readFile(repo.path("tracked.txt")) == edited);
         }
@@ -349,7 +352,8 @@ int main(int argc, char **argv)
         Session session;
         const auto before = session.repo.snapshot();
         const auto text = openedFile(session.controller).current().draft.text;
-        CHECK(!session.controller.commands()->markResolved(session.id, session.revision(), false));
+        CHECK(session.controller.commands()->markResolved(session.id, session.revision(), false));
+        waitFor(session.controller, [&] { return !session.controller.commands()->resolutionBusy(); });
         CHECK(session.controller.commands()->resolutionConfirmation());
         CHECK(session.controller.feedback()->message().contains(QStringLiteral("intentional")));
         CHECK(!openedFile(session.controller).publication().reviewed());
@@ -373,7 +377,10 @@ int main(int argc, char **argv)
         Session session;
         const auto before = session.repo.snapshot();
         test_support::ArmedFault fault(*session.files, test_support::SyncFaults::Point::JournalSync);
-        CHECK(!session.controller.commands()->markResolved(session.id, session.revision(), true));
+        CHECK(session.controller.commands()->markResolved(session.id, session.revision(), true));
+        waitFor(session.controller, [&] {
+            return !session.controller.commands()->resolutionBusy() && !session.controller.store()->recording();
+        });
         CHECK(session.files->failures == 1);
         CHECK(session.controller.files()->hasPendingRecovery());
         CHECK(!openedFile(session.controller).publication().reviewed());
@@ -506,9 +513,9 @@ int main(int argc, char **argv)
         RestartedWrite restarted;
         const auto tampered = QByteArray("tampered\n");
         writeFile(restarted.repo.path("tracked.txt"), tampered);
-        CHECK(!restarted.controller->commands()->markResolved(restarted.id,
-                                                              revisionOf(openedFile(*restarted.controller)), true));
-        CHECK(!restarted.controller->commands()->resolutionBusy());
+        CHECK(restarted.controller->commands()->markResolved(restarted.id,
+                                                             revisionOf(openedFile(*restarted.controller)), true));
+        waitFor(*restarted.controller, [&] { return !restarted.controller->commands()->resolutionBusy(); });
         const auto &file = openedFile(*restarted.controller);
         CHECK(file.publication().writeOutcome() && file.publication().writeOutcome()->outcome == Outcome::Failed);
         CHECK(!file.facts().resolved);
@@ -771,7 +778,8 @@ int main(int argc, char **argv)
         auto summary = controller.completion()->handoffData();
         CHECK(!summary.value("canLeave").toBool() && summary.value("leaveBlocker").toString() == pendingBlocker);
         CHECK(!summary.value("clean").toBool() && summary.value("sessionBlockers").toStringList().isEmpty());
-        CHECK(handoffEntry(summary, session.id).value("action").toString() == "retry-recovery");
+        CHECK(handoffEntry(summary, session.id).value("action").value<FileStates::NextAction>()
+              == FileStates::NextAction::RetryRecovery);
         CHECK(!controller.completion()->leave());
         CHECK(controller.feedback()->message() == pendingBlocker);
         CHECK(end.count == 0 && controller.completion()->outcome().isEmpty());
@@ -856,7 +864,10 @@ int main(int argc, char **argv)
         session.controller.editor()->attach(&editor);
         CHECK(session.controller.feedback()->markerBlocker().isEmpty()
               && !session.controller.commands()->showFirstMarker());
-        CHECK(!session.controller.commands()->markResolved(session.id, session.revision(), true));
+        CHECK(session.controller.commands()->markResolved(session.id, session.revision(), true));
+        waitFor(session.controller, [&] {
+            return !session.controller.commands()->resolutionBusy() && !session.controller.store()->recording();
+        });
         CHECK(session.controller.feedback()->message()
               == QStringLiteral(
                   "Mark resolved is blocked: 1 conflict-marker block and 1 stray conflict-marker line remain; "
@@ -873,7 +884,10 @@ int main(int argc, char **argv)
         // A newer revision retires the action until Mark resolved is refused again.
         CHECK(session.controller.feedback()->markerBlocker().isEmpty()
               && !session.controller.commands()->showFirstMarker());
-        CHECK(!session.controller.commands()->markResolved(session.id, session.revision(), true));
+        CHECK(session.controller.commands()->markResolved(session.id, session.revision(), true));
+        waitFor(session.controller, [&] {
+            return !session.controller.commands()->resolutionBusy() && !session.controller.store()->recording();
+        });
         CHECK(session.controller.feedback()->message()
               == QStringLiteral("Mark resolved is blocked: 2 conflict-marker blocks remain; first at line 2. The "
                                 "repository file is unchanged."));
@@ -882,7 +896,10 @@ int main(int argc, char **argv)
         editor.setProperty("cursorPosition", 0);
         CHECK(session.controller.commands()->showFirstMarker() && editor.property("cursorPosition").toInt() == 4);
         replace("only\n>>>>>>> theirs\n");
-        CHECK(!session.controller.commands()->markResolved(session.id, session.revision(), true));
+        CHECK(session.controller.commands()->markResolved(session.id, session.revision(), true));
+        waitFor(session.controller, [&] {
+            return !session.controller.commands()->resolutionBusy() && !session.controller.store()->recording();
+        });
         CHECK(session.controller.feedback()->message()
               == QStringLiteral("Mark resolved is blocked: 1 stray conflict-marker line remains; first at line 2. The "
                                 "repository file is unchanged."));
@@ -1045,7 +1062,7 @@ int main(int argc, char **argv)
         const auto current = openedFile(controller).current().id;
         for (const auto &command : commands) {
             // A revision that is not the file's current one, and one that does not parse.
-            refuses(command, "tracked.txt", QString::number(static_cast<qulonglong>(current + 1)),
+            refuses(command, "tracked.txt", QString::number(static_cast<qulonglong>(current) + 1),
                     command.staleMessage);
             refuses(command, "tracked.txt", QStringLiteral("not a revision"), stale);
             // A file other than the selected one.

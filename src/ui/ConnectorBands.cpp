@@ -75,164 +75,177 @@ QVariantMap ConnectorBands::bandAt(qreal x, qreal y, qreal width, bool leftSide)
     }
     return {};
 }
-void ConnectorBands::update()
+QVariantList ConnectorBands::projectPassages(const QMap<int, QString> &lines) const
 {
-    QVariantList all = bands_;
-    if (projectionDirty_) {
-        all.clear();
-        QMap<int, QString> lines, boundaries;
-        const auto decide = [](QMap<int, QString> &states, int line, const QString &kind) {
-            if (!states.contains(line) || PaneMarks::rank(states.value(line)) < PaneMarks::rank(kind))
-                states[line] = kind;
+    QVariantList projected;
+    for (const auto &value : PaneMarks::decoratedPassages(passages_)) {
+        const auto passage = value.toMap();
+        if (string(passage, "side") != side_) continue;
+        const int sb = number(passage, "sourceLineBegin"), se = number(passage, "sourceLineEnd");
+        const int rb = number(passage, "resultLineBegin"), re = number(passage, "resultLineEnd");
+        const auto kind = string(passage, "kind");
+        const bool equal = passage.value(QStringLiteral("comparisonKind"), kind).toString() == QLatin1String("equal");
+        if (!equal || sb >= se || se - sb != re - rb) {
+            projected.append(value);
+            continue;
+        }
+        // Equal correspondence is exact line by line. Split it at decision
+        // boundaries so accepting one line never tints its equal neighbours.
+        const auto kindAt = [&](int line) {
+            const auto state = lines.value(line);
+            return PaneMarks::rank(state) > PaneMarks::rank(kind) ? state : kind;
         };
-        const auto conflicts = PaneMarks::conflictingLines(passages_);
-        for (const auto &region : PaneMarks::stylingRegions(contributions_)) {
-            if (region.side != side_) continue;
-            const auto state = region.state;
-            if (state == QLatin1String("undecided") && !PaneMarks::conflictingRegion(region, conflicts)) continue;
-            const auto kind = state == QLatin1String("undecided") ? QStringLiteral("conflict") : state;
-            const int begin = region.sourceLineBegin, end = region.sourceLineEnd;
-            if (begin == end) decide(boundaries, begin, kind);
-            for (int line = begin; line < end; ++line) decide(lines, line, kind);
+        for (int first = sb; first < se;) {
+            const auto state = kindAt(first);
+            int stop = first + 1;
+            while (stop < se && kindAt(stop) == state) ++stop;
+            auto part = passage;
+            part[QStringLiteral("kind")] = state;
+            part[QStringLiteral("sourceLineBegin")] = first;
+            part[QStringLiteral("sourceLineEnd")] = stop;
+            part[QStringLiteral("resultLineBegin")] = rb + first - sb;
+            part[QStringLiteral("resultLineEnd")] = rb + stop - sb;
+            projected.append(part);
+            first = stop;
         }
-        const auto rows = fold_.value(QStringLiteral("rows")).toMap();
-        QMap<int, int> folded;
-        QVariantList projected;
-        for (const auto &value : PaneMarks::decoratedPassages(passages_)) {
-            const auto passage = value.toMap();
-            if (string(passage, "side") != side_) continue;
-            const int sb = number(passage, "sourceLineBegin"), se = number(passage, "sourceLineEnd");
-            const int rb = number(passage, "resultLineBegin"), re = number(passage, "resultLineEnd");
-            const auto kind = string(passage, "kind");
-            const bool equal =
-                passage.value(QStringLiteral("comparisonKind"), kind).toString() == QLatin1String("equal");
-            if (!equal || sb >= se || se - sb != re - rb) {
-                projected.append(value);
-                continue;
-            }
-            // Equal correspondence is exact line by line. Split it at decision
-            // boundaries so accepting one line never tints its equal neighbours.
-            const auto kindAt = [&](int line) {
-                const auto state = lines.value(line);
-                return PaneMarks::rank(state) > PaneMarks::rank(kind) ? state : kind;
-            };
-            for (int first = sb; first < se;) {
-                const auto state = kindAt(first);
-                int stop = first + 1;
-                while (stop < se && kindAt(stop) == state) ++stop;
-                auto part = passage;
-                part[QStringLiteral("kind")] = state;
-                part[QStringLiteral("sourceLineBegin")] = first;
-                part[QStringLiteral("sourceLineEnd")] = stop;
-                part[QStringLiteral("resultLineBegin")] = rb + first - sb;
-                part[QStringLiteral("resultLineEnd")] = rb + stop - sb;
-                projected.append(part);
-                first = stop;
-            }
-        }
-        for (const auto &value : projected) {
-            const auto passage = value.toMap();
-            if (string(passage, "side") != side_) continue;
-            const auto passageKind = string(passage, "kind");
-            const int sb = number(passage, "sourceLineBegin"), se = number(passage, "sourceLineEnd");
-            const int rb = number(passage, "resultLineBegin"), re = number(passage, "resultLineEnd");
-            int row = 0, stop = 0;
-            for (auto it = rows.cbegin(); it != rows.cend(); ++it) {
-                const int first = it.key().toInt(), last = number(it.value().toMap(), "last") + 1;
-                if (meets(rb, re, first, last)) {
-                    row = first;
-                    stop = last;
-                    break;
-                }
-            }
-            if (row > 0 && (passageKind != QLatin1String("equal") || (rb > row && re <= stop))) {
-                if (folded.contains(row)) {
-                    const int i = folded.value(row);
-                    auto band = all.at(i).toMap();
-                    band[QStringLiteral("sourceBegin")] = std::min(number(band, "sourceBegin"), sb);
-                    band[QStringLiteral("sourceEnd")] = std::max(number(band, "sourceEnd"), se);
-                    band[QStringLiteral("resultBegin")] = std::min(number(band, "resultBegin"), rb);
-                    band[QStringLiteral("resultEnd")] = std::max(number(band, "resultEnd"), re);
-                    all[i] = band;
-                } else {
-                    folded[row] = static_cast<int>(all.size());
-                    all.append(QVariantMap{{"kind", "conflict"},
-                                           {"sourceBegin", sb},
-                                           {"sourceEnd", se},
-                                           {"resultBegin", std::min(row, rb)},
-                                           {"resultEnd", std::max(stop, re)}});
-                }
-                continue;
-            }
-            if (passageKind == QLatin1String("equal")) continue;
-            QString kind = passageKind == QLatin1String("result-only") || passageKind == QLatin1String("added")
-                ? QStringLiteral("added")
-                : passageKind == QLatin1String("source-only") ? QStringLiteral("removed")
-                                                              : QStringLiteral("changed");
-            const auto &states = sb == se ? boundaries : lines;
-            for (int line = sb; line < std::max(se, sb + 1); ++line)
-                if (states.contains(line) && PaneMarks::rank(states.value(line)) > PaneMarks::rank(kind))
-                    kind = states.value(line);
-            for (const auto &blockValue : markerBlocks_) {
-                const auto block = blockValue.toMap();
-                if (meets(rb, re, number(block, "resultLineBegin"), number(block, "resultLineEnd"))) {
-                    kind = QStringLiteral("conflict");
-                    break;
-                }
-            }
-            all.append(QVariantMap{
-                {"kind", kind}, {"sourceBegin", sb}, {"sourceEnd", se}, {"resultBegin", rb}, {"resultEnd", re}});
-        }
-        projectionDirty_ = false;
     }
+    return projected;
+}
+
+void ConnectorBands::appendBand(const QVariantMap &passage, const QVariantMap &rows, const QMap<int, QString> &lines,
+                                const QMap<int, QString> &boundaries, QVariantList &all, QMap<int, int> &folded) const
+{
+    if (string(passage, "side") != side_) return;
+    const auto passageKind = string(passage, "kind");
+    const int sb = number(passage, "sourceLineBegin"), se = number(passage, "sourceLineEnd");
+    const int rb = number(passage, "resultLineBegin"), re = number(passage, "resultLineEnd");
+    int row = 0, stop = 0;
+    for (auto it = rows.cbegin(); it != rows.cend(); ++it) {
+        const int first = it.key().toInt(), last = number(it.value().toMap(), "last") + 1;
+        if (meets(rb, re, first, last)) {
+            row = first;
+            stop = last;
+            break;
+        }
+    }
+    if (row > 0 && (passageKind != QLatin1String("equal") || (rb > row && re <= stop))) {
+        if (folded.contains(row)) {
+            const int i = folded.value(row);
+            auto band = all.at(i).toMap();
+            band[QStringLiteral("sourceBegin")] = std::min(number(band, "sourceBegin"), sb);
+            band[QStringLiteral("sourceEnd")] = std::max(number(band, "sourceEnd"), se);
+            band[QStringLiteral("resultBegin")] = std::min(number(band, "resultBegin"), rb);
+            band[QStringLiteral("resultEnd")] = std::max(number(band, "resultEnd"), re);
+            all[i] = band;
+        } else {
+            folded[row] = static_cast<int>(all.size());
+            all.append(QVariantMap{{"kind", "conflict"},
+                                   {"sourceBegin", sb},
+                                   {"sourceEnd", se},
+                                   {"resultBegin", std::min(row, rb)},
+                                   {"resultEnd", std::max(stop, re)}});
+        }
+        return;
+    }
+    if (passageKind == QLatin1String("equal")) return;
+    QString kind = passageKind == QLatin1String("result-only") || passageKind == QLatin1String("added")
+        ? QStringLiteral("added")
+        : passageKind == QLatin1String("source-only") ? QStringLiteral("removed")
+                                                      : QStringLiteral("changed");
+    const auto &states = sb == se ? boundaries : lines;
+    for (int line = sb; line < std::max(se, sb + 1); ++line)
+        if (states.contains(line) && PaneMarks::rank(states.value(line)) > PaneMarks::rank(kind))
+            kind = states.value(line);
+    for (const auto &blockValue : markerBlocks_) {
+        const auto block = blockValue.toMap();
+        if (meets(rb, re, number(block, "resultLineBegin"), number(block, "resultLineEnd"))) {
+            kind = QStringLiteral("conflict");
+            break;
+        }
+    }
+    all.append(
+        QVariantMap{{"kind", kind}, {"sourceBegin", sb}, {"sourceEnd", se}, {"resultBegin", rb}, {"resultEnd", re}});
+}
+
+QVariantList ConnectorBands::projectBands() const
+{
+    QMap<int, QString> lines, boundaries;
+    const auto decide = [](QMap<int, QString> &states, int line, const QString &kind) {
+        if (!states.contains(line) || PaneMarks::rank(states.value(line)) < PaneMarks::rank(kind)) states[line] = kind;
+    };
+    const auto conflicts = PaneMarks::conflictingLines(passages_);
+    for (const auto &region : PaneMarks::stylingRegions(contributions_)) {
+        if (region.side != side_) continue;
+        const auto state = region.state;
+        if (state == QLatin1String("undecided") && !PaneMarks::conflictingRegion(region, conflicts)) continue;
+        const auto kind = state == QLatin1String("undecided") ? QStringLiteral("conflict") : state;
+        const int begin = region.sourceLineBegin, end = region.sourceLineEnd;
+        if (begin == end) decide(boundaries, begin, kind);
+        for (int line = begin; line < end; ++line) decide(lines, line, kind);
+    }
+    const auto rows = fold_.value(QStringLiteral("rows")).toMap();
+    QMap<int, int> folded;
+    QVariantList all;
+    for (const auto &value : projectPassages(lines)) appendBand(value.toMap(), rows, lines, boundaries, all, folded);
+    return all;
+}
+
+qreal ConnectorBands::bandEdge(bool source, int begin, int end, bool bottom) const
+{
+    const auto *blocks = source ? sourceBlocks_.data() : resultBlocks_.data();
+    const qreal parent = source ? 0 : resultParentY_ - sourceParentY_;
+    const qreal offset =
+        source ? sourceEditorY_ + sourcePadding_ - sourceScroll_ : resultEditorY_ + resultPadding_ - resultScroll_;
+    // Half-open endpoints use the laid-out block boundaries, including
+    // wrapped rows and the single visible row of a folded marker block.
+    return parent + offset + blocks->yAtLine(bottom ? end : begin) + (begin < end ? 0 : (bottom ? rule_ : -rule_) / 2);
+}
+
+qsizetype ConnectorBands::shownIndex(const QVariantList &all, bool below) const
+{
+    const qreal extent = below ? viewportHeight_ : 0;
+    const qreal sourceLine = sourceBlocks_->lineAtY(sourceScroll_ + extent - sourceEditorY_ - sourcePadding_);
+    const qreal resultLine = resultBlocks_->lineAtY(resultScroll_ + extent - resultEditorY_ - resultPadding_
+                                                    - resultParentY_ + sourceParentY_);
+    qsizetype low = 0, high = all.size();
+    while (low < high) {
+        const qsizetype middle = low + (high - low) / 2;
+        const auto band = all.at(middle).toMap();
+        const bool found = below ? number(band, "sourceBegin") > sourceLine && number(band, "resultBegin") > resultLine
+                                 : number(band, "sourceEnd") >= sourceLine || number(band, "resultEnd") >= resultLine;
+        if (found)
+            high = middle;
+        else
+            low = middle + 1;
+    }
+    return low;
+}
+
+bool ConnectorBands::currentBand(int begin, int end) const
+{
+    for (const auto &rangeValue : current_) {
+        const auto range = rangeValue.toList();
+        if (range.size() >= 2 && begin < std::max(range[1].toInt(), range[0].toInt() + 1)
+            && range[0].toInt() < std::max(end, begin + 1)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+QVariantList ConnectorBands::collectVisibleBands(const QVariantList &all) const
+{
     QVariantList visible;
     if (sourceBlocks_ && resultBlocks_ && viewportHeight_ > 0) {
-        const auto edge = [&](bool source, int begin, int end, bool bottom) {
-            const auto *blocks = source ? sourceBlocks_.data() : resultBlocks_.data();
-            const qreal parent = source ? 0 : resultParentY_ - sourceParentY_;
-            const qreal offset = source ? sourceEditorY_ + sourcePadding_ - sourceScroll_
-                                        : resultEditorY_ + resultPadding_ - resultScroll_;
-            // Half-open endpoints use the laid-out block boundaries, including
-            // wrapped rows and the single visible row of a folded marker block.
-            return parent + offset + blocks->yAtLine(bottom ? end : begin)
-                + (begin < end ? 0 : (bottom ? rule_ : -rule_) / 2);
-        };
-        const auto shownIndex = [&](bool below) {
-            const qreal extent = below ? viewportHeight_ : 0;
-            const qreal sourceLine = sourceBlocks_->lineAtY(sourceScroll_ + extent - sourceEditorY_ - sourcePadding_);
-            const qreal resultLine = resultBlocks_->lineAtY(resultScroll_ + extent - resultEditorY_ - resultPadding_
-                                                            - resultParentY_ + sourceParentY_);
-            qsizetype low = 0, high = all.size();
-            while (low < high) {
-                const qsizetype middle = low + (high - low) / 2;
-                const auto band = all.at(middle).toMap();
-                const bool found = below
-                    ? number(band, "sourceBegin") > sourceLine && number(band, "resultBegin") > resultLine
-                    : number(band, "sourceEnd") >= sourceLine || number(band, "resultEnd") >= resultLine;
-                if (found)
-                    high = middle;
-                else
-                    low = middle + 1;
-            }
-            return low;
-        };
-        const qsizetype first = shownIndex(false), last = shownIndex(true);
+        const qsizetype first = shownIndex(all, false), last = shownIndex(all, true);
         for (qsizetype i = first; i < last; ++i) {
             auto band = all.at(i).toMap();
             const int sb = number(band, "sourceBegin"), se = number(band, "sourceEnd");
             const int rb = number(band, "resultBegin"), re = number(band, "resultEnd");
-            const qreal st = edge(true, sb, se, false), sl = edge(true, sb, se, true);
-            const qreal rt = edge(false, rb, re, false), rl = edge(false, rb, re, true);
+            const qreal st = bandEdge(true, sb, se, false), sl = bandEdge(true, sb, se, true);
+            const qreal rt = bandEdge(false, rb, re, false), rl = bandEdge(false, rb, re, true);
             if (std::max(sl, rl) < 0 || std::min(st, rt) > viewportHeight_) continue;
-            bool current = false;
-            for (const auto &rangeValue : current_) {
-                const auto range = rangeValue.toList();
-                if (range.size() >= 2 && sb < std::max(range[1].toInt(), range[0].toInt() + 1)
-                    && range[0].toInt() < std::max(se, sb + 1)) {
-                    current = true;
-                    break;
-                }
-            }
+            const bool current = currentBand(sb, se);
             band.insert(QStringLiteral("current"), current);
             band.insert(QStringLiteral("sourceTop"), st);
             band.insert(QStringLiteral("sourceBottom"), sl);
@@ -241,6 +254,14 @@ void ConnectorBands::update()
             visible.append(band);
         }
     }
+    return visible;
+}
+
+void ConnectorBands::update()
+{
+    const auto all = projectionDirty_ ? projectBands() : bands_;
+    projectionDirty_ = false;
+    const auto visible = collectVisibleBands(all);
     if (bands_ == all && visibleBands_ == visible) return;
     bands_ = all;
     visibleBands_ = visible;

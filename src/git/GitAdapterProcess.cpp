@@ -10,10 +10,11 @@
 #include <algorithm>
 #include <cerrno>
 #include <csignal>
-#include <cstring>
 #include <fcntl.h>
 #include <pwd.h>
+#include <system_error>
 #include <unistd.h>
+#include <vector>
 
 namespace branch_truce::git {
 namespace {
@@ -25,6 +26,23 @@ using detail::outputLimit;
 using detail::secureExecutable;
 // A larger GIT_CONFIG_COUNT is not taken at all.
 constexpr int kMaxConfigEntries = 1024;
+
+QString accountHome()
+{
+    constexpr std::size_t recordLimit = 1048576;
+    std::vector<char> buffer(1024);
+    struct passwd user{};
+    struct passwd *found = nullptr;
+    int error = 0;
+    do {
+        error = ::getpwuid_r(::geteuid(), &user, buffer.data(), buffer.size(), &found);
+        if (error == ERANGE) {
+            if (buffer.size() >= recordLimit) return {};
+            buffer.resize(buffer.size() * 2);
+        }
+    } while (error == ERANGE);
+    return error == 0 && found ? QFile::decodeName(user.pw_dir) : QString{};
+}
 
 [[noreturn]] void failNativeLaunch(int fd, int error)
 {
@@ -96,10 +114,7 @@ GitEnvironment GitEnvironment::from(const QProcessEnvironment &environment)
     };
     GitEnvironment selected;
     selected.home = path(QStringLiteral("HOME"));
-    if (selected.home.isEmpty()) {
-        if (const auto *user = ::getpwuid(::geteuid()); user != nullptr)
-            selected.home = QFile::decodeName(user->pw_dir);
-    }
+    if (selected.home.isEmpty()) selected.home = accountHome();
     selected.configHome = path(QStringLiteral("XDG_CONFIG_HOME"));
     selected.globalConfig = path(QStringLiteral("GIT_CONFIG_GLOBAL"));
     selected.systemConfig = path(QStringLiteral("GIT_CONFIG_SYSTEM"));
@@ -128,7 +143,8 @@ bool detail::exactPath(const QString &path)
 bool detail::secureExecutable(const QString &path, struct stat &identity)
 {
     if (::stat(QFile::encodeName(path).constData(), &identity) != 0 || !S_ISREG(identity.st_mode)
-        || (identity.st_mode & (S_IWGRP | S_IWOTH)) != 0 || (identity.st_uid != 0 && identity.st_uid != ::geteuid())
+        || (identity.st_mode & (static_cast<mode_t>(S_IWGRP) | static_cast<mode_t>(S_IWOTH))) != 0
+        || (identity.st_uid != 0 && identity.st_uid != ::geteuid())
         || ::access(QFile::encodeName(path).constData(), X_OK) != 0) {
         return false;
     }
@@ -137,8 +153,8 @@ bool detail::secureExecutable(const QString &path, struct stat &identity)
         struct stat parent{};
         if (::stat(QFile::encodeName(directory).constData(), &parent) != 0
             || (parent.st_uid != 0 && parent.st_uid != ::geteuid())
-            || ((parent.st_mode & (S_IWGRP | S_IWOTH)) != 0
-                && !(parent.st_uid == 0 && (parent.st_mode & S_ISVTX) != 0))) {
+            || ((parent.st_mode & (static_cast<mode_t>(S_IWGRP) | static_cast<mode_t>(S_IWOTH))) != 0
+                && (parent.st_uid != 0 || (parent.st_mode & static_cast<mode_t>(S_ISVTX)) == 0))) {
             return false;
         }
         if (directory == QLatin1String("/")) {
@@ -286,7 +302,8 @@ void GitAdapter::State::observeNativeLaunch()
         nativeLaunchFailed = true;
         if (!stopping) {
             result.outcome = Outcome::LaunchFailure;
-            result.problem = {ProblemCode::GitStartFailed, {QString::fromLocal8Bit(std::strerror(error))}};
+            result.problem = {ProblemCode::GitStartFailed,
+                              {QString::fromStdString(std::generic_category().message(error))}};
         }
         stopping = true;
     }

@@ -5,13 +5,10 @@
 #include <QTranslator>
 
 namespace branch_truce {
-namespace {
-const auto catalogDirectory = QStringLiteral(":/branch-truce/i18n");
-const auto catalogName = QStringLiteral("branch-truce");
-}
-
 bool installTranslations(QCoreApplication &application)
 {
+    const auto catalogDirectory = QStringLiteral(":/branch-truce/i18n");
+    const auto catalogName = QStringLiteral("branch-truce");
     auto *english = new QTranslator(&application);
     const bool loaded = english->load(catalogName + QStringLiteral("_en"), catalogDirectory);
     if (loaded)

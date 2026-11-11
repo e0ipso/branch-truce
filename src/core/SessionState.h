@@ -20,6 +20,8 @@
 
 namespace branch_truce {
 
+struct MetadataBudget;
+
 // A revision a recovery journal recorded: its id, the id of the revision whose
 // result text it repeats, its draft and its hand-edited anchors and ranges.
 struct RecordedRevision {
@@ -229,7 +231,7 @@ private:
     // the next id. Without a mapping the current one is recomputed against
     // the new text.
     [[nodiscard]] Revision successor(Draft draft, std::shared_ptr<const CorrespondenceMap> correspondence = {},
-                                     std::optional<RevisionId> id = std::nullopt) const;
+                                     std::optional<RevisionId> next = std::nullopt) const;
     // Why a draft cannot replace the current one, or Applied.
     [[nodiscard]] Transition validateDraft(RevisionId expected, const Draft &draft) const;
     // A fresh revision repeating `revision`'s text, decisions and mapping.
@@ -240,6 +242,10 @@ private:
     [[nodiscard]] Transition validateTarget(const ResultAnchor &target) const;
     [[nodiscard]] Transition validateEdit(const EditingCommand &command, const ResultEdit &edit,
                                           const ResultEdit *previous, bool confirmReplacement) const;
+    [[nodiscard]] Transition admitCommandResources(const EditingCommand &command,
+                                                   std::vector<const ResultEdit *> &edits, MetadataBudget &work) const;
+    [[nodiscard]] Transition cleanupMarkers(const EditingCommand &command, const std::vector<const ResultEdit *> &edits,
+                                            Draft &draft, CorrespondenceMap &updated, MetadataBudget &work) const;
 
     std::string id_;
     std::string path_;

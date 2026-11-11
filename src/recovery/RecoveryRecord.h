@@ -57,7 +57,7 @@ void requireRecord(bool condition, const char *detail);
 class RecoveryRecordReader {
 public:
     RecoveryRecordReader(const storage::RecoveryStore &store, const QJsonObject &state,
-                         qint64 retainedBytes = 256 * 1024 * 1024,
+                         qint64 retainedBytes = 256LL * 1024 * 1024,
                          const QMap<QByteArray, QByteArray> *encodedPayloads = nullptr);
     [[nodiscard]] FileSession checkpointFile(std::shared_ptr<const CorrespondenceAlgorithm> correspondence = {}) const;
     [[nodiscard]] RecoveryAction action() const;

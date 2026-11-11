@@ -6,9 +6,8 @@ import BranchTruce.App
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
-import org.kde.kirigami.delegates as KirigamiDelegates
 
-KirigamiDelegates.SubtitleDelegate {
+ItemDelegate {
     id: row
     required property int index
     required property string fileId
@@ -37,9 +36,11 @@ KirigamiDelegates.SubtitleDelegate {
     rightInset: 0
     topInset: 0
     bottomInset: 0
-    // The path alone names the row, so a screen reader reads it as the list item's name.
-    text: row.path
-    subtitle: row.statusLine
+    // The custom plain labels render the path. Native styles may retain an
+    // unused auto-text label, so keep their backing text empty.
+    text: ""
+    Accessible.name: row.path
+    property string subtitle: row.statusLine
     Accessible.description: row.summary
     icon.name: row.statusIcon
     highlighted: current
@@ -48,21 +49,12 @@ KirigamiDelegates.SubtitleDelegate {
     // so each row shows its own tooltip, which closes as soon as the row loses the pointer.
     ToolTip.visible: false
     // It holds the summary, which the row does not show, and a status line the row elides.
-    ToolTip {
-        text: row.text + "\n\n" + (subtitleLabel.truncated ? row.subtitle + "\n\n" : "") + row.summary
+    PlainToolTip {
+        literalText: row.path + "\n\n" + (subtitleLabel.truncated ? row.subtitle + "\n\n" : "") + row.summary
         visible: row.hovered
         delay: Kirigami.Units.toolTipDelay
         exit: null
-        // A path or a status line is plain text, as the shared tooltip shows it.
-        Component.onCompleted: {
-            const pending = [contentItem];
-            while (pending.length > 0) {
-                const next = pending.pop();
-                if (next["textFormat"] !== undefined)
-                    next["textFormat"] = Text.PlainText;
-                pending.push(...next.children);
-            }
-        }
+
     }
     Keys.onReturnPressed: row.clicked()
     Keys.onEnterPressed: row.clicked()

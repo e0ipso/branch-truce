@@ -56,6 +56,8 @@ public:
         CHECK(controller.store()->appendFile(pythonFile("app", "src/app.py")));
         CHECK(controller.store()->appendFile(pythonFile("unknown", "src/app.unknownext")));
         CHECK(controller.store()->appendFile(pythonFile("notes", "docs/notes.txt")));
+        test_support::awaitRecovery(*controller.store());
+        CHECK(!controller.store()->hasPendingRecovery());
         CHECK(controller.selection()->select("app"));
         engine.setInitialProperties(controller.windowProperties());
         engine.loadFromModule("BranchTruce", "Main");
@@ -199,6 +201,15 @@ public:
     int run()
     {
         test_support::Suite suite("SyntaxHighlightingTests");
+        addSyntaxAndDecorationCases(suite);
+        addEditedBlockCase(suite);
+        addOverlayPrecedenceCase(suite);
+        return suite.report();
+    }
+
+private:
+    static void addSyntaxAndDecorationCases(test_support::Suite &suite)
+    {
 #ifdef BRANCH_TRUCE_SYNTAX_HIGHLIGHTING
         suite.run("app.py gets the Python definition in every pane and an unknown extension gets none", [] {
             Fixture fixture;
@@ -421,6 +432,10 @@ public:
             CHECK(result->toPlainText() == text);
             CHECK(highlighter->document() == result);
         });
+    }
+
+    static void addEditedBlockCase(test_support::Suite &suite)
+    {
         suite.run("edits before decorated blocks keep their local formats without another layout pass", [] {
             QTextDocument document;
             // Match a Quick editor: initialize its layout before highlighting.
@@ -538,6 +553,10 @@ public:
             QObject::disconnect(changed);
             QObject::disconnect(laidOut);
         });
+    }
+
+    static void addOverlayPrecedenceCase(test_support::Suite &suite)
+    {
         suite.run("local overlays follow replacement splitting deletion and search precedence", [] {
             QTextDocument document;
             document.setPlainText(QStringLiteral("plain text line\n").repeated(32));
@@ -599,7 +618,6 @@ public:
             for (auto current = document.begin(); current.isValid(); current = current.next())
                 CHECK(current.layout()->formats().isEmpty());
         });
-        return suite.report();
     }
 };
 

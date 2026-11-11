@@ -18,6 +18,7 @@
 #include <QThread>
 #include <QUuid>
 #include <climits>
+#include <cmath>
 #include <optional>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -106,6 +107,21 @@ QString attachRefusal(const Reply &reply, const QString &invocation)
     return {};
 }
 
+bool readSources(const QByteArray &mergedPath, const QByteArray &path, MergetoolSources &sources, Problem &error)
+{
+    sources.path = path;
+    if (!readMergetoolFile(mergedPath, &sources.merged, &error)) return false;
+    const auto readSide = [&](const char *name, QByteArray *bytes, bool *present) {
+        const auto path = qgetenv(name);
+        if (path.isEmpty()) return true;
+        *present = true;
+        return readMergetoolFile(path, bytes, &error);
+    };
+    return readSide("BASE", &sources.base, &sources.basePresent)
+        && readSide("LOCAL", &sources.local, &sources.localPresent)
+        && readSide("REMOTE", &sources.remote, &sources.remotePresent);
+}
+
 // Git stages whatever MERGED holds once this launcher exits 0, so MERGED must
 // still hold the canonical object the session wrote. Git converts the bytes
 // the way it will when it stages them.
@@ -119,7 +135,7 @@ QString resolvedRefusal(const git::GitProgram &git, const QByteArray &mergedPath
     request.operation = git::Operation::CanonicalizeText;
     request.directory = QDir::currentPath();
     request.path = path;
-    request.input = bytes;
+    request.input = std::move(bytes);
     const auto canonical = git::runBlocking(git, request);
     if (canonical.outcome != git::Outcome::Success)
         return Text::tr("Git could not check the written result in MERGED, so it is not staged.");
@@ -148,7 +164,7 @@ std::optional<QString> guiProgram(QString *error)
     const QByteArray deleted(" (deleted)");
     if (!link.endsWith(deleted)) return QFile::decodeName(link);
     link.chop(deleted.size());
-    const auto installed = QFile::decodeName(link);
+    auto installed = QFile::decodeName(link);
     const QFileInfo program(installed);
     if (program.isFile() && program.isExecutable()) return installed;
     *error = Text::tr("%1 was removed after this launcher started, so it cannot start Branch Truce.").arg(installed);
@@ -183,6 +199,17 @@ bool connectUntilDeadline(QLocalSocket *socket, const QString &name, qint64 dead
 }
 }
 
+namespace {
+std::optional<qint64> launcherWaitMilliseconds(const QCommandLineParser &parser, const QCommandLineOption &option)
+{
+    if (!parser.isSet(option)) return kSessionWaitMs;
+    bool number = false;
+    const auto seconds = parser.value(option).toDouble(&number);
+    if (!number || !std::isfinite(seconds) || seconds < 0 || seconds > 3600) return std::nullopt;
+    return static_cast<qint64>(seconds * 1000);
+}
+}
+
 QString startInstalledWindow(const QString &worktreeRoot, const QByteArray &path)
 {
     QString error;
@@ -213,14 +240,9 @@ int runMergetoolLauncher(const QStringList &arguments, const git::GitProgram &gi
     parser.addOption(noWindow);
     if (!parser.parse(arguments) || !parser.positionalArguments().isEmpty())
         return fail(parser.errorText().isEmpty() ? Text::tr("The launcher takes no arguments.") : parser.errorText());
-    qint64 waitMs = kSessionWaitMs;
-    if (parser.isSet(sessionWait)) {
-        bool number = false;
-        const auto seconds = parser.value(sessionWait).toDouble(&number);
-        if (!number || seconds < 0 || seconds > 3600)
-            return fail(Text::tr("--session-wait takes a number of seconds from 0 to 3600."));
-        waitMs = static_cast<qint64>(seconds * 1000);
-    }
+    const auto admittedWait = launcherWaitMilliseconds(parser, sessionWait);
+    if (!admittedWait) return fail(Text::tr("--session-wait takes a number of seconds from 0 to 3600."));
+    const qint64 waitMs = *admittedWait;
     const auto startWindow = parser.isSet(noWindow) ? MergetoolWindowStarter{} : options.startWindow;
     const auto mergedPath = qgetenv("MERGED");
     const auto repositoryPath = mergetoolRepositoryPath(mergedPath);
@@ -238,19 +260,8 @@ int runMergetoolLauncher(const QStringList &arguments, const git::GitProgram &gi
     }
 
     MergetoolSources sources;
-    sources.path = *repositoryPath;
     Problem error;
-    if (!readMergetoolFile(mergedPath, &sources.merged, &error)) return fail(problem_text::text(error));
-    const auto readSide = [&](const char *name, QByteArray *bytes, bool *present) {
-        const auto path = qgetenv(name);
-        if (path.isEmpty()) return true;
-        *present = true;
-        return readMergetoolFile(path, bytes, &error);
-    };
-    if (!readSide("BASE", &sources.base, &sources.basePresent)
-        || !readSide("LOCAL", &sources.local, &sources.localPresent)
-        || !readSide("REMOTE", &sources.remote, &sources.remotePresent))
-        return fail(problem_text::text(error));
+    if (!readSources(mergedPath, *repositoryPath, sources, error)) return fail(problem_text::text(error));
 
     // The window and every launcher of this user meet in one private directory.
     const auto directory = mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"));

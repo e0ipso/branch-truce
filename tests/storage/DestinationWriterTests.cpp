@@ -178,6 +178,7 @@ public:
     {
         const auto observed = captureDestination(root, "result.txt", std::move(files));
         CHECK(observed.destination && observed.failure == DestinationFailure::None);
+        if (!observed.destination) throw test_support::Failure("capture has no destination");
         CHECK(observed.destination->bytes() == original);
         return *observed.destination;
     }
@@ -208,11 +209,9 @@ void retained(const Fixture &fixture, const PublicationResult &result, const QBy
 }
 } // namespace
 
-int main(int argc, char **argv)
+namespace {
+void addDestinationCases(test_support::Suite &suite)
 {
-    QCoreApplication application(argc, argv);
-    test_support::configure(argc, argv);
-    test_support::Suite suite("DestinationWriterTests");
     suite.run("publication preserves bytes and permissions and supplies the next baseline", [] {
         for (const bool executable : {false, true}) {
             Fixture fixture;
@@ -230,7 +229,7 @@ int main(int argc, char **argv)
             CHECK(readFile(fixture.path()) == fixture.edited);
             struct stat metadata{};
             CHECK(::stat(fixture.native().constData(), &metadata) == 0);
-            CHECK((metadata.st_mode & 0777) == (executable ? 0750 : 0640));
+            CHECK((metadata.st_mode & 0777U) == (executable ? 0750U : 0640U));
             const auto next = publishDestination(*result.destination, {}, mode, [] { return true; });
             CHECK(next.state == PublicationState::Published && next.destination && next.destination->bytes().isEmpty());
             CHECK(readFile(fixture.path()).isEmpty());
@@ -241,6 +240,7 @@ int main(int argc, char **argv)
         Fixture fixture;
         const auto before = openDescriptors();
         std::vector<DestinationSnapshot> kept;
+        kept.reserve(400);
         // More than a 1024-descriptor limit would allow if each snapshot pinned its path.
         for (int index = 0; index < 400; ++index) kept.push_back(fixture.capture());
         CHECK_EQ(openDescriptors(), before);
@@ -346,6 +346,9 @@ int main(int argc, char **argv)
             fixture.clean();
         }
     });
+}
+void addMetadataAndWriteCases(test_support::Suite &suite)
+{
     suite.run("hardlinks special bits foreign ownership xattrs and ACLs fail closed", [] {
         for (const auto scenario : {"hardlink", "special-bits", "foreign-owner", "xattr", "acl"}) {
             SCOPE(scenario);
@@ -446,6 +449,9 @@ int main(int argc, char **argv)
             CHECK(interception->exchanges == 0);
         }
     });
+}
+void addExchangeAndCleanupCases(test_support::Suite &suite)
+{
     suite.run("each sync failure preserves the observed side of exchange", [] {
         for (int failSync = 1; failSync <= 4; ++failSync) {
             Fixture fixture;
@@ -574,5 +580,16 @@ int main(int argc, char **argv)
             CHECK(interception->exchanges == 1);
         }
     });
+}
+}
+
+int main(int argc, char **argv)
+{
+    QCoreApplication application(argc, argv);
+    test_support::configure(argc, argv);
+    test_support::Suite suite("DestinationWriterTests");
+    addDestinationCases(suite);
+    addMetadataAndWriteCases(suite);
+    addExchangeAndCleanupCases(suite);
     return suite.report();
 }

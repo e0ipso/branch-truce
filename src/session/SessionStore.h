@@ -131,7 +131,7 @@ public:
     // A typed edit: applied at once, joined to the file's burst and recorded
     // behind (see the class comment). Its passages stay provisional until
     // installAlignment().
-    Transition typeResult(const std::string &id, RevisionId expected, ResultEdit edit);
+    Transition typeResult(const std::string &id, RevisionId expected, const ResultEdit &edit);
     // Installs a map that CorrespondenceMap::realigned() built from the file's
     // pending alignment for `revision`, if that revision is still current.
     // Recovery records hold nothing it changes, so it writes none.

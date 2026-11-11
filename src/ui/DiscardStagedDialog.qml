@@ -4,7 +4,6 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import BranchTruce.App
-import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
@@ -18,6 +17,7 @@ Kirigami.PromptDialog {
     property string path: ""
     property string revision: ""
     property string failure: ""
+    property bool pending: false
     // Asks the owner to set plain text on an item and each label inside it.
     signal plainTextRequested(item: Item)
     // Both callers ask about the selected file, which has the display path.
@@ -29,10 +29,25 @@ Kirigami.PromptDialog {
         open();
     }
     function discard(): void {
-        if (commands.discardToStaged(fileId, revision))
-            close();
-        else
+        if (pending)
+            return;
+        pending = true;
+        if (!commands.discardToStaged(fileId, revision)) {
+            pending = false;
             failure = feedback.message;
+        }
+    }
+    Connections {
+        target: discardDialog.commands
+        function onStagedDiscardFinished(id: string, current: string, succeeded: bool): void {
+            if (!discardDialog.pending || id !== discardDialog.fileId || current !== discardDialog.revision)
+                return;
+            discardDialog.pending = false;
+            if (succeeded)
+                discardDialog.close();
+            else
+                discardDialog.failure = discardDialog.feedback.message;
+        }
     }
     objectName: "discardStagedDialog"
     title: qsTr("Discard draft?")

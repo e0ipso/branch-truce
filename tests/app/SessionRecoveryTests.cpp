@@ -78,14 +78,9 @@ int acknowledgeAndCrash(const QString &directory)
 }
 }
 
-int main(int argc, char **argv)
+namespace {
+void addChoiceRecoveryCases(test_support::Suite &suite)
 {
-    QCoreApplication app(argc, argv);
-    // The English catalog supplies the plural forms these checks read.
-    branch_truce::installTranslations(app);
-    if (app.arguments().size() == 3 && app.arguments()[1] == "--acknowledge-and-crash")
-        return acknowledgeAndCrash(app.arguments()[2]);
-    test_support::Suite suite("SessionRecoveryTests");
     for (const auto scope : {ChoiceScope::Line, ChoiceScope::Section}) {
         for (const auto action : {ChoiceAction::CombineLeftFirst, ChoiceAction::CombineRightFirst}) {
             suite.run(
@@ -155,6 +150,9 @@ int main(int argc, char **argv)
             checkRecoveredHistory(store, before, chosen);
         });
     }
+}
+void addCompoundAndPublicationCases(test_support::Suite &suite)
+{
     for (const int operation : {0, 1, 2}) {
         suite.run(std::string("a failed compound command retains one atomic recovery candidate: ")
                       + (operation == 0       ? "combination"
@@ -258,6 +256,9 @@ int main(int argc, char **argv)
             CHECK(replay.mutations[1].id == completed && replay.mutations[1].completed);
         });
     }
+}
+void addReplayOutcomeCases(test_support::Suite &suite)
+{
     suite.run("outcomes match the file and kind and failed staging does not complete an intent", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
@@ -479,6 +480,9 @@ int main(int argc, char **argv)
                               payload(reopened, attribute.toObject().value("value")));
             CHECK(policy == QMap<QByteArray, QByteArray>{{"eol", "crlf"}, {"text", "set"}});
         });
+}
+void addPendingAndDraftCases(test_support::Suite &suite)
+{
     suite.run("failed recovery retains pending input separately and retries its completed record once", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
@@ -854,6 +858,9 @@ int main(int argc, char **argv)
               && restored->revision(*restored->publication().checkpoint())->draft == unsavedDraft());
         CHECK(!restored->facts().unsaved && !restored->publication().written() && !restored->publication().staged());
     });
+}
+void addTypingOrderCases(test_support::Suite &suite)
+{
     suite.run("typed edits apply at once, one undo takes back their burst and one record holds it", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
@@ -1056,6 +1063,9 @@ int main(int argc, char **argv)
         CHECK(store.file("first")->current().draft.text == "result\n");
         CHECK(store.file("second")->current().draft.text == "result\n");
     });
+}
+void addShutdownReceiptCases(test_support::Suite &suite)
+{
     suite.run("a durable mutation receipt keeps its exact store lease across replacement", [] {
         QTemporaryDir directory;
         SessionStore store(directory.path() + "/recovery");
@@ -1101,5 +1111,28 @@ int main(int argc, char **argv)
         }
         CHECK(replayedFile(location).current().draft.text == typed);
     });
+}
+}
+
+int main(int argc, char **argv)
+try {
+    QCoreApplication app(argc, argv);
+    // The English catalog supplies the plural forms these checks read.
+    branch_truce::installTranslations(app);
+    if (app.arguments().size() == 3 && app.arguments()[1] == "--acknowledge-and-crash")
+        return acknowledgeAndCrash(app.arguments()[2]);
+    test_support::Suite suite("SessionRecoveryTests");
+    addChoiceRecoveryCases(suite);
+    addCompoundAndPublicationCases(suite);
+    addReplayOutcomeCases(suite);
+    addPendingAndDraftCases(suite);
+    addTypingOrderCases(suite);
+    addShutdownReceiptCases(suite);
     return suite.report();
+} catch (const std::exception &error) {
+    std::cerr << "FAIL session recovery setup: " << error.what() << '\n';
+    return 1;
+} catch (...) {
+    std::cerr << "FAIL session recovery setup: unknown exception\n";
+    return 1;
 }

@@ -15,6 +15,107 @@ using test_support::await;
 
 using namespace comparison_scene;
 
+namespace {
+void checkLiteralRepositoryText()
+{
+    Application controller(test_support::windowConfig());
+    Fixture fixture(controller);
+    // A file name cannot hold a slash, so the image address spells its slashes as entities.
+    const auto path = QStringLiteral("<b>x</b><img src=\"http:&#47;&#47;127.0.0.1:9&#47;probe\">.txt").toStdString();
+    auto sources = *test_support::choiceFile().snapshots();
+    sources.path = path;
+    const auto launch = sources.launchResult.text.utf8;
+    CHECK(controller.store()->appendFile(
+        FileSession("crafted", path, {launch, {}, 0}, {.snapshots = std::move(sources), .initializeChoices = true})));
+    const auto shown = controller.files()->displayPath("crafted");
+    CHECK(shown.toStdString() == path);
+    CHECK(controller.selection()->select("crafted"));
+    auto *pathLabel = fixture.item("selectedPath");
+    settle([&] { return pathLabel->property("text").toString() == shown; });
+    QString renderedPath;
+    const std::function<void(QQuickItem *)> readPath = [&](QQuickItem *item) {
+        if (!item->isVisible()) return;
+        if (item->inherits("QQuickText")) {
+            CHECK(item->property("textFormat").toInt() == Qt::PlainText);
+            renderedPath += item->property("text").toString();
+        }
+        for (auto *child : item->childItems()) readPath(child);
+    };
+    readPath(pathLabel);
+    CHECK(renderedPath == shown);
+    const auto initialRequests = fixture.networkRequests().size();
+    const auto message = QStringLiteral("Waiting for Git to stage %1.").arg(shown);
+    // Every label inside the item must show the message as plain characters. A label
+    // that took it as rich text reports the markup it built instead.
+    QStringList problems;
+    const auto expectPlain = [&](QQuickItem *root, const QString &what) {
+        int showing = 0;
+        const std::function<void(QQuickItem *)> visit = [&](QQuickItem *item) {
+            for (auto *child : item->childItems()) visit(child);
+            if (!item->inherits("QQuickText") && !item->inherits("QQuickTextEdit")) return;
+            // Rich text reads back as the HTML it built, which still holds these words.
+            const auto text = item->property("text").toString();
+            if (!text.contains(QStringLiteral("Waiting for Git to stage"))) return;
+            ++showing;
+            const auto *document = item->property("textDocument").value<QQuickTextDocument *>();
+            const auto rendered = document ? document->textDocument()->toPlainText() : text;
+            if (item->property("textFormat").toInt() != Qt::PlainText || text != message || rendered != message)
+                problems.append(what + QStringLiteral(" shows ") + rendered);
+        };
+        visit(root);
+        if (showing == 0) problems.append(what + QStringLiteral(" has no label"));
+    };
+    // Popup labels must be inspected in their rendered popup phase.
+    click(fixture, "openHandoff");
+    auto *handoff = fixture.object("handoffDialog");
+    settle([&] { return handoff->property("opened").toBool(); });
+    auto *outcome = test_support::visualItem(test_support::popupRoot(handoff), QStringLiteral("handoffOutcome"));
+    CHECK(outcome && outcome->setProperty("visible", true) && outcome->setProperty("text", message));
+    test_support::waitForFrames(fixture.window, "the literal handoff outcome is drawn");
+    expectPlain(outcome, QStringLiteral("handoffOutcome"));
+    const auto handoffRequests = fixture.networkRequests().size();
+    CHECK(QMetaObject::invokeMethod(handoff, "close"));
+    settle([&] { return !handoff->property("visible").toBool(); });
+    for (const auto *name : {"inventoryWarning", "recoveryProblem", "commandMessage", "parentStagingState",
+                             "mergetoolHolding", "mergetoolWait", "choiceNotice"}) {
+        auto *notice = fixture.item(name);
+        CHECK(notice->setProperty("visible", true) && notice->setProperty("text", message));
+    }
+    for (const auto *name : {"sessionPlaceholder", "selectedProblem"}) {
+        auto *placeholder = fixture.item(name);
+        CHECK(placeholder->setProperty("visible", true) && placeholder->setProperty("text", message)
+              && placeholder->setProperty("explanation", message));
+    }
+    test_support::waitForFrames(fixture.window, "the literal main notices are drawn");
+    const auto noticeRequests = fixture.networkRequests().size();
+    // Attached tooltips share one popup per engine.
+    auto *heading = fixture.item("repositoryHeading");
+    QQmlExpression shared(qmlContext(heading), heading, QStringLiteral("ToolTip.toolTip"));
+    auto *tooltip = shared.evaluate().value<QObject *>();
+    CHECK(tooltip && !shared.hasError());
+    CHECK(tooltip->setProperty("parent", QVariant::fromValue(heading)) && tooltip->setProperty("text", message)
+          && tooltip->setProperty("visible", true));
+    // Every label and the tooltip are laid out, and any image they named requested, by then.
+    test_support::waitForFrames(fixture.window, "the notices and the tooltip are drawn");
+    const auto requested = !fixture.networkRequests().isEmpty();
+    for (const auto *name :
+         {"inventoryWarning", "recoveryProblem", "commandMessage", "parentStagingState", "mergetoolHolding",
+          "mergetoolWait", "choiceNotice", "sessionPlaceholder", "selectedProblem"})
+        expectPlain(fixture.item(name), QString::fromLatin1(name));
+    auto *tooltipContent = tooltip->property("contentItem").value<QQuickItem *>();
+    CHECK(tooltipContent);
+    expectPlain(tooltipContent, QStringLiteral("tooltip"));
+    if (requested)
+        problems.append(QStringLiteral("image requests: initial=%1 handoff=%2 notices=%3 tooltip=%4")
+                            .arg(initialRequests)
+                            .arg(handoffRequests)
+                            .arg(noticeRequests)
+                            .arg(fixture.networkRequests().size()));
+    CHECK(tooltip->setProperty("visible", false));
+    if (!problems.isEmpty()) throw std::runtime_error(problems.join(QStringLiteral("; ")).toStdString());
+}
+}
+
 void comparison_scene::addSessionCases(Groups groups)
 {
     auto &scenes = groups.scenes;
@@ -196,7 +297,7 @@ void comparison_scene::addSessionCases(Groups groups)
     scenes.run("an insertion past 4000 lines is acknowledged", [] {
         const auto atThreshold = [] {
             std::string text;
-            text.reserve(4000 * 2);
+            text.reserve(std::size_t{4000} * 2);
             for (int i = 0; i < 4000; ++i) text += "x\n";
             return text;
         }();
@@ -210,6 +311,7 @@ void comparison_scene::addSessionCases(Groups groups)
         const test_support::ScopedClipboard clipboard;
         QGuiApplication::clipboard()->setText(QStringLiteral("\n"));
         CHECK(controller.editor()->clipboard(ResultEditorAdapter::ClipboardAction::Paste));
+        fixture.settleCommand();
         const auto edited = fixture.file().current();
         CHECK(edited.id == before.id + 1 && edited.draft.text == "\n" + atThreshold);
         CHECK(fixture.text().toStdString() == edited.draft.text);
@@ -222,7 +324,7 @@ void comparison_scene::addSessionCases(Groups groups)
         Fixture fixture(controller);
         const auto large = [] {
             std::string text;
-            text.reserve(4001 * 2);
+            text.reserve(std::size_t{4001} * 2);
             for (int i = 0; i < 4001; ++i) text += "x\n";
             return text;
         }();
@@ -266,83 +368,5 @@ void comparison_scene::addSessionCases(Groups groups)
         CHECK(recovered != replay.files.end() && recovered->support() == Support::Supported);
         CHECK(recovered->current().id == 2 && recovered->current().draft == loaded->current().draft);
     });
-    scenes.run("notices and tooltips show a path as typed and load nothing it names", [] {
-        Application controller(test_support::windowConfig());
-        Fixture fixture(controller);
-        // A file name cannot hold a slash, so the image address spells its slashes as entities.
-        const auto path =
-            QStringLiteral("<b>x</b><img src=\"http:&#47;&#47;127.0.0.1:9&#47;probe\">.txt").toStdString();
-        auto sources = *test_support::choiceFile().snapshots();
-        sources.path = path;
-        const auto launch = sources.launchResult.text.utf8;
-        CHECK(controller.store()->appendFile(FileSession(
-            "crafted", path, {launch, {}, 0}, {.snapshots = std::move(sources), .initializeChoices = true})));
-        const auto shown = controller.files()->displayPath("crafted");
-        CHECK(shown.toStdString() == path);
-        CHECK(controller.selection()->select("crafted"));
-        auto *pathLabel = fixture.item("selectedPath");
-        settle([&] { return pathLabel->property("text").toString() == shown; });
-        QString renderedPath;
-        const std::function<void(QQuickItem *)> readPath = [&](QQuickItem *item) {
-            if (!item->isVisible()) return;
-            if (item->inherits("QQuickText")) {
-                CHECK(item->property("textFormat").toInt() == Qt::PlainText);
-                renderedPath += item->property("text").toString();
-            }
-            for (auto *child : item->childItems()) readPath(child);
-        };
-        readPath(pathLabel);
-        CHECK(renderedPath == shown);
-        const auto message = QStringLiteral("Waiting for Git to stage %1.").arg(shown);
-        // Every label inside the item must show the message as plain characters. A label
-        // that took it as rich text reports the markup it built instead.
-        QStringList problems;
-        const auto expectPlain = [&](QQuickItem *root, const QString &what) {
-            int showing = 0;
-            const std::function<void(QQuickItem *)> visit = [&](QQuickItem *item) {
-                for (auto *child : item->childItems()) visit(child);
-                if (!item->inherits("QQuickText") && !item->inherits("QQuickTextEdit")) return;
-                // Rich text reads back as the HTML it built, which still holds these words.
-                const auto text = item->property("text").toString();
-                if (!text.contains(QStringLiteral("Waiting for Git to stage"))) return;
-                ++showing;
-                const auto *document = item->property("textDocument").value<QQuickTextDocument *>();
-                const auto rendered = document ? document->textDocument()->toPlainText() : text;
-                if (item->property("textFormat").toInt() != Qt::PlainText || text != message || rendered != message)
-                    problems.append(what + QStringLiteral(" shows ") + rendered);
-            };
-            visit(root);
-            if (showing == 0) problems.append(what + QStringLiteral(" has no label"));
-        };
-        for (const auto *name : {"handoffOutcome", "inventoryWarning", "recoveryProblem", "commandMessage",
-                                 "parentStagingState", "mergetoolHolding", "mergetoolWait", "choiceNotice"}) {
-            auto *notice = fixture.item(name);
-            CHECK(notice->setProperty("visible", true) && notice->setProperty("text", message));
-        }
-        for (const auto *name : {"sessionPlaceholder", "selectedProblem"}) {
-            auto *placeholder = fixture.item(name);
-            CHECK(placeholder->setProperty("visible", true) && placeholder->setProperty("text", message)
-                  && placeholder->setProperty("explanation", message));
-        }
-        // Attached tooltips share one popup per engine.
-        auto *heading = fixture.item("repositoryHeading");
-        QQmlExpression shared(qmlContext(heading), heading, QStringLiteral("ToolTip.toolTip"));
-        auto *tooltip = shared.evaluate().value<QObject *>();
-        CHECK(tooltip && !shared.hasError());
-        CHECK(tooltip->setProperty("parent", QVariant::fromValue(heading)) && tooltip->setProperty("text", message)
-              && tooltip->setProperty("visible", true));
-        // Every label and the tooltip are laid out, and any image they named requested, by then.
-        test_support::waitForFrames(fixture.window, "the notices and the tooltip are drawn");
-        const auto requested = !fixture.networkRequests().isEmpty();
-        for (const auto *name :
-             {"handoffOutcome", "inventoryWarning", "recoveryProblem", "commandMessage", "parentStagingState",
-              "mergetoolHolding", "mergetoolWait", "choiceNotice", "sessionPlaceholder", "selectedProblem"})
-            expectPlain(fixture.item(name), QString::fromLatin1(name));
-        auto *tooltipContent = tooltip->property("contentItem").value<QQuickItem *>();
-        CHECK(tooltipContent);
-        expectPlain(tooltipContent, QStringLiteral("tooltip"));
-        if (requested) problems.append(QStringLiteral("a notice requested the image it names"));
-        CHECK(tooltip->setProperty("visible", false));
-        if (!problems.isEmpty()) throw std::runtime_error(problems.join(QStringLiteral("; ")).toStdString());
-    });
+    scenes.run("notices and tooltips show a path as typed and load nothing it names", checkLiteralRepositoryText);
 }

@@ -83,7 +83,7 @@ bool replaceFile(const FileSystem &files, int directory, const QByteArray &name,
     Descriptor file(
         ::openat(directory, temporary.constData(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
     if (!file.valid()) return false;
-    const bool written = writeAll(files, file.get(), bytes) && ::fchmod(file.get(), original.st_mode & 07777) == 0
+    const bool written = writeAll(files, file.get(), bytes) && ::fchmod(file.get(), original.st_mode & 07777U) == 0
         && files.sync(file.get()) == 0;
     const bool renamed =
         file.close() && written && files.rename(directory, temporary.constData(), directory, name.constData()) == 0;

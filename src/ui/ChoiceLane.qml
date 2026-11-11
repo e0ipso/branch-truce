@@ -11,6 +11,7 @@ Item {
     required property SourcePane pane
     // Joined section commands and their precise line scopes.
     required property list<comparisonRow> rows
+    required property var rowModel
     required property real rowHeight
     // Whether the file takes choices now: it can be edited and no input is composing.
     required property bool choosing
@@ -62,7 +63,7 @@ Item {
     }
     Repeater {
         id: choiceRows
-        model: lane.rows
+        model: lane.rowModel
         delegate: ChoiceButtons {
             id: row
             readonly property real rowTop: lane.lineTop(row.modelData.line, lane.layoutRevision, lane.pane.viewport.contentY)

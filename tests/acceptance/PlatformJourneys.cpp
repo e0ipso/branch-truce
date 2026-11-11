@@ -131,7 +131,7 @@ void controlsHaveRolesAndTakeKeyboardFocus(Sandbox &sandbox)
         const auto *face = test_support::requireAccessible(control, name);
         CHECK(control->isVisible());
         if (control->inherits("QQuickAbstractButton")) {
-            if (!buttonRole(face->role()) && !(overflow && face->role() == QAccessible::MenuItem))
+            if (!buttonRole(face->role()) && (!overflow || face->role() != QAccessible::MenuItem))
                 throw std::runtime_error(std::string(name) + " has an unexpected accessible button role");
             if (control->isEnabled()) {
                 if (!overflow && !focusChain(scene.window()).contains(control))

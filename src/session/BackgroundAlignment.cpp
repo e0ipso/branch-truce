@@ -101,7 +101,7 @@ void BackgroundAlignment::request(int row)
             [pending = file.pendingAlignment()]() -> Outcome {
                 return {Transition::Applied, std::make_shared<const CorrespondenceMap>(pending->realigned())};
             },
-            done, [](std::exception_ptr error) noexcept -> Outcome { return {computationFailure(error)}; });
+            done, [](const std::exception_ptr &error) noexcept -> Outcome { return {computationFailure(error)}; });
     } catch (...) {
         const Outcome result{computationFailure(std::current_exception())};
         QMetaObject::invokeMethod(this, [done, result] { done(result); }, Qt::QueuedConnection);

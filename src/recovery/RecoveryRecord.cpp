@@ -18,7 +18,7 @@ void retain(qint64 &remaining, qint64 bytes)
 
 void account(qint64 &used, qint64 bytes)
 {
-    constexpr qint64 limit = 256 * 1024 * 1024;
+    constexpr qint64 limit = 256LL * 1024 * 1024;
     auto remaining = limit - used;
     if (bytes < 0 || bytes > remaining) throw std::length_error("Live recovery checkpoint exceeds 256 MiB.");
     retain(remaining, bytes);
@@ -81,7 +81,7 @@ constexpr NameTable<SnapshotProvenance::Operation, 2> operationNames{{
 template <typename Enum, std::size_t Size> Enum named(const NameTable<Enum, Size> &table, const QJsonValue &value)
 {
     const auto found = valueNamed(table, value.toString());
-    requireRecord(value.isString() && found.has_value(), "Unsupported recovery value.");
+    if (!value.isString() || !found) throw RecoveryRecordError("Unsupported recovery value.");
     return *found;
 }
 
@@ -325,7 +325,7 @@ FileSession RecoveryRecordReader::checkpointFile(std::shared_ptr<const Correspon
     for (const auto &entry : history.value("entries").toArray()) checkpoint.entries.push_back(number(entry));
     requireRecord(!checkpoint.entries.empty() && checkpoint.entries.size() <= kMaxHistoryEntries
                       && checkpoint.cursor < checkpoint.entries.size()
-                      && history.value("revisions").toArray().size() <= static_cast<qsizetype>(kMaxHistoryEntries + 6),
+                      && history.value("revisions").toArray().size() <= static_cast<qsizetype>(kMaxHistoryEntries) + 6,
                   "Checkpoint history exceeds supported reachability.");
     std::vector<RecordedRevision> revisions;
     for (const auto &entry : history.value("revisions").toArray()) {
@@ -347,23 +347,28 @@ FileSession RecoveryRecordReader::checkpointFile(std::shared_ptr<const Correspon
                      {.support = support(),
                       .supportDetail = supportDetail(),
                       .snapshots = snapshots(),
-                      .algorithm = correspondence});
+                      .algorithm = std::move(correspondence)});
     if (support() == Support::Supported && file.support() == Support::LargeFile)
         requireRecord(file.loadLargeFile() == Transition::Applied, "Unsupported checkpoint large file.");
     requireRecord(file.algorithm()->identity() == alignment(), "Unsupported checkpoint correspondence.");
-    const auto reference = [&](QJsonValue value) -> std::optional<RevisionId> {
+    const auto reference = [&](const QJsonValue &value) -> std::optional<RevisionId> {
         return value.isNull() ? std::nullopt : std::optional<RevisionId>{number(value.toObject().value(field::id))};
+    };
+    const auto requiredReference = [&](const QJsonValue &value) {
+        const auto revision = reference(value);
+        if (!revision) throw std::bad_optional_access{};
+        return *revision;
     };
     publication.checkpoint = reference(state_.value(field::checkpoint));
     publication.written = reference(state_.value(field::written));
     const auto reviewed = state_.value(field::reviewed);
     if (!reviewed.isNull())
-        publication.reviewed = Review{reference(reviewed.toObject().value(field::revision)).value(),
+        publication.reviewed = Review{requiredReference(reviewed.toObject().value(field::revision)),
                                       boolean(reviewed.toObject().value(field::confirmedUndecided))};
     const auto staged = state_.value(field::staged);
     if (!staged.isNull()) {
         const auto [object, mode] = stagedObject();
-        publication.staged = StagedResult{reference(staged.toObject().value(field::revision)).value(), object, mode,
+        publication.staged = StagedResult{requiredReference(staged.toObject().value(field::revision)), object, mode,
                                           boolean(staged.toObject().value(field::confirmedUndecided))};
     }
     const auto readOutcome = [&](QLatin1StringView key) -> std::optional<OperationOutcome> {
@@ -550,8 +555,8 @@ TextSnapshot RecoveryRecordReader::text(const QJsonValue &value) const
     requireRecord(validUtf8(result.utf8), "Invalid recovered text encoding.");
     const auto decoded =
         storage::decodeText(QByteArray::fromStdString(result.bytes), storage::encodingName(result.format.encoding));
-    requireRecord(decoded.document && decoded.document->utf8.toStdString() == result.utf8,
-                  "Recovered text bytes and editable representation disagree.");
+    if (!decoded.document || decoded.document->utf8.toStdString() != result.utf8)
+        throw RecoveryRecordError("Recovered text bytes and editable representation disagree.");
     requireRecord(decoded.document->format == result.format, "Recovered text format does not describe its bytes.");
     return result;
 }

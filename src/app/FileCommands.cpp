@@ -54,16 +54,21 @@ FileCommands::FileCommands(SessionStore &store, const Selection &selection, Resu
     });
 }
 
-bool FileCommands::acknowledge(QFuture<Transition> result, const QString &failure)
+bool FileCommands::acknowledge(QFuture<Transition> result, const QString &failure, std::function<void(bool)> finished)
 {
-    if (result.isFinished()) return feedback_.report(result.result());
+    if (result.isFinished()) {
+        const bool succeeded = feedback_.report(result.result());
+        if (finished) finished(succeeded);
+        return succeeded;
+    }
     feedback_.show(tr("Command pending. Waiting for durable recovery."));
-    result.then(this, [this, failure](Transition outcome) {
+    result.then(this, [this, failure, finished = std::move(finished)](Transition outcome) {
         if (outcome != Transition::Applied && outcome != Transition::NoChange && !failure.isEmpty())
             feedback_.show(failure);
         else if (outcome != Transition::Applied
                  || feedback_.message() == tr("Command pending. Waiting for durable recovery."))
             feedback_.report(outcome);
+        if (finished) finished(outcome == Transition::Applied || outcome == Transition::NoChange);
     });
     return true;
 }
@@ -147,9 +152,10 @@ bool FileCommands::markResolved(const QString &fileId, const QString &revision, 
         return false;
     }
     const auto started = publisher_.start(fileId.toStdString(), expected, confirmUndecided);
-    if (started.markers && started.markers->first())
+    const auto firstMarker = started.markers ? started.markers->first() : std::nullopt;
+    if (started.markers && firstMarker)
         feedback_.showMarkers(started.detail, fileId.toStdString(), expected, started.markers->count(),
-                              started.markers->first()->line + 1);
+                              firstMarker->line + 1);
     else
         feedback_.show(started.detail);
     // Starting drops the parent staging offer and can ask for confirmation.
@@ -197,13 +203,20 @@ bool FileCommands::discardToStaged(const QString &fileId, const QString &revisio
 {
     const auto target = admit(fileId, revision, CommandCheck::CurrentSupported);
     if (!target) return false;
+    if (!target->file->publication().staged() || !target->file->publication().stagedVerified()) {
+        feedback_.show(
+            tr("Discard was not completed. No verified result staged in Git to return to, so the draft is kept."));
+        return false;
+    }
     auto command = store_.discardToStaged(fileId.toStdString(), target->revision);
     if (command.isFinished() && command.result() == Transition::Blocked) {
         feedback_.show(
             tr("Discard was not completed. No verified result staged in Git to return to, so the draft is kept."));
         return false;
     }
-    return acknowledge(command, tr("Discard was not completed. The draft is kept until retry finishes the discard."));
+    return acknowledge(
+        command, tr("Discard was not completed. The draft is kept until retry finishes the discard."),
+        [this, fileId, revision](bool succeeded) { Q_EMIT stagedDiscardFinished(fileId, revision, succeeded); });
 }
 
 bool FileCommands::loadLargeFile(const QString &fileId)

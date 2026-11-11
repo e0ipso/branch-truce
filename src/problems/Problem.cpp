@@ -16,7 +16,7 @@ constexpr std::array kNames{
 
 // Encoded problems are JSON objects with this key; no message of the engine
 // or an adapter is one.
-const auto kKey = QStringLiteral("problem");
+constexpr auto kKey = QLatin1StringView("problem");
 
 QJsonObject toJson(const Problem &problem)
 {

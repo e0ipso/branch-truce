@@ -12,6 +12,7 @@
 #include "fixtures/Files.h"
 #include "fixtures/GitRepository.h"
 #include "git/GitAdapter.h"
+#include "problems/ProblemText.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -62,7 +63,7 @@ int resolve(const QString &scenario, const QString &merged)
     CHECK(preflight.request.operation == request.operation && preflight.request.directory == request.directory);
     CHECK(preflight.request.path == request.path && preflight.request.objectId == request.objectId);
     CHECK(preflight.request.sessionGeneration == 71 && preflight.request.inputRevision == 93);
-    writeFile(".handoff-preflight", preflight.problem.encoded().toUtf8());
+    writeFile(".handoff-preflight", branch_truce::problem_text::text(preflight.problem).toUtf8());
     CHECK(preflight.mutation == Mutation::NotAttempted);
     if (preflight.outcome != Outcome::Success) {
         writeFile(".handoff-rejected", "blocked\n");

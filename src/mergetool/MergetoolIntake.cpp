@@ -42,7 +42,7 @@ bool privateDirectory(const QString &path)
     if (::mkdir(native.constData(), 0700) != 0 && errno != EEXIST) return false;
     struct stat info{};
     return ::lstat(native.constData(), &info) == 0 && S_ISDIR(info.st_mode) && info.st_uid == ::geteuid()
-        && (info.st_mode & 077) == 0;
+        && (info.st_mode & 077U) == 0;
 }
 
 // When process pid started, in clock ticks after boot, as /proc/<pid>/stat
@@ -85,7 +85,7 @@ QString writeMergetoolIntake(const QString &root, const QByteArray &sessionKey, 
         || root.isEmpty())
         return fail(error, ProblemCode::MergetoolInvocationInvalid);
     const auto keyDirectory = root + QLatin1Char('/') + QString::fromLatin1(sessionKey);
-    const auto directory = keyDirectory + QLatin1Char('/') + invocation;
+    auto directory = keyDirectory + QLatin1Char('/') + invocation;
     if (!privateDirectory(root) || !privateDirectory(keyDirectory) || !privateDirectory(directory))
         return fail(error, ProblemCode::MergetoolIntakeCreate);
     const auto opened = storage::openWithoutLinks(QFile::encodeName(directory), storage::OpenTarget::Directory);

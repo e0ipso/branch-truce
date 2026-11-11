@@ -78,10 +78,9 @@ FileSession provisional(const std::shared_ptr<Alignment> &algorithm)
     return file;
 }
 }
-int main(int argc, char **argv)
+namespace {
+void addPreviewWorkerCases(test_support::Suite &suite)
 {
-    QGuiApplication app(argc, argv);
-    test_support::Suite suite("RevisionComputationTests");
     for (const int scope : {0, 1, 2})
         suite.run("preview work yields before publishing scope " + std::to_string(scope), [=] {
             QTemporaryDir dir;
@@ -113,6 +112,9 @@ int main(int argc, char **argv)
             CHECK(choices->previewReady() && !choices->previewPending());
             CHECK(application.store()->file("choices")->current().id == 1 && !application.store()->recording());
         });
+}
+void addPreviewFenceCases(test_support::Suite &suite)
+{
     for (const auto change : {"cancel", "replace", "revision", "selection", "session", "map", "blocked", "owner"})
         suite.run(std::string("blocked preview fences ") + change, [=] {
             QTemporaryDir dir;
@@ -162,6 +164,9 @@ int main(int argc, char **argv)
                 CHECK(mode == "replace" || choices->wholeFilePreview().isEmpty());
             }
         });
+}
+void addWordWorkerCases(test_support::Suite &suite)
+{
     for (const int fault : {1, 2})
         suite.run("preview exceptions are typed " + std::to_string(fault), [=] {
             QTemporaryDir dir;
@@ -268,6 +273,9 @@ int main(int argc, char **argv)
             // A failure is terminal for this input, not an automatic retry loop.
             CHECK(gate->entered == 1 && store.file("choices")->current().id == 1 && !store.recording());
         });
+}
+void addAlignmentWorkerCases(test_support::Suite &suite)
+{
     suite.run("alignment refusal and destruction complete observers explicitly", [] {
         QTemporaryDir dir;
         auto gate = std::make_shared<Gate>();
@@ -346,5 +354,16 @@ int main(int argc, char **argv)
             CHECK(alignment.admission().count == 0 && store.file("choices")->pendingAlignment());
             test_support::awaitRecovery(store);
         });
+}
+}
+
+int main(int argc, char **argv)
+{
+    QGuiApplication app(argc, argv);
+    test_support::Suite suite("RevisionComputationTests");
+    addPreviewWorkerCases(suite);
+    addPreviewFenceCases(suite);
+    addWordWorkerCases(suite);
+    addAlignmentWorkerCases(suite);
     return suite.report();
 }

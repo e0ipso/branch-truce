@@ -9,7 +9,7 @@
 namespace branch_truce {
 MergetoolServer::MergetoolServer(QObject *parent) : MergetoolServer(Limits{}, parent) {}
 
-MergetoolServer::MergetoolServer(Limits limits, QObject *parent) : QObject(parent), limits_(limits) {}
+MergetoolServer::MergetoolServer(Limits limits, QObject *parent) : QObject(parent), limits_(std::move(limits)) {}
 
 MergetoolServer::~MergetoolServer()
 {
@@ -102,13 +102,13 @@ void MergetoolServer::accept()
         connect(deadline, &QTimer::timeout, this, [this, id] {
             const auto found = connections_.find(id);
             if (found == connections_.end()) return;
-            const auto peer = *found;
-            if (!peer.invocation.isEmpty())
+            auto *socket = found->socket;
+            if (!found->invocation.isEmpty())
                 send(id,
-                     RejectedMessage{peer.invocation,
+                     RejectedMessage{found->invocation,
                                      tr("The mergetool inputs could not be checked in time. Try again.")});
             // Flush above is best effort. Expiry must also drop a peer that stopped reading.
-            peer.socket->abort();
+            socket->abort();
             drop(id);
         });
         deadline->start(limits_.attachDeadlineMs);
@@ -155,12 +155,13 @@ void MergetoolServer::drop(quint64 connection)
 {
     const auto found = connections_.find(connection);
     if (found == connections_.end()) return;
-    const auto peer = *found;
+    auto *socket = found->socket;
+    auto *deadline = found->deadline;
     connections_.erase(found);
-    peer.socket->disconnect(this);
-    peer.deadline->disconnect(this);
-    peer.socket->deleteLater();
-    peer.deadline->deleteLater();
+    socket->disconnect(this);
+    deadline->disconnect(this);
+    socket->deleteLater();
+    deadline->deleteLater();
     Q_EMIT closed(connection);
 }
 

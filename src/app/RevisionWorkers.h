@@ -17,7 +17,7 @@ public:
     std::function<void(bool)> beforeCompute;
     detail::WorkAdmission admission{2, 1073741824};
     template <typename Capture, typename Done>
-    bool submit(std::size_t bytes, QObject *owner, bool words, Capture capture, Done done)
+    bool submit(std::size_t bytes, QObject *owner, bool words, const Capture &capture, Done done)
     {
         using Work = std::invoke_result_t<Capture>;
         using Value = std::invoke_result_t<Work>;
@@ -39,7 +39,7 @@ public:
                     if (gate) gate(words);
                     return work();
                 },
-                finish, [](std::exception_ptr error) noexcept -> Result { return computationFailure(error); });
+                finish, [](const std::exception_ptr &error) noexcept -> Result { return computationFailure(error); });
         } catch (...) {
             const Result result = computationFailure(std::current_exception());
             QMetaObject::invokeMethod(this, [finish, result] { finish(result); }, Qt::QueuedConnection);

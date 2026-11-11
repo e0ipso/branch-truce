@@ -190,7 +190,7 @@ Problem revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFile
     };
     auto policyRequest = indexRequest(repository, path);
     policyRequest.operation = git::Operation::ReadAttributes;
-    const Problem changed(ProblemCode::RecoveryChangedAfterValidation);
+    Problem changed(ProblemCode::RecoveryChangedAfterValidation);
     if (!validatedFile()) return changed;
     const auto index = probe.inspect(indexRequest(repository, path));
     if (index.outcome != git::Outcome::Success || !matchesCapturedConflict(index.indexEntries, captured))

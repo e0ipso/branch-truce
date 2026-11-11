@@ -24,15 +24,16 @@
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace test_support {
 // Runs the event loop until ready() holds, as waitUntil does.
 template <typename Predicate> void settleFor(const std::string &what, Predicate ready)
 {
-    waitUntil(ready, "timed out waiting for " + what);
+    waitUntil(std::move(ready), "timed out waiting for " + what);
 }
 
-template <typename Predicate> void settle(Predicate ready) { settleFor("a scene condition", ready); }
+template <typename Predicate> void settle(Predicate ready) { settleFor("a scene condition", std::move(ready)); }
 
 // Runs the event loop until the window has rendered two more frames. The scene graph polishes
 // every item before it renders, so the layout, bindings and queued calls that earlier events

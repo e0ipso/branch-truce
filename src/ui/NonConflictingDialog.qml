@@ -9,7 +9,7 @@ import org.kde.kirigami as Kirigami
 
 PreviewDialog {
     id: nonConflictingDialog
-    required property ChoicePreviewFlow choices
+    scope: ChoicePreviewFlow.Scope.NonConflicting
     required property CommandFeedback feedback
     objectName: "nonConflictingDialog"
     title: qsTr("Apply non-conflicting changes · %1").arg(nonConflictingDialog.choices.nonConflictingPreview.scope || "")

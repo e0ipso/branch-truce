@@ -35,7 +35,6 @@ namespace workload {
 namespace {
 
 constexpr int kDrawDeadlineMs = 20000;
-const auto kFileId = QStringLiteral("choices");
 
 QQuickItem *findItem(QQuickItem *root, const QString &name)
 {
@@ -105,14 +104,15 @@ std::string holdReason(const branch_truce::FileSession &file)
 
 int editorWorker(const WorkerArgs &args)
 {
-    if (qgetenv("QT_QPA_PLATFORM").isEmpty()) setenv("QT_QPA_PLATFORM", "offscreen", 0);
-    if (qgetenv("QT_QUICK_BACKEND").isEmpty()) setenv("QT_QUICK_BACKEND", "software", 0);
+    if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
+    if (!qEnvironmentVariableIsSet("QT_QUICK_BACKEND")) qputenv("QT_QUICK_BACKEND", QByteArrayLiteral("software"));
     if (qEnvironmentVariable("QT_QPA_PLATFORM") != QLatin1String("offscreen")) {
         std::cout << "editor worker requires QT_QPA_PLATFORM=offscreen\n";
         return 2;
     }
     int argc = args.argc;
     QApplication app(argc, args.argv);
+    const auto fileId = QStringLiteral("choices");
     const bool longLine = args.mode == "long";
     const auto left =
         longLine ? test_support::workloadLongLine(args.bytes, 'b') : test_support::workloadFile(args.lines, 0);
@@ -149,7 +149,7 @@ int editorWorker(const WorkerArgs &args)
         fail("explicit-failure", "the store refused the file");
         return 0;
     }
-    const auto id = kFileId.toStdString();
+    const auto id = fileId.toStdString();
     if (store->file(id)->support() == branch_truce::Support::LargeFile)
         store->loadLargeFile(id); // The user's confirmation.
     if (const auto &file = *store->file(id); file.support() != branch_truce::Support::Supported) {
@@ -194,7 +194,7 @@ int editorWorker(const WorkerArgs &args)
     };
     QElapsedTimer loadClock;
     loadClock.start();
-    if (!controller.selection()->select(kFileId)) {
+    if (!controller.selection()->select(fileId)) {
         fail("explicit-failure", "the file could not be selected");
         return 0;
     }

@@ -41,6 +41,7 @@ void deletionAtLimit(const std::string &atLimit, const QString &rejection)
     key(fixture, Qt::Key_A, Qt::NoModifier, QString(QLatin1Char(atLimit.back())));
     const auto refilled = fixture.file().current();
     CHECK(refilled.id == backspaced.id + 1 && refilled.draft.text == atLimit);
+    settleFor("refilled input recovered", [&] { return !controller.store()->recording(); });
 
     select(fixture, 0, 0);
     key(fixture, Qt::Key_Delete, Qt::NoModifier, QStringLiteral("\x7f"));

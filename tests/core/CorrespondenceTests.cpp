@@ -178,7 +178,7 @@ void textsOverTheCellBudgetAreOneAmbiguousPassage()
     // 8193 lines against 8193 is just over kMaxAlignmentCells.
     std::string source;
     for (int line = 0; line < 8193; ++line) source += "unique line " + std::to_string(line) + '\n';
-    CHECK(8193U * 8193U > kMaxAlignmentCells && 8192U * 8192U <= kMaxAlignmentCells);
+    CHECK(8193UL * 8193UL > kMaxAlignmentCells && 8192UL * 8192UL <= kMaxAlignmentCells);
     auto result = source;
     result.replace(0, 14, "changed line\n");
     CHECK(ExactLineCorrespondence{}.compare(source, result)
@@ -240,10 +240,10 @@ ResultAnchor anchorOf(const CorrespondenceMap &map, const std::string &id)
     return *anchor;
 }
 
-ResultAnchor bound(CorrespondenceMap &map, SourceAnchor source)
+ResultAnchor bound(CorrespondenceMap &map, const SourceAnchor &source)
 {
     const auto id = source.contributionId;
-    CHECK(map.bind(std::move(source)));
+    CHECK(map.bind(source));
     return anchorOf(map, id);
 }
 

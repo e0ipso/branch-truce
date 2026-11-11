@@ -18,15 +18,13 @@
 #include <QScopeGuard>
 
 using test_support::commandResult;
-using test_support::markerKind;
-using test_support::paintedMarkers;
 using test_support::visualLines;
 
 using namespace comparison_scene;
 
-void comparison_scene::addLayoutCases(Groups groups)
+namespace {
+void addNativeLayoutCases(Group &scenes)
 {
-    auto &scenes = groups.scenes;
     scenes.run("unchanged comparison rows retain the real source control and keyboard focus", [] {
         Application controller(test_support::windowConfig());
         Fixture fixture(controller, test_support::markedFile());
@@ -146,7 +144,7 @@ void comparison_scene::addLayoutCases(Groups groups)
             const auto identityName = QString::fromLatin1(side) + QStringLiteral("Identity");
             auto *identity = fixture.item(identityName.toUtf8().constData());
             auto *tooltip = identity->findChild<QObject *>(identityName + QStringLiteral("ToolTip"));
-            CHECK(tooltip && tooltip->setProperty("text", literal));
+            CHECK(tooltip && tooltip->setProperty("literalText", literal));
             CHECK(QMetaObject::invokeMethod(tooltip, "open"));
             settleFor("identity tooltip opened", [&] { return tooltip->property("opened").toBool(); });
             int labels = 0;
@@ -166,6 +164,10 @@ void comparison_scene::addLayoutCases(Groups groups)
         }
         checkUnchanged(fixture, *controller.selectedFile(), before);
     });
+}
+
+void addSourceChoiceLayoutCases(Group &scenes)
+{
     scenes.run("source choices overlay full-width panes only on hover or focus", [] {
         Application controller(test_support::windowConfig());
         Fixture fixture(controller);
@@ -231,7 +233,7 @@ void comparison_scene::addLayoutCases(Groups groups)
         waitOverlay("source code hover reveals its overlay", [&] {
             auto *row = button->parentItem();
             auto *pane = viewport->parentItem()->parentItem();
-            return pane->property("hoveredLine").toInt() == row->property("modelData").toMap().value("line").toInt()
+            return pane->property("hoveredLine").toInt() == row->property("modelData").value<ComparisonRow>().line
                 && row->property("rowHovered").toBool() && test_support::painted(button);
         });
         CHECK(test_support::hoverChoiceControl(fixture.window, lanes, name) == button);
@@ -268,6 +270,10 @@ void comparison_scene::addLayoutCases(Groups groups)
         test_support::waitForFrames(fixture.window, "the resized headers are laid out");
         CHECK_EQ(rearranges.count(), 0);
     });
+}
+
+void addSourceHeaderCases(Group &scenes)
+{
     scenes.run("source headers resolve the current conflict from their side", [] {
         Application controller(test_support::windowConfig());
         Fixture fixture(controller, test_support::markedFile());
@@ -374,6 +380,10 @@ void comparison_scene::addLayoutCases(Groups groups)
         CHECK(!fixture.item("stage3Identity")->property("truncated").toBool());
         checkLayout("stage3");
     });
+}
+
+void addReadingStateLayoutCases(Group &scenes)
+{
     scenes.run("pane budget uses the laid-out editor row", [] {
         Application controller(test_support::windowConfig());
         Fixture fixture(controller, test_support::choiceFile("left\n", "right\n", "result\n"));
@@ -533,6 +543,10 @@ void comparison_scene::addLayoutCases(Groups groups)
         });
         CHECK(subtitle->property("text").toString() == controller.loader()->operationDescription());
     });
+}
+
+void addComparisonLayoutCases(Group &scenes)
+{
     scenes.run("actual comparison keeps verified sources around the editable launch result", [] {
         const std::string launch = "manual launch UTF-8 \xc3\xa9 \xf0\x9f\x98\x80\n";
         Application controller(test_support::windowConfig());
@@ -701,4 +715,15 @@ void comparison_scene::addLayoutCases(Groups groups)
         CHECK(fixture.item("stage2Text")->isVisible() && fixture.item("stage3Text")->isVisible());
         CHECK(fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
     });
+}
+
+}
+
+void comparison_scene::addLayoutCases(Groups groups)
+{
+    addNativeLayoutCases(groups.scenes);
+    addSourceChoiceLayoutCases(groups.scenes);
+    addSourceHeaderCases(groups.scenes);
+    addReadingStateLayoutCases(groups.scenes);
+    addComparisonLayoutCases(groups.scenes);
 }

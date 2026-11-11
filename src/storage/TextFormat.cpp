@@ -24,9 +24,9 @@ QByteArray encode(const QString &text, const TextFormat &format)
     QByteArray bytes;
     if (format.bom) bytes = QByteArray::fromHex(format.encoding == Encoding::Utf16LittleEndian ? "fffe" : "feff");
     for (const auto character : text) {
-        const auto value = character.unicode();
-        const char low = static_cast<char>(value & 0xff);
-        const char high = static_cast<char>(value >> 8);
+        const auto value = static_cast<unsigned int>(character.unicode());
+        const char low = static_cast<char>(value & 0xffU);
+        const char high = static_cast<char>(value >> 8U);
         if (format.encoding == Encoding::Utf16LittleEndian) {
             bytes += low;
             bytes += high;
@@ -36,6 +36,38 @@ QByteArray encode(const QString &text, const TextFormat &format)
         }
     }
     return bytes;
+}
+Problem decodeUtf16(QByteArray content, const QByteArray &name, TextFormat &format, QString &text)
+{
+    const bool littleBom = content.startsWith(QByteArray::fromHex("fffe"));
+    const bool bigBom = content.startsWith(QByteArray::fromHex("feff"));
+    if (name == "UTF16" && !littleBom && !bigBom) return Problem(ProblemCode::TextMissingByteOrderMark);
+    if ((name == "UTF16LE" && bigBom) || (name == "UTF16BE" && littleBom)) {
+        return Problem(ProblemCode::TextContradictoryByteOrderMark);
+    }
+    format.encoding =
+        name == "UTF16BE" || (name == "UTF16" && bigBom) ? Encoding::Utf16BigEndian : Encoding::Utf16LittleEndian;
+    format.bom = littleBom || bigBom;
+    if (format.bom) content.remove(0, 2);
+    if (content.size() % 2 != 0) return Problem(ProblemCode::TextTruncatedUtf16);
+    std::u16string units;
+    units.reserve(static_cast<std::size_t>(content.size() / 2));
+    for (qsizetype i = 0; i < content.size(); i += 2) {
+        const auto a = static_cast<unsigned int>(static_cast<unsigned char>(content[i]));
+        const auto b = static_cast<unsigned int>(static_cast<unsigned char>(content[i + 1]));
+        units.push_back(
+            static_cast<char16_t>(format.encoding == Encoding::Utf16LittleEndian ? a | (b << 8U) : (a << 8U) | b));
+    }
+    for (std::size_t i = 0; i < units.size(); ++i) {
+        if (QChar::isHighSurrogate(units[i])) {
+            ++i;
+            if (i == units.size() || !QChar::isLowSurrogate(units[i]))
+                return Problem(ProblemCode::TextInvalidSurrogatePair);
+        } else if (QChar::isLowSurrogate(units[i]))
+            return Problem(ProblemCode::TextUnpairedSurrogate);
+    }
+    text = QString::fromUtf16(units.data(), static_cast<qsizetype>(units.size()));
+    return {};
 }
 TextResult failure(Problem problem) { return {std::nullopt, std::move(problem)}; }
 } // namespace
@@ -98,32 +130,8 @@ TextResult decodeText(const QByteArray &bytes, const QByteArray &workingTreeEnco
         text = QString::fromUtf8(content);
         if (text.toUtf8() != content) return failure(ProblemCode::TextInvalidUtf8);
     } else if (name == "UTF16" || name == "UTF16LE" || name == "UTF16BE") {
-        const bool littleBom = content.startsWith(QByteArray::fromHex("fffe"));
-        const bool bigBom = content.startsWith(QByteArray::fromHex("feff"));
-        if (name == "UTF16" && !littleBom && !bigBom) return failure(ProblemCode::TextMissingByteOrderMark);
-        if ((name == "UTF16LE" && bigBom) || (name == "UTF16BE" && littleBom)) {
-            return failure(ProblemCode::TextContradictoryByteOrderMark);
-        }
-        format.encoding =
-            name == "UTF16BE" || (name == "UTF16" && bigBom) ? Encoding::Utf16BigEndian : Encoding::Utf16LittleEndian;
-        format.bom = littleBom || bigBom;
-        if (format.bom) content.remove(0, 2);
-        if (content.size() % 2 != 0) return failure(ProblemCode::TextTruncatedUtf16);
-        std::u16string units;
-        for (qsizetype i = 0; i < content.size(); i += 2) {
-            const auto a = static_cast<unsigned char>(content[i]);
-            const auto b = static_cast<unsigned char>(content[i + 1]);
-            units.push_back(
-                static_cast<char16_t>(format.encoding == Encoding::Utf16LittleEndian ? a | (b << 8) : (a << 8) | b));
-        }
-        for (std::size_t i = 0; i < units.size(); ++i) {
-            if (QChar::isHighSurrogate(units[i])) {
-                if (++i == units.size() || !QChar::isLowSurrogate(units[i]))
-                    return failure(ProblemCode::TextInvalidSurrogatePair);
-            } else if (QChar::isLowSurrogate(units[i]))
-                return failure(ProblemCode::TextUnpairedSurrogate);
-        }
-        text = QString::fromUtf16(units.data(), static_cast<qsizetype>(units.size()));
+        if (const auto problem = decodeUtf16(std::move(content), name, format, text); !problem.isEmpty())
+            return failure(problem);
     } else {
         return failure(Problem{ProblemCode::TextUnsupportedEncoding, {QString::fromLatin1(workingTreeEncoding)}});
     }
@@ -131,8 +139,8 @@ TextResult decodeText(const QByteArray &bytes, const QByteArray &workingTreeEnco
     bool crlf = false;
     for (qsizetype i = 0; i < text.size(); ++i) {
         if (text[i] == QLatin1Char('\r')) {
-            if (i + 1 == text.size() || text[++i] != QLatin1Char('\n'))
-                return failure(ProblemCode::TextBareCarriageReturn);
+            ++i;
+            if (i == text.size() || text[i] != QLatin1Char('\n')) return failure(ProblemCode::TextBareCarriageReturn);
             crlf = true;
         } else if (text[i] == QLatin1Char('\n'))
             lf = true;

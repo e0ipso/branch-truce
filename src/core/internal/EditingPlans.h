@@ -42,7 +42,9 @@ inline std::optional<ByteRange> mappedRange(const ResultAnchor *anchor) noexcept
 }
 inline std::string sourceText(const FileSnapshots &snapshots, const SourceAnchor &source)
 {
-    return std::string(slice(snapshots.source(source.side)->worktree.utf8, source.range));
+    const auto &captured = snapshots.source(source.side);
+    if (!captured) throw std::bad_optional_access{};
+    return std::string(slice(captured->worktree.utf8, source.range));
 }
 
 ChoicePlan planChoice(const PlanningInput &, MarkerPlanner, const MarkerScan &, RevisionId, const std::string &,

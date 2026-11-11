@@ -80,8 +80,11 @@ Handoff SessionHandoff::build(const SessionStore &store, const SessionActivity &
             ++result.outstandingFiles;
             filesResolved = false;
         }
-        for (auto &group : result.groups)
-            if (group.category == route.category) group.entries.push_back(std::move(entry));
+        for (auto &group : result.groups) {
+            if (group.category != route.category) continue;
+            group.entries.push_back(std::move(entry));
+            break;
+        }
     }
     if (activity.resolutionRunning)
         result.sessionBlockers.push_back(tr("A resolution is still running; its outcome is not known yet."));

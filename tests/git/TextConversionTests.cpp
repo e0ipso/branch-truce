@@ -20,7 +20,7 @@ int main(int argc, char **argv)
     QCoreApplication application(argc, argv);
     test_support::configure(argc, argv);
     test_support::Suite suite("TextConversionTests");
-    for (const auto &format : conversion_fixtures::accepted) {
+    for (const auto &format : conversion_fixtures::accepted()) {
         suite.run(
             std::string("conversion format matrix preserves reviewed bytes through real Git publication: ")
                 + format.name,
@@ -95,7 +95,7 @@ int main(int argc, char **argv)
                 checkConversionCleanup(repo);
             });
     }
-    for (const auto &invalid : conversion_fixtures::rejectedSources) {
+    for (const auto &invalid : conversion_fixtures::rejectedSources()) {
         suite.run(std::string("invalid source bytes reject without accepted text or writes: ") + invalid.name,
                   [&invalid] {
                       Repository repo;
@@ -130,7 +130,7 @@ int main(int argc, char **argv)
                       checkConversionCleanup(repo);
                   });
     }
-    for (const auto &invalid : conversion_fixtures::rejectedEdits) {
+    for (const auto &invalid : conversion_fixtures::rejectedEdits()) {
         suite.run(std::string("invalid edited text rejects without accepted text or writes: ") + invalid.name,
                   [&invalid] {
                       Repository repo;

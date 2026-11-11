@@ -173,7 +173,8 @@ public:
                 } else if (!envelope.isEmpty()) {
                     current.clear();
                     exclude(conflict, ConflictSupport::LoadFailure, envelope);
-                } else if (current != conflict.result->originalBytes || identity != conflict.resultIdentity) {
+                } else if (!conflict.result || current != conflict.result->originalBytes
+                           || identity != conflict.resultIdentity) {
                     exclude(conflict, ConflictSupport::TopologyConflict, ProblemCode::ClassificationResultChanged);
                 } else if (conflict.sources.front().policy.configuration != observed.conversionPolicy.configuration) {
                     exclude(conflict, ConflictSupport::UnsupportedConversion,
@@ -213,40 +214,42 @@ public:
                 slash = conflict.path.indexOf('/', slash + 1);
             }
         }
-        for (auto &conflict : result.conflicts) {
-            std::array<const IndexEntry *, 4> stages{};
-            bool valid = detail::relativeFile(conflict.path);
-            bool regular = true;
-            for (const auto &entry : conflict.stages) {
-                if (entry.stage < 1 || entry.stage > 3 || stages[entry.stage] || !detail::objectId(entry.objectId)) {
-                    valid = false;
-                    break;
-                }
-                stages[entry.stage] = &entry;
-                regular = regular && (entry.mode == "100644" || entry.mode == "100755");
-            }
-            if (!valid)
-                exclude(conflict, ConflictSupport::InspectionFailure, ProblemCode::ClassificationInvalidStages);
-            else if (!regular)
-                exclude(conflict, ConflictSupport::UnsupportedType, ProblemCode::ClassificationNonRegular);
-            else if (!stages[2] || !stages[3])
-                exclude(conflict, ConflictSupport::MissingSide, ProblemCode::ClassificationMissingSide);
-            else if (stages[2]->mode != stages[3]->mode)
-                exclude(conflict, ConflictSupport::ModeConflict, ProblemCode::ClassificationModeConflict);
-            else if (ambiguous.contains(conflict.path))
-                exclude(conflict, ConflictSupport::TopologyConflict, ProblemCode::ClassificationTopology);
-            else if (result.repository.unsupportedPaths.contains(conflict.path))
-                exclude(conflict, ConflictSupport::UnverifiedSource,
-                        result.repository.unsupportedPaths.value(conflict.path));
-            else if (!result.repository.supported)
-                exclude(conflict, ConflictSupport::UnsupportedOperation,
-                        Problem{ProblemCode::ClassificationUnsupportedOperation}.wrapping(result.repository.problem));
-            else {
-                conflict.mode = stages[2]->mode;
-                conflict.support = ConflictSupport::SupportedText;
-            }
-        }
+        for (auto &conflict : result.conflicts) classifyConflict(conflict, ambiguous);
         next();
+    }
+    void classifyConflict(Conflict &conflict, const QSet<QByteArray> &ambiguous)
+    {
+        std::array<const IndexEntry *, 4> stages{};
+        bool valid = detail::relativeFile(conflict.path);
+        bool regular = true;
+        for (const auto &entry : conflict.stages) {
+            if (entry.stage < 1 || entry.stage > 3 || stages[entry.stage] || !detail::objectId(entry.objectId)) {
+                valid = false;
+                break;
+            }
+            stages[entry.stage] = &entry;
+            regular = regular && (entry.mode == "100644" || entry.mode == "100755");
+        }
+        if (!valid)
+            exclude(conflict, ConflictSupport::InspectionFailure, ProblemCode::ClassificationInvalidStages);
+        else if (!regular)
+            exclude(conflict, ConflictSupport::UnsupportedType, ProblemCode::ClassificationNonRegular);
+        else if (!stages[2] || !stages[3])
+            exclude(conflict, ConflictSupport::MissingSide, ProblemCode::ClassificationMissingSide);
+        else if (stages[2]->mode != stages[3]->mode)
+            exclude(conflict, ConflictSupport::ModeConflict, ProblemCode::ClassificationModeConflict);
+        else if (ambiguous.contains(conflict.path))
+            exclude(conflict, ConflictSupport::TopologyConflict, ProblemCode::ClassificationTopology);
+        else if (result.repository.unsupportedPaths.contains(conflict.path))
+            exclude(conflict, ConflictSupport::UnverifiedSource,
+                    result.repository.unsupportedPaths.value(conflict.path));
+        else if (!result.repository.supported)
+            exclude(conflict, ConflictSupport::UnsupportedOperation,
+                    Problem{ProblemCode::ClassificationUnsupportedOperation}.wrapping(result.repository.problem));
+        else {
+            conflict.mode = stages[2]->mode;
+            conflict.support = ConflictSupport::SupportedText;
+        }
     }
     void next()
     {

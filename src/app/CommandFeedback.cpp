@@ -47,11 +47,13 @@ void CommandFeedback::showMarkers(const QString &message, const std::string &fil
 
 QVariantMap CommandFeedback::markerBlocker() const
 {
-    const auto *file = markers_ ? store_.file(markers_->fileId) : nullptr;
-    if (!file || selection_.id() != markers_->fileId || file->current().id != markers_->revision) return {};
-    return {{QStringLiteral("fileId"), QString::fromStdString(markers_->fileId)},
-            {QStringLiteral("revision"), QString::number(markers_->revision)},
-            {QStringLiteral("count"), QVariant::fromValue(static_cast<qulonglong>(markers_->count))},
-            {QStringLiteral("line"), QVariant::fromValue(static_cast<qulonglong>(markers_->line))}};
+    if (!markers_) return {};
+    const auto &markers = *markers_;
+    const auto *file = store_.file(markers.fileId);
+    if (!file || selection_.id() != markers.fileId || file->current().id != markers.revision) return {};
+    return {{QStringLiteral("fileId"), QString::fromStdString(markers.fileId)},
+            {QStringLiteral("revision"), QString::number(markers.revision)},
+            {QStringLiteral("count"), QVariant::fromValue(static_cast<qulonglong>(markers.count))},
+            {QStringLiteral("line"), QVariant::fromValue(static_cast<qulonglong>(markers.line))}};
 }
 }

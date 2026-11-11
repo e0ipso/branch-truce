@@ -48,38 +48,38 @@ Kirigami.ApplicationWindow {
             [guidance, selectedAddCommand]);
     }
     function choose(target: string, action: int): void {
-        choices.cancel();
+        window.choices.cancel();
         window.previewRequested = true;
-        const accepted = choices.previewChoice(selectedFile.fileId, selectedFile.currentRevision, target, action);
-        window.previewRequested = accepted && choices.previewPending;
+        const accepted = window.choices.previewChoice(selectedFile.fileId, selectedFile.currentRevision, target, action);
+        window.previewRequested = accepted && window.choices.previewPending;
     }
     function chooseNonConflicting(scope: int): void {
-        choices.cancel();
+        window.choices.cancel();
         window.previewRequested = true;
-        const accepted = choices.previewNonConflicting(selectedFile.fileId, selectedFile.currentRevision, scope);
-        window.previewRequested = accepted && choices.previewPending;
+        const accepted = window.choices.previewNonConflicting(selectedFile.fileId, selectedFile.currentRevision, scope);
+        window.previewRequested = accepted && window.choices.previewPending;
     }
     function chooseWholeFile(side: int): void {
-        choices.cancel();
+        window.choices.cancel();
         window.previewRequested = true;
-        const accepted = choices.previewWholeFile(selectedFile.fileId, selectedFile.currentRevision, side);
-        window.previewRequested = accepted && choices.previewPending;
+        const accepted = window.choices.previewWholeFile(selectedFile.fileId, selectedFile.currentRevision, side);
+        window.previewRequested = accepted && window.choices.previewPending;
     }
     Connections {
-        target: choices
+        target: window.choices
         function onPreviewPendingChanged(): void {
-            if (!choices.previewPending)
+            if (!window.choices.previewPending)
                 window.previewRequested = false;
         }
         function onReady(scope: int): void {
-            if (!window.previewRequested || !choices.previewReady)
+            if (!window.previewRequested || !window.choices.previewReady)
                 return;
             window.previewRequested = false;
             if (scope === ChoicePreviewFlow.Scope.Choice) {
-                if (choices.choicePreview.confirmationRequired)
+                if (window.choices.choicePreview.confirmationRequired)
                     replacementDialog.open();
                 else
-                    choices.applyChoice(false);
+                    window.choices.applyChoice(false);
             } else if (scope === ChoicePreviewFlow.Scope.NonConflicting) {
                 nonConflictingDialog.open();
             } else {
@@ -129,7 +129,7 @@ Kirigami.ApplicationWindow {
             window.close();
     }
     Connections {
-        target: completion
+        target: window.completion
         function onRecoveryRetried(succeeded: bool): void {
             if (succeeded)
                 window.close();

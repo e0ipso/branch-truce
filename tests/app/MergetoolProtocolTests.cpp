@@ -53,7 +53,7 @@ QByteArray frameOf(const MergetoolMessage &message) { return mergetoolFrame(enco
 QByteArray lengthPrefix(quint32 length)
 {
     QByteArray prefix;
-    for (const int shift : {24, 16, 8, 0}) prefix.append(static_cast<char>((length >> shift) & 0xffU));
+    for (const unsigned int shift : {24U, 16U, 8U, 0U}) prefix.append(static_cast<char>((length >> shift) & 0xffU));
     return prefix;
 }
 
@@ -96,6 +96,7 @@ public:
                   "a message from the session");
         const auto decoded = decodeMergetoolMessage(payload);
         CHECK(decoded.message.has_value());
+        if (!decoded.message) throw test_support::Failure("the session reply has no decoded message");
         return *decoded.message;
     }
     void waitClosed()
@@ -490,7 +491,7 @@ void theFallbackSocketDirectoryIsPrivateAndUnpredictable()
     CHECK_EQ(mergetoolSocketDirectory({}), first);
     struct stat info{};
     CHECK(::lstat(QFile::encodeName(first).constData(), &info) == 0 && S_ISDIR(info.st_mode));
-    CHECK(info.st_uid == ::geteuid() && (info.st_mode & 077) == 0);
+    CHECK(info.st_uid == ::geteuid() && (info.st_mode & 077U) == 0);
     Problem error;
     CHECK(prepareMergetoolSocketDirectory(first, &error));
     // A directory that went away, as /tmp does at boot, is replaced by a new one.
@@ -530,6 +531,7 @@ void intakesArePrivateCheckedAndRemoved()
     }
     const auto read = readMergetoolIntake(intake, root, key, &error);
     CHECK(read && read->invocation == invocation && read->path == sources.path);
+    if (!read) throw test_support::Failure("the retained intake could not be read");
     CHECK(read->localPresent && !read->basePresent && !read->remotePresent);
     CHECK(!readMergetoolIntake(intake, root, QByteArray(64, 'd'), &error));
     CHECK(!readMergetoolIntake(intake, directory.path(), key, &error));

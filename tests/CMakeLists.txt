@@ -158,7 +158,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
 
     find_package(Qt6 6.6 REQUIRED COMPONENTS Test QuickTest)
     if(Python3_Interpreter_FOUND)
-        add_library(branch_truce_native_replay_driver MODULE tools/NativeReplayDriver.cpp)
+        add_library(branch_truce_native_replay_driver MODULE "${CMAKE_CURRENT_SOURCE_DIR}/../tools/native-replay/Driver.cpp")
         target_link_libraries(branch_truce_native_replay_driver PRIVATE
             Qt6::Core Qt6::Gui Qt6::Quick Qt6::QuickControls2 Qt6::Network Qt6::Test branch_truce_build_options)
         add_test(NAME tooling.native-driver-main

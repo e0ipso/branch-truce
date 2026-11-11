@@ -65,7 +65,7 @@ enum class Transition {
     PreviewChanged
 };
 
-inline Transition computationFailure(std::exception_ptr error) noexcept
+inline Transition computationFailure(const std::exception_ptr &error) noexcept
 {
     try {
         if (error) std::rethrow_exception(error);

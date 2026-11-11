@@ -159,6 +159,8 @@ Row {
         display: AbstractButton.IconOnly
         icon.width: glyphSize
         icon.height: glyphSize
+        Accessible.role: Accessible.Button
+        Accessible.name: choiceButton.text
         Accessible.description: buttons.menuHint
         ToolTip.text: text + "\n" + buttons.menuHint
         ToolTip.visible: hovered && !entryMenu.visible
@@ -243,7 +245,8 @@ Row {
         // The range choices follow this separator, wherever the items above it end.
         MenuSeparator { id: entriesStart }
         Instantiator {
-            model: buttons.entries
+            // Closed menus need no native delegates when a revision updates.
+            model: entryMenu.visible ? buttons.entries : []
             delegate: MenuItem {
                 required property var modelData
                 objectName: modelData.name

@@ -265,7 +265,7 @@ int main(int argc, char **argv)
         const auto open = recoveryTransaction(file, RecoveryAction::Open, "open", {});
         const auto before = file.current().draft.text;
         auto draft = file.current().draft;
-        draft.text += "x";
+        draft.text += 'x';
         CHECK(file.replaceDraft(file.current().id, draft) == Transition::Applied);
         const auto edit = recoveryTransaction(file, RecoveryAction::ReplaceDraft, "edit", before);
         CHECK(edit.retainedBytes >= static_cast<qint64>(draft.text.size()));

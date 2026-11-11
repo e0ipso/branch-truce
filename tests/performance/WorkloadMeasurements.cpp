@@ -180,30 +180,38 @@ void expect(Tally &tally, const std::vector<Aggregate> &results, const std::vect
 }
 
 // Both profiles: an action over a product limit fails explicitly instead of passing truncated.
-const std::vector<Expectation> kHonesty = {
-    {"git-read-over-limit", "explicit-failure", "api=OutputLimit"},
-    {"git-read-over-limit", "explicit-failure", "incomplete=1"},
-    {"git-input-over-limit", "explicit-failure", "api=Rejected"},
-    {"recovery-bad-digest", "explicit-failure", "acknowledged=0"},
-    {"recovery-overload", "explicit-failure", "acknowledged=0"},
-};
+const std::vector<Expectation> &honestyExpectations()
+{
+    static const std::vector<Expectation> values = {
+        {"git-read-over-limit", "explicit-failure", "api=OutputLimit"},
+        {"git-read-over-limit", "explicit-failure", "incomplete=1"},
+        {"git-input-over-limit", "explicit-failure", "api=Rejected"},
+        {"recovery-bad-digest", "explicit-failure", "acknowledged=0"},
+        {"recovery-overload", "explicit-failure", "acknowledged=0"},
+    };
+    return values;
+}
 
-const std::vector<Expectation> kGate = {
-    {"correspondence-lines-200-construct", "completed", ""},
-    {"correspondence-lines-200-edit", "completed", ""},
-    {"correspondence-long-65536-construct", "completed", ""},
-    {"correspondence-long-65536-edit", "completed", ""},
-    {"editor-startup", "completed", ""},
-    {"editor-lines-200-load", "completed", ""},
-    {"editor-lines-200-key", "completed", ""},
-    {"editor-long-8192-load", "completed", ""},
-    {"editor-long-8192-key", "completed", ""},
-    {"git-read-65536", "completed", "api=Success"},
-    {"recovery-65536-commit", "completed", "acknowledged=1"},
-    {"recovery-65536-reload", "completed", ""},
-    // The supervisor itself: a record from a worker that then died on a signal is not completed.
-    {"worker-signalled-after-report", "inconsistent", "worker ended by signal 15"},
-};
+const std::vector<Expectation> &gateExpectations()
+{
+    static const std::vector<Expectation> values = {
+        {"correspondence-lines-200-construct", "completed", ""},
+        {"correspondence-lines-200-edit", "completed", ""},
+        {"correspondence-long-65536-construct", "completed", ""},
+        {"correspondence-long-65536-edit", "completed", ""},
+        {"editor-startup", "completed", ""},
+        {"editor-lines-200-load", "completed", ""},
+        {"editor-lines-200-key", "completed", ""},
+        {"editor-long-8192-load", "completed", ""},
+        {"editor-long-8192-key", "completed", ""},
+        {"git-read-65536", "completed", "api=Success"},
+        {"recovery-65536-commit", "completed", "acknowledged=1"},
+        {"recovery-65536-reload", "completed", ""},
+        // The supervisor itself: a record from a worker that then died on a signal is not completed.
+        {"worker-signalled-after-report", "inconsistent", "worker ended by signal 15"},
+    };
+    return values;
+}
 } // namespace
 
 int main(int argc, char **argv)
@@ -240,8 +248,8 @@ int main(int argc, char **argv)
         }
         std::cout << "report " << report << '\n';
     }
-    std::vector<Expectation> expectations = evidence ? kHonesty : kGate;
-    if (!evidence) expectations.insert(expectations.end(), kHonesty.begin(), kHonesty.end());
+    std::vector<Expectation> expectations = evidence ? honestyExpectations() : gateExpectations();
+    if (!evidence) expectations.insert(expectations.end(), honestyExpectations().begin(), honestyExpectations().end());
     for (const auto &item : results) {
         if (item.outcome == "fabricated-success") expectations.push_back({item.name, "completed", ""});
     }

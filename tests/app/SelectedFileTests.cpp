@@ -211,8 +211,16 @@ QStringList regionStates(const SelectedFile *file)
 }
 
 // viewFile() regions 6 to 9 cover the line both sides changed.
-const std::vector<bool> noHandEdits(10, false);
-const std::vector<bool> conflictLineEdited{false, false, false, false, false, false, true, true, true, true};
+const std::vector<bool> &noHandEdits()
+{
+    static const std::vector<bool> value(10, false);
+    return value;
+}
+const std::vector<bool> &conflictLineEdited()
+{
+    static const std::vector<bool> value{false, false, false, false, false, false, true, true, true, true};
+    return value;
+}
 
 // One file in a controller, edited through its model and read back as the view sees it.
 struct RegionView {
@@ -263,7 +271,7 @@ int main(int argc, char **argv)
     // The English catalog supplies the plural forms these checks read.
     branch_truce::installTranslations(app);
     test_support::Suite suite("SelectedFileTests");
-    suite.run("comparison bindings receive one complete projection per revision", [] {
+    suite.run("comparison bindings receive one complete projection per mapping generation", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
         auto [store, rows] = test_support::TestSession(directory.path() + "/recovery");
@@ -290,20 +298,35 @@ int main(int argc, char **argv)
             return value;
         };
         const auto initial = read();
-        QStringList observed, focused;
-        QObject::connect(&binding, &QQmlExpression::valueChanged, [&] { observed.push_back(read()); });
-        const auto observeFocused = [&] { focused.push_back(read()); };
-        QObject::connect(selected.comparison(), &ComparisonPresentation::changed, observeFocused);
+        QList<QPair<QString, QString>> observed, focused;
+        QMap<QString, QString> publications;
+        const auto snapshot = [&] { return qMakePair(selected.comparison()->generation(), read()); };
+        QObject::connect(&binding, &QQmlExpression::valueChanged, [&] { observed.push_back(snapshot()); });
+        const auto observeFocused = [&] { focused.push_back(snapshot()); };
+        QObject::connect(selected.comparison(), &ComparisonPresentation::changed, [&] {
+            const auto current = snapshot();
+            CHECK(!publications.contains(current.first));
+            publications.insert(current.first, current.second);
+            observeFocused();
+        });
         QObject::connect(selected.comparison(), &ComparisonPresentation::leftRowsChanged, observeFocused);
         QObject::connect(selected.comparison(), &ComparisonPresentation::rightRowsChanged, observeFocused);
         const auto checkPublication = [&] {
             const auto complete = read();
-            CHECK(observed.size() == 1);
-            CHECK(observed.front() == complete);
-            CHECK(focused.size() >= 2);
-            for (const auto &value : focused) CHECK(value == complete);
+            CHECK(!publications.isEmpty());
+            CHECK_EQ(observed.size(), publications.size());
+            QSet<QString> generations;
+            for (const auto &value : observed) {
+                CHECK(!generations.contains(value.first));
+                generations.insert(value.first);
+                CHECK(publications.value(value.first) == value.second);
+            }
+            CHECK(observed.back().second == complete);
+            CHECK(focused.size() >= publications.size());
+            for (const auto &value : focused) CHECK(publications.value(value.first) == value.second);
             observed.clear();
             focused.clear();
+            publications.clear();
             return complete;
         };
         CHECK(awaitAligned(
@@ -413,6 +436,7 @@ int main(int argc, char **argv)
     suite.run("accepted controller edit keeps source signals and row status in sync", [] {
         Application controller{test_support::windowConfig()};
         CHECK(controller.store()->appendFile(viewFile()));
+        test_support::awaitRecovery(*controller.store());
         CHECK(controller.selection()->select("choices"));
         auto *selected = controller.selectedFile();
         const auto row = controller.files()->index(0);
@@ -429,7 +453,9 @@ int main(int argc, char **argv)
             controller, controller.commands()->editResult("choices", originalRevision, 0, 0, QString::fromUtf8("é "))));
         CHECK(controller.selectedFile() == selected && selected->stage2() == originalSource);
         CHECK(sources.count() == 0 && identity.count() == 0 && result.count() == 1);
-        CHECK(status.count() == 1 && rows.count() == 1);
+        // Admission, durable revision and completed alignment each refresh the row.
+        EXPECT_EQ(status.count(), 2);
+        EXPECT_EQ(rows.count(), 3);
         CHECK(selected->resultText() == QString::fromUtf8("é ") + originalText);
         CHECK(controller.store()->file("choices")->current().draft.text
               == selected->resultText().toUtf8().toStdString());
@@ -438,8 +464,8 @@ int main(int argc, char **argv)
         CHECK(selected->progress() == row.data(SessionModel::ProgressRole).toMap());
         CHECK(
             !commandResult(controller, controller.commands()->editResult("choices", originalRevision, 0, 0, "stale")));
-        CHECK(sources.count() == 0 && identity.count() == 0 && result.count() == 1 && status.count() == 1
-              && rows.count() == 1);
+        CHECK(sources.count() == 0 && identity.count() == 0 && result.count() == 1 && status.count() == 2
+              && rows.count() == 3);
     });
     suite.run("selected file ranges, kinds and region states follow each new revision", [] {
         Application controller{test_support::windowConfig()};
@@ -584,33 +610,33 @@ int main(int argc, char **argv)
 
         // Undecided regions report the edit and stay undecided.
         file = view.type("base conflict", 5, "hand ");
-        CHECK(handEdits(file) == conflictLineEdited && regionStates(file) == expected);
+        CHECK(handEdits(file) == conflictLineEdited() && regionStates(file) == expected);
         file = view.choose(leftConflict, ChoiceAction::Accept);
         expected[6] = expected[7] = "accepted";
-        CHECK(handEdits(file) == noHandEdits && regionStates(file) == expected);
+        CHECK(handEdits(file) == noHandEdits() && regionStates(file) == expected);
 
         // Accepted.
         file = view.type("left conflict", 5, "hand ");
         expected[6] = expected[7] = "manual";
-        CHECK(handEdits(file) == conflictLineEdited && regionStates(file) == expected);
+        CHECK(handEdits(file) == conflictLineEdited() && regionStates(file) == expected);
         file = view.choose(rightConflict, ChoiceAction::CombineLeftFirst);
         for (const int i : {6, 7, 8, 9}) expected[i] = "accepted";
-        CHECK(handEdits(file) == noHandEdits && regionStates(file) == expected);
+        CHECK(handEdits(file) == noHandEdits() && regionStates(file) == expected);
         CHECK(file->resultText().contains("\nleft conflict\nright conflict\n"));
 
         // Combined.
         file = view.type("right conflict", 6, "hand ");
         for (const int i : {6, 7, 8, 9}) expected[i] = "manual";
-        CHECK(handEdits(file) == conflictLineEdited && regionStates(file) == expected);
+        CHECK(handEdits(file) == conflictLineEdited() && regionStates(file) == expected);
         file = view.choose(leftConflict, ChoiceAction::CombineRightFirst);
         for (const int i : {6, 7, 8, 9}) expected[i] = "accepted";
-        CHECK(handEdits(file) == noHandEdits && regionStates(file) == expected);
+        CHECK(handEdits(file) == noHandEdits() && regionStates(file) == expected);
         CHECK(file->resultText().contains("\nright conflict\nleft conflict\n"));
 
         // Ignored. Ignoring keeps the text, so only accepting the deletion replaces the edit.
         file = view.choose(removed, ChoiceAction::Ignore);
         expected[3] = expected[4] = "ignored";
-        CHECK(handEdits(file) == noHandEdits && regionStates(file) == expected);
+        CHECK(handEdits(file) == noHandEdits() && regionStates(file) == expected);
         file = view.type("base removed", 5, "hand ");
         expected[3] = expected[4] = "manual";
         CHECK(handEdits(file) == std::vector<bool>{false, false, false, true, true, false, false, false, false, false});
@@ -618,7 +644,7 @@ int main(int argc, char **argv)
         file = view.choose(deletion, ChoiceAction::Accept);
         expected[3] = expected[4] = "ignored";
         expected[5] = "accepted";
-        CHECK(handEdits(file) == noHandEdits && regionStates(file) == expected);
+        CHECK(handEdits(file) == noHandEdits() && regionStates(file) == expected);
         CHECK(!file->resultText().contains("removed"));
     });
     suite.run("typing across a region boundary marks it and a whole-file choice clears every hand edit", [] {
@@ -628,7 +654,7 @@ int main(int argc, char **argv)
         CHECK(at != std::string::npos);
         file = crossing.edit({{at, at + 8}, "2\nright"});
         const auto regions = file->comparison()->contributions();
-        CHECK(handEdits(file) == conflictLineEdited && !regions[6].mapped);
+        CHECK(handEdits(file) == conflictLineEdited() && !regions[6].mapped);
         CHECK(regionStates(file)[6] == "manual" && regionStates(file)[8] == "undecided");
 
         RegionView view;
@@ -639,25 +665,25 @@ int main(int argc, char **argv)
         const auto preview = previewWholeFile(*files.file("choices"), view.revision(), SourceSide::Stage2);
         CHECK(await(files.applyWholeFile("choices", preview, true)) == Transition::Applied);
         file = view.file();
-        CHECK(handEdits(file) == noHandEdits);
+        CHECK(handEdits(file) == noHandEdits());
         CHECK(!regionStates(file).contains("manual") && !regionStates(file).contains("undecided"));
     });
     suite.run("undo and redo restore each region's hand-edit flag with the text and decisions", [] {
         RegionView view;
         const auto leftConflict = regionId(view.file(), "stage2", "line", 6);
         auto file = view.type("base conflict", 5, "hand ");
-        CHECK(handEdits(file) == conflictLineEdited);
+        CHECK(handEdits(file) == conflictLineEdited());
         file = view.choose(leftConflict, ChoiceAction::Accept);
-        CHECK(handEdits(file) == noHandEdits && regionStates(file)[6] == "accepted");
+        CHECK(handEdits(file) == noHandEdits() && regionStates(file)[6] == "accepted");
         file = await(view.undo());
-        CHECK(handEdits(file) == conflictLineEdited && regionStates(file)[6] == "undecided");
+        CHECK(handEdits(file) == conflictLineEdited() && regionStates(file)[6] == "undecided");
         CHECK(file->resultText().contains("\nbase hand conflict\n"));
         file = await(view.undo());
-        CHECK(handEdits(file) == noHandEdits && file->resultText().contains("\nbase conflict\n"));
+        CHECK(handEdits(file) == noHandEdits() && file->resultText().contains("\nbase conflict\n"));
         file = await(view.redo());
-        CHECK(handEdits(file) == conflictLineEdited && file->resultText().contains("\nbase hand conflict\n"));
+        CHECK(handEdits(file) == conflictLineEdited() && file->resultText().contains("\nbase hand conflict\n"));
         file = await(view.redo());
-        CHECK(handEdits(file) == noHandEdits && regionStates(file)[6] == "accepted");
+        CHECK(handEdits(file) == noHandEdits() && regionStates(file)[6] == "accepted");
         CHECK(file->resultText().contains("\nleft conflict\n"));
     });
     suite.run("a choice clears hand edits on a deleted line it restores and on text an edit left unchanged", [] {
@@ -783,7 +809,7 @@ int main(int argc, char **argv)
             return std::make_pair(handEdits(file), regionStates(file));
         };
         type("base conflict", "hand ");
-        CHECK(replayed().first == conflictLineEdited);
+        CHECK(replayed().first == conflictLineEdited());
         const auto leftConflict =
             test_support::choiceTarget(*store.file("choices"), SourceSide::Stage2, ChoiceScope::Line, 2)
                 .source.contributionId;
@@ -793,12 +819,12 @@ int main(int argc, char **argv)
             == Transition::Applied);
         // Replay applies the choice as a whole-draft replacement, which must not count as typing.
         auto snapshot = replayed();
-        CHECK(snapshot.first == noHandEdits && snapshot.second[6] == "accepted");
+        CHECK(snapshot.first == noHandEdits() && snapshot.second[6] == "accepted");
         type("left conflict", "hand ");
         type("base removed", "hand ");
         CHECK(await(store.undo("choices", revision())) == Transition::Applied);
         snapshot = replayed();
-        CHECK(snapshot.first == conflictLineEdited && snapshot.second[6] == "manual");
+        CHECK(snapshot.first == conflictLineEdited() && snapshot.second[6] == "manual");
         CHECK(await(store.redo("choices", revision())) == Transition::Applied);
         snapshot = replayed();
         CHECK(snapshot.first == std::vector<bool>{false, false, false, true, true, false, true, true, true, true});

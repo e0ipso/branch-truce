@@ -16,6 +16,37 @@
 #include <memory>
 
 namespace branch_truce {
+namespace {
+bool captureWorkingFiles(const QList<git::Conflict> &files, const git::RepositoryContext &repository,
+                         const std::string &sessionId,
+                         const std::shared_ptr<const CorrespondenceAlgorithm> &correspondence,
+                         const TaskControl &control, std::vector<FileSession> &loaded)
+{
+    for (const auto &file : files) {
+        if (control.cancellationRequested()) return false;
+        Draft draft;
+        auto support = supportFor(file);
+        auto detail = file.reason;
+        auto snapshots = captureFile(file, repository, sessionId);
+        if (snapshots) {
+            support = Support::Supported;
+            // FileSession counts the markers in this text.
+            draft.text = snapshots->launchResult.text.utf8;
+        } else if (detail.isEmpty()) {
+            support = Support::Unreadable;
+            detail = ProblemCode::LoadIncomplete;
+        }
+        loaded.emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), std::move(draft),
+                            FileLaunch{.support = support,
+                                       .supportDetail = detail.encoded().toStdString(),
+                                       .snapshots = std::move(snapshots),
+                                       .initializeChoices = true,
+                                       .algorithm = correspondence});
+    }
+    return true;
+}
+}
+
 SessionLoader::SessionLoader(Session session, git::GitRunners git, QObject *parent,
                              std::shared_ptr<const CorrespondenceAlgorithm> correspondence,
                              std::shared_ptr<const storage::FileSystem> files)
@@ -177,7 +208,7 @@ bool SessionLoader::chooseRecoverySession(const QString &session)
                                       // adoption if another window takes a choice in between.
                                       for (const auto &choice : choices) {
                                           if (!storage::RecoveryLease::acquire(choice.directory, files)) {
-                                              own->problem = ProblemCode::RecoverySessionActive;
+                                              own->problem = {ProblemCode::RecoverySessionActive, {choice.session}};
                                               return TaskResult{TaskStatus::Failed, {}, {}, own->problem, {}};
                                           }
                                       }
@@ -207,6 +238,9 @@ void SessionLoader::ownStoreRead(const QString &session, const QString &director
     if (const auto refusal = choiceRefusal(session, choiceState_); !refusal.isEmpty()) return refuseChoice(refusal);
     if (session_.store.recoveryDirectory() != directory)
         return refuseChoice(tr("Choose a recovery session after the session finishes loading."));
+    if (!own.succeeded && own.problem.code == ProblemCode::RecoverySessionActive)
+        return refuseChoice(tr("%1 is open in another Branch Truce window. Close it before switching sessions.")
+                                .arg(own.problem.arguments.value(0)));
     if (!own.succeeded)
         return refuseChoice(tr("This window's recovery store could not be read, so it cannot switch sessions: %1")
                                 .arg(problem_text::text(own.problem)));
@@ -232,7 +266,8 @@ bool SessionLoader::openRepository(const QString &directory, const QString &pref
 {
     if (state_ != StartupState::Idle) return false;
     // A reload passes repository_.worktreeRoot, which the reset below clears.
-    const auto launchDirectory = directory;
+    git::ConflictClassificationRequest request;
+    request.directory = directory;
     session_.selection.prefer(preferredFileId);
     recoverySession_ = recoverySession;
     recoveryChoices_.clear();
@@ -241,8 +276,6 @@ bool SessionLoader::openRepository(const QString &directory, const QString &pref
     classified_ = false;
     launchSizes_.clear();
     setState(StartupState::Opening, tr("Inspecting the selected local repository…"));
-    git::ConflictClassificationRequest request;
-    request.directory = launchDirectory;
     if (!classifier_.start(request)) {
         setState(StartupState::Error, tr("Could not start repository inspection."));
         return false;
@@ -286,6 +319,17 @@ void SessionLoader::classified(const git::ConflictClassificationResult &result)
     loadWorkingFiles(result.conflicts);
 }
 
+void SessionLoader::showEmptySession(const QString &diagnostics)
+{
+    if (!diagnostics.isEmpty())
+        setState(StartupState::Error, diagnostics);
+    else if (repository_.operation == git::RepositoryOperation::None)
+        setState(StartupState::NoSession, noOperationDetail());
+    else
+        setState(StartupState::NoSession,
+                 tr("This operation has no current unmerged files. Return to your Git workflow."));
+}
+
 void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
 {
     launchSizes_.clear();
@@ -325,27 +369,8 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
          recoveryInventory, git = git_, correspondence = correspondence_, chosen = recoverySession_, baselines,
          destinations = session_.publisher.destinations(),
          recoveryFiles = files_](const TaskInput &, const TaskControl &control) {
-            for (const auto &file : files) {
-                if (control.cancellationRequested()) return TaskResult{TaskStatus::Cancelled, {}, {}, {}, {}};
-                Draft draft;
-                auto support = supportFor(file);
-                auto detail = file.reason;
-                auto snapshots = captureFile(file, repository, sessionId);
-                if (snapshots) {
-                    support = Support::Supported;
-                    // FileSession counts the markers in this text.
-                    draft.text = file.result->utf8.toStdString();
-                } else if (detail.isEmpty()) {
-                    support = Support::Unreadable;
-                    detail = ProblemCode::LoadIncomplete;
-                }
-                loaded->emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), std::move(draft),
-                                     FileLaunch{.support = support,
-                                                .supportDetail = detail.encoded().toStdString(),
-                                                .snapshots = std::move(snapshots),
-                                                .initializeChoices = true,
-                                                .algorithm = correspondence});
-            }
+            if (!captureWorkingFiles(files, repository, sessionId, correspondence, control, *loaded))
+                return TaskResult{TaskStatus::Cancelled, {}, {}, {}, {}};
             *recovery = restoreRecovery(recoveryInventory, recoveryDirectory, repository, *loaded, git, chosen,
                                         {correspondence, QDateTime::currentDateTimeUtc(), recoveryFiles});
             // Reading every destination waits on the disk, so it happens here too.
@@ -377,13 +402,7 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
                 return;
             }
             if (session_.store.size() == 0) {
-                if (!diagnostics.isEmpty())
-                    setState(StartupState::Error, diagnostics);
-                else if (repository_.operation == git::RepositoryOperation::None)
-                    setState(StartupState::NoSession, noOperationDetail());
-                else
-                    setState(StartupState::NoSession,
-                             tr("This operation has no current unmerged files. Return to your Git workflow."));
+                showEmptySession(diagnostics);
                 return;
             }
             auto listen = MergetoolSession::Listen::Listening;

@@ -28,10 +28,12 @@ class ChoicePreviewFlow : public QObject {
     // The pending preview of each scope for the dialogs, or empty.
     Q_PROPERTY(bool previewReady READ previewReady NOTIFY previewPendingChanged)
     Q_PROPERTY(bool previewPending READ previewPending NOTIFY previewPendingChanged)
+    Q_PROPERTY(QString previewRequest READ previewRequest NOTIFY previewPendingChanged)
     Q_PROPERTY(QVariantMap choicePreview READ choicePreview NOTIFY choicePreviewChanged)
     Q_PROPERTY(QVariantMap nonConflictingPreview READ nonConflictingPreview NOTIFY nonConflictingPreviewChanged)
     Q_PROPERTY(QVariantMap wholeFilePreview READ wholeFilePreview NOTIFY wholeFilePreviewChanged)
 public:
+    [[nodiscard]] QString previewRequest() const { return QString::number(request_); }
     enum class Scope { Choice, NonConflicting, WholeFile };
     Q_ENUM(Scope)
     enum class Action { Accept, Ignore, ResolveUsingSide, CombineLeftFirst, CombineRightFirst };
@@ -87,6 +89,7 @@ Q_SIGNALS:
     // stopped pending, or the session's files were replaced under it.
     void changed(branch_truce::ChoicePreviewFlow::Scope scope);
     void ready(branch_truce::ChoicePreviewFlow::Scope scope);
+    void applyFinished(branch_truce::ChoicePreviewFlow::Scope scope, const QString &request, bool succeeded);
     void previewPendingChanged();
     void choicePreviewChanged();
     void nonConflictingPreviewChanged();

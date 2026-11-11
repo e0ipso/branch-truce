@@ -7,15 +7,15 @@
 using namespace branch_truce;
 
 namespace {
-const QByteArray path = "dir/file.txt";
-const QByteArray mode = "100644";
-const QString root = QStringLiteral("/work/repository");
+QByteArray capturePath() { return "dir/file.txt"; }
+QByteArray captureMode() { return "100644"; }
+QString captureRoot() { return QStringLiteral("/work/repository"); }
 
 git::RepositoryContext repository(git::RepositoryOperation operation)
 {
     git::RepositoryContext context;
-    context.worktreeRoot = root;
-    context.gitDirectory = root + QStringLiteral("/.git");
+    context.worktreeRoot = captureRoot();
+    context.gitDirectory = captureRoot() + QStringLiteral("/.git");
     context.operation = operation;
     context.supported = true;
     context.baseCommitId = "base-commit";
@@ -49,12 +49,12 @@ git::ConversionPolicy policy()
 void addStage(git::Conflict &conflict, unsigned int stage, const QByteArray &text)
 {
     const auto objectId = "object-" + QByteArray::number(stage);
-    conflict.stages.push_back({path, mode, objectId, stage});
+    conflict.stages.push_back({capturePath(), captureMode(), objectId, stage});
     git::ConvertedText source;
-    source.worktreeRoot = root;
-    source.path = path;
-    source.mode = mode;
-    source.sourceMode = mode;
+    source.worktreeRoot = captureRoot();
+    source.path = capturePath();
+    source.mode = captureMode();
+    source.sourceMode = captureMode();
     source.canonicalObjectId = objectId;
     source.canonicalBytes = text;
     source.document = document(text, text);
@@ -65,9 +65,9 @@ void addStage(git::Conflict &conflict, unsigned int stage, const QByteArray &tex
 git::Conflict conflict(std::initializer_list<unsigned int> stages)
 {
     git::Conflict result;
-    result.path = path;
+    result.path = capturePath();
     result.support = git::ConflictSupport::SupportedText;
-    result.mode = mode;
+    result.mode = captureMode();
     for (const auto stage : stages) addStage(result, stage, "stage " + QByteArray::number(stage) + "\n");
     result.result = document("manual result\n", "manual result\n");
     result.resultIdentity = SnapshotFileIdentity{1, 2, 0100644, 14, 3, 4, 5, 6};
@@ -77,6 +77,8 @@ git::Conflict conflict(std::initializer_list<unsigned int> stages)
 void checkSources(const FileSnapshots &captured, const git::RepositoryContext &context)
 {
     CHECK(captured.earlier && captured.stage2 && captured.stage3);
+    if (!captured.earlier || !captured.stage2 || !captured.stage3)
+        throw test_support::Failure("captured fixture sources are absent");
     CHECK(captured.earlier->objectId == "object-1" && captured.earlier->rawBytes == "stage 1\n");
     CHECK(captured.earlier->worktree.utf8 == "stage 1\n" && captured.earlier->mode == "100644");
     CHECK(captured.earlier->commitId == std::optional<std::string>("base-commit"));
@@ -95,7 +97,8 @@ void checkShared(const FileSnapshots &captured, const git::RepositoryContext &co
     CHECK(captured.launchResult.text.utf8 == "manual result\n"
           && captured.launchResult.text.bytes == "manual result\n");
     CHECK(captured.launchResult.identity == (SnapshotFileIdentity{1, 2, 0100644, 14, 3, 4, 5, 6}));
-    CHECK(captured.provenance.sessionId == "session" && captured.provenance.worktreeRoot == root.toStdString());
+    CHECK(captured.provenance.sessionId == "session"
+          && captured.provenance.worktreeRoot == captureRoot().toStdString());
     CHECK(captured.provenance.gitDirectory == context.gitDirectory.toStdString());
     CHECK(captured.provenance.stage2CommitId == context.stage2.commitId.toStdString());
     CHECK(captured.provenance.stage3CommitId == context.stage3.commitId.toStdString());

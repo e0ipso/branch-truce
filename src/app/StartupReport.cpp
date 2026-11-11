@@ -6,6 +6,20 @@
 
 namespace branch_truce {
 namespace {
+QString startupStateName(SessionLoader::StartupState state)
+{
+    switch (state) {
+    case SessionLoader::StartupState::Idle: return QStringLiteral("idle");
+    case SessionLoader::StartupState::Opening: return QStringLiteral("opening");
+    case SessionLoader::StartupState::Ready: return QStringLiteral("ready");
+    case SessionLoader::StartupState::ReadyWithoutMergetool: return QStringLiteral("ready-without-mergetool");
+    case SessionLoader::StartupState::NoSession: return QStringLiteral("no-session");
+    case SessionLoader::StartupState::Unsupported: return QStringLiteral("unsupported");
+    case SessionLoader::StartupState::Error: return QStringLiteral("error");
+    }
+    return {};
+}
+
 QString supportName(Support support)
 {
     switch (support) {
@@ -30,7 +44,7 @@ QJsonObject startupReport(const SessionLoader &loader, const SessionModel &files
             {QStringLiteral("detail"), files.data(index, SessionModel::SupportDetailRole).toString()},
             {QStringLiteral("text"), QString::fromUtf8(QByteArray::fromStdString(file->current().draft.text))}});
     }
-    return {{QStringLiteral("state"), QVariant::fromValue(loader.startupState()).toString()},
+    return {{QStringLiteral("state"), startupStateName(loader.startupState())},
             {QStringLiteral("repository"), loader.repositoryRoot()},
             {QStringLiteral("operation"), loader.operation()},
             {QStringLiteral("detail"), loader.detail()},

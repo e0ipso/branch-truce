@@ -147,11 +147,12 @@ private:
     [[nodiscard]] std::optional<std::size_t> copiedAround(ByteRange base, const std::vector<ByteRange> &lines)
     {
         if (!sources_ || lines.size() < 2) return std::nullopt;
+        const auto &sources = *sources_;
         const auto end = endMarkerFrom(lines.back().end);
         if (!end) return std::nullopt;
         std::optional<std::size_t> found;
         for (std::size_t i = 0; i < lines.size(); ++i) {
-            const auto matches = copied(*sources_, base, lines[i], *end);
+            const auto matches = copied(sources, base, lines[i], *end);
             if (limited_) return std::nullopt;
             if (!matches) continue;
             if (found) return std::nullopt;

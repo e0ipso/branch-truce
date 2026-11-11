@@ -202,7 +202,7 @@ void TextBlocks::setHidden(const QVariantList &hidden)
         folds.append(fold);
     }
     hidden_ = hidden;
-    folds_ = folds;
+    folds_ = std::move(folds);
     applyHidden();
     Q_EMIT hiddenChanged();
 }

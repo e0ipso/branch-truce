@@ -11,12 +11,33 @@
 #include <QHash>
 #include <QProcessEnvironment>
 
+#include <cerrno>
 #include <pwd.h>
 #include <unistd.h>
+#include <vector>
 
 using namespace git_fixture;
 
 namespace {
+bool readAccountHome(QString &home)
+{
+    constexpr std::size_t maxBytes = 1048576;
+    std::vector<char> buffer(16384);
+    struct passwd account{};
+    struct passwd *found = nullptr;
+    for (;;) {
+        const int error = ::getpwuid_r(::geteuid(), &account, buffer.data(), buffer.size(), &found);
+        if (error == ERANGE) {
+            if (buffer.size() > maxBytes / 2) return false;
+            buffer.resize(buffer.size() * 2);
+            continue;
+        }
+        if (error != 0 || !found) return false;
+        home = QFile::decodeName(account.pw_dir);
+        return true;
+    }
+}
+
 // The configuration files Git reads for one recorded environment, besides the repository's own.
 QStringList configurationRead(const QHash<QByteArray, QString> &variables)
 {
@@ -31,9 +52,9 @@ QStringList configurationRead(const QHash<QByteArray, QString> &variables)
 
 void theAdaptersGitReadsNoAccountOrSystemConfiguration()
 {
-    const auto *account = ::getpwuid(::geteuid());
-    if (account == nullptr) test_support::skip("this account has no passwd entry");
-    const auto accountHome = QDir::cleanPath(QFile::decodeName(account->pw_dir));
+    QString home;
+    if (!readAccountHome(home)) test_support::skip("this account has no passwd entry");
+    const auto accountHome = QDir::cleanPath(home);
     const QStringList accountFiles{accountHome + QStringLiteral("/.gitconfig"),
                                    accountHome + QStringLiteral("/.config/git/config")};
 
@@ -97,8 +118,8 @@ void theEnvironmentSelectionKeepsAbsoluteConfigurationPathsOnly()
     CHECK(dropped.configHome.isEmpty() && dropped.globalConfig.isEmpty() && dropped.systemConfig.isEmpty());
     CHECK(dropped.noSystem.isEmpty());
     // HOME falls back to the account's home directory.
-    if (const auto *account = ::getpwuid(::geteuid()); account != nullptr)
-        CHECK_EQ(dropped.home, QFile::decodeName(account->pw_dir));
+    QString home;
+    if (readAccountHome(home)) CHECK_EQ(dropped.home, home);
 }
 
 // A git mergetool parent started as `git -c ...` passes that configuration to its tools in the

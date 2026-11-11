@@ -36,6 +36,25 @@ Kirigami.Action {
         }
         return null
     }
+    // KDE's overflow Loader is stretched to its menu. Measure the loaded
+    // control's intrinsic width instead of feeding that stretched width back.
+    function stabilizeMenu(menu: Menu): void {
+        const view = menu ? menu.contentItem as ListView : null
+        if (!view || !("hasCheckables" in view))
+            return
+        view.implicitWidth = Qt.binding(function() {
+            if (!view.contentItem)
+                return 1
+            let width = 1
+            const children = view.contentItem.children
+            for (let i = 0; i < children.length; ++i) {
+                const loader = children[i] as Loader
+                const measured = loader && loader.item ? loader.item : children[i]
+                width = Math.max(width, measured.implicitWidth)
+            }
+            return width
+        })
+    }
     readonly property Shortcut alternateBindings: Shortcut {
         sequences: namedAction.standardSequences.slice(1)
         enabled: namedAction.enabled
@@ -47,6 +66,7 @@ Kirigami.Action {
         // Reading every visual parent keeps this binding current when Kirigami moves
         // the Loader into a menu. The menu itself is a QObject, not a visual ancestor.
         readonly property Menu containingMenu: namedAction.ownerMenu(parent)
+        onContainingMenuChanged: namedAction.stabilizeMenu(namedButton.containingMenu)
         objectName: namedAction.controlName
         action: namedAction.toggle ? namedAction : null
         text: namedAction.text

@@ -226,7 +226,8 @@ int main()
         QTemporaryDir directory;
         CHECK(directory.isValid());
         std::string large;
-        for (int line = 0; large.size() < 512 * 1024; ++line) large += "unchanged line " + std::to_string(line) + '\n';
+        for (int line = 0; large.size() < 512UL * 1024; ++line)
+            large += "unchanged line " + std::to_string(line) + '\n';
         auto launch = test_support::choiceFile();
         Recorder recorder(directory.path() + "/store", launch);
         recorder.step(RecoveryAction::ReplaceDraft, [&](FileSession &file) {

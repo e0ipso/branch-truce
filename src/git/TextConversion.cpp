@@ -133,6 +133,31 @@ public:
         } else
             reject(ProblemCode::ConversionUnknownOperation);
     }
+    void prepareResultText(const Result &observed)
+    {
+        const auto &request = result.request;
+        Problem problem;
+        text.worktreeRoot = observed.worktreeRoot;
+        text.policy = observed.conversionPolicy;
+        if (!supportedPolicy(text.policy, problem)) {
+            reject(problem);
+            return;
+        }
+        const auto format =
+            storage::resultFormat(request.launchResultFormat, text.policy.attributes.value("working-tree-encoding"),
+                                  text.policy.attributes.value("eol"), problem);
+        if (!format) {
+            reject(problem);
+            return;
+        }
+        const auto serialized = storage::serializeText(request.editedUtf8, *format);
+        if (!serialized.document) {
+            reject(serialized.problem);
+            return;
+        }
+        text.document = *serialized.document;
+        run(Step::Canonical, Operation::CanonicalizeText, {}, text.document.originalBytes);
+    }
     void consume(const Result &observed)
     {
         if (cancelled) {
@@ -156,29 +181,7 @@ public:
         const auto &request = result.request;
         Problem problem;
         switch (step) {
-        case Step::Attributes: {
-            text.worktreeRoot = observed.worktreeRoot;
-            text.policy = observed.conversionPolicy;
-            if (!supportedPolicy(text.policy, problem)) {
-                reject(problem);
-                return;
-            }
-            const auto format =
-                storage::resultFormat(request.launchResultFormat, text.policy.attributes.value("working-tree-encoding"),
-                                      text.policy.attributes.value("eol"), problem);
-            if (!format) {
-                reject(problem);
-                return;
-            }
-            const auto serialized = storage::serializeText(request.editedUtf8, *format);
-            if (!serialized.document) {
-                reject(serialized.problem);
-                return;
-            }
-            text.document = *serialized.document;
-            run(Step::Canonical, Operation::CanonicalizeText, {}, text.document.originalBytes);
-            break;
-        }
+        case Step::Attributes: prepareResultText(observed); break;
         case Step::Source: {
             text.worktreeRoot = observed.worktreeRoot;
             text.policy = observed.conversionPolicy;

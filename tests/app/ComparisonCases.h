@@ -13,9 +13,9 @@ enum class SceneSet { All, Scenes, Boundary, Display };
 class Group {
 public:
     Group(test_support::Suite &suite, bool selected) : suite_(suite), selected_(selected) {}
-    template <typename Test> void run(const std::string &name, Test test)
+    template <typename Test> void run(const std::string &name, Test &&test)
     {
-        if (selected_) suite_.run(name, std::move(test));
+        if (selected_) suite_.run(name, std::forward<Test>(test));
     }
 
 private:

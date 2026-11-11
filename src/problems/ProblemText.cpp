@@ -164,7 +164,7 @@ Sentence format(ProblemCode code)
     case ProblemCode::GitInputNotSent: return Text::tr("Could not send Git operation input");
     case ProblemCode::GitDeadline: return Text::tr("Git exceeded the %1 second deadline");
     case ProblemCode::GitReinspectionTimedOut: return {Text::tr("Index reinspection timed out"), Wrap::After};
-    case ProblemCode::GitLaunchFailed: return Text::tr("%1");
+    case ProblemCode::GitLaunchFailed:
     case ProblemCode::GitProcessFailed: return Text::tr("%1");
     case ProblemCode::GitStartFailed: return Text::tr("Could not start Git: %1");
     case ProblemCode::GitLaunchPipe: return Text::tr("Could not create the Git launch error pipe");

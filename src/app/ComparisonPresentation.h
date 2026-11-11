@@ -1,5 +1,6 @@
 // Joined, revision-bound source choices and result section presentation.
 #pragma once
+#include <QAbstractListModel>
 #include <QHash>
 #include <QObject>
 #include <QVariant>
@@ -58,6 +59,23 @@ public:
     QList<ComparisonContribution> extras;
     bool operator==(const ComparisonRow &) const = default;
 };
+// Keep source controls alive while the result changes their current command values.
+class ComparisonRowModel : public QAbstractListModel {
+public:
+    using QAbstractListModel::QAbstractListModel;
+    int rowCount(const QModelIndex &parent = {}) const override;
+    QVariant data(const QModelIndex &index, int role) const override;
+    QHash<int, QByteArray> roleNames() const override;
+    // Stage both panes before either publishes a completed reset or data change.
+    void stage(const QList<ComparisonRow> &rows, const QString &fileId);
+    void publish();
+
+private:
+    QList<ComparisonRow> rows_;
+    QList<int> changed_;
+    QString fileId_;
+    bool resetting_ = false;
+};
 class ComparisonPresentation : public QObject {
     Q_OBJECT
     QML_ELEMENT
@@ -65,6 +83,8 @@ class ComparisonPresentation : public QObject {
     Q_PROPERTY(QList<branch_truce::ComparisonContribution> contributions READ contributions NOTIFY changed)
     Q_PROPERTY(QList<branch_truce::ComparisonRow> leftRows READ leftRows NOTIFY leftRowsChanged)
     Q_PROPERTY(QList<branch_truce::ComparisonRow> rightRows READ rightRows NOTIFY rightRowsChanged)
+    Q_PROPERTY(QAbstractItemModel *leftRowModel READ leftRowModel CONSTANT)
+    Q_PROPERTY(QAbstractItemModel *rightRowModel READ rightRowModel CONSTANT)
 #define PRESENTATION_PROPERTY(type, name) Q_PROPERTY(type name READ name NOTIFY changed)
     PRESENTATION_PROPERTY(QVariantList, passages)
     PRESENTATION_PROPERTY(QVariantList, handEditedLines)
@@ -100,6 +120,8 @@ public:
 #undef PRESENTATION_READ
     QList<ComparisonRow> leftRows() const { return leftRows_; }
     QList<ComparisonRow> rightRows() const { return rightRows_; }
+    QAbstractItemModel *leftRowModel() { return &leftRowModel_; }
+    QAbstractItemModel *rightRowModel() { return &rightRowModel_; }
     QString generation() const { return QString::number(generation_); }
     Q_INVOKABLE QVariantMap choiceTarget(const QString &id) const;
     Q_INVOKABLE QVariantMap targetAt(const QString &side, int line) const;
@@ -122,6 +144,7 @@ private:
     quint64 generation_ = 0;
     QHash<QString, ComparisonContribution> byId_;
     QList<ComparisonRow> leftRows_, rightRows_;
+    ComparisonRowModel leftRowModel_{this}, rightRowModel_{this};
     QList<Section> sections_;
 };
 }

@@ -57,7 +57,7 @@ private:
     static int utf16Units(char byte) noexcept
     {
         const auto value = static_cast<unsigned char>(byte);
-        return (value & 0xC0) == 0x80 ? 0 : value >= 0xF0 ? 2 : 1;
+        return (value & 0xC0U) == 0x80 ? 0 : value >= 0xF0 ? 2 : 1;
     }
     [[nodiscard]] std::vector<Start>::const_iterator lineAt(std::size_t offset) const
     {

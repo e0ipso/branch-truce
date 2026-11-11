@@ -99,7 +99,8 @@ QString status(FileStatus status)
         return QCoreApplication::translate("EngineText", "Outcome uncertain; verification required");
     case FileStatus::CheckpointFailed: return QCoreApplication::translate("EngineText", "Draft save failed");
     case FileStatus::WriteFailed: return QCoreApplication::translate("EngineText", "Repository write failed");
-    case FileStatus::StageFailed: return QCoreApplication::translate("EngineText", "Written; Git resolution failed");
+    case FileStatus::StageFailed:
+        return QCoreApplication::translate("EngineText", "Written, unresolved; Git resolution failed");
     case FileStatus::EarlierStaged:
         return QCoreApplication::translate("EngineText", "Earlier result staged; current draft not applied");
     case FileStatus::Resolved: return QCoreApplication::translate("EngineText", "Written and resolved");

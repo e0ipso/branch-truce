@@ -691,8 +691,8 @@ public:
             requireChild(runChild(QStringLiteral("edit"), directory.path(), {}), 0);
             const auto journalPath = directory.path() + QStringLiteral("/journal");
             auto bytes = readFile(journalPath);
-            CHECK(bytes.startsWith("Branch Truce recovery journal v2\n"));
-            bytes.replace(0, sizeof("Branch Truce recovery journal v2\n") - 1, "Branch Truce recovery journal v9\n");
+            CHECK(bytes.startsWith("Branch Truce recovery journal v3\n"));
+            bytes.replace(0, sizeof("Branch Truce recovery journal v3\n") - 1, "Branch Truce recovery journal v9\n");
             writeFile(journalPath, bytes);
             const auto replay = replayRecovery(storage::RecoveryStore(directory.path()));
             CHECK(!replay.succeeded && replay.files.empty());

@@ -6,6 +6,7 @@
 #include "acceptance/WindowChecks.h"
 #include "fixtures/FileToolbar.h"
 #include "fixtures/QuickScene.h"
+#include "fixtures/SyncFaults.h"
 #include "fixtures/UiEvidence.h"
 
 #include <QFont>
@@ -636,30 +637,31 @@ void closeGuardAsksToRetry(Sandbox &sandbox)
                       QByteArray("kept by hand\n")}});
     const auto launched = repo.snapshot();
     {
-        Scene scene(sandbox, repo);
+        const auto faults = std::make_shared<test_support::SyncFaults>();
+        Scene scene(sandbox, repo, faults);
         clickFile(scene, "kept.txt");
         auto &files = *scene.app().store();
         auto *prompt = scene.object("recoveryCloseDialog");
         auto *handoff = scene.object("handoffDialog");
         {
-            // Another holder of the journal lock makes the recovery commit fail, so the typed input
-            // stays pending.
-            QLockFile busy(files.recoveryDirectory() + QStringLiteral("/journal.lock"));
-            CHECK(busy.tryLock(0));
+            // Fail the real durable boundary while retaining the exact typed input.
+            const test_support::ArmedFault failure(*faults, test_support::SyncFaults::Point::JournalSync);
             appendToResult(scene, "!");
             settleFor("pending recovery", [&] { return files.hasPendingRecovery(); });
-            CHECK(scene.item("recoveryProblem")->isVisible());
+            CHECK(faults->failures == 1 && scene.item("recoveryProblem")->isVisible());
             closeIntoTheGuard(scene);
             expectContains(prompt->property("subtitle").toString(), "Retry before closing", "close guard");
             clickDialogButton(scene, "recoveryCloseDialog", "Cancel");
             CHECK(scene.window()->isVisible() && files.hasPendingRecovery() && !handoff->property("visible").toBool());
-            // Retrying while the journal is still busy keeps the input pending and the window open.
+            // A second failed sync leaves that same input pending and the window open.
             closeIntoTheGuard(scene);
-            clickDialogButton(scene, "recoveryCloseDialog", "Retry");
+            faults->arm(test_support::SyncFaults::Point::JournalSync);
+            test_support::clickItem(scene.window(), dialogButton(scene, "recoveryCloseDialog", "Retry"));
+            settleFor("failed recovery retry completed", [&] { return faults->failures == 1 && !files.recording(); });
             CHECK(scene.window()->isVisible() && files.hasPendingRecovery() && !handoff->property("visible").toBool());
             closeIntoTheGuard(scene);
         }
-        // With the journal free, Retry keeps the input and the close goes on to the handoff.
+        // With sync succeeding, Retry keeps the input and the close goes on to the handoff.
         clickDialogButton(scene, "recoveryCloseDialog", "Retry");
         settleFor("handoff opened after retry", [&] { return handoff->property("opened").toBool(); });
         CHECK(scene.window()->isVisible() && !files.hasPendingRecovery());

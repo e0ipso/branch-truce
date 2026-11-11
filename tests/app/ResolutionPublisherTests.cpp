@@ -66,7 +66,8 @@ int main(int argc, char **argv)
         CHECK(session.file().facts().undecided > 0);
         const auto before = session.records();
         const auto asked = session.publisher.start("choices", session.revision(), false);
-        CHECK(asked.transition == Transition::ConfirmationRequired);
+        CHECK(asked.transition == Transition::Applied && session.publisher.busy());
+        test_support::waitUntil([&] { return !session.publisher.busy(); }, "review did not finish");
         CHECK(session.publisher.confirmationPending());
         CHECK_EQ(session.publisher.confirmationFileId(), QStringLiteral("choices"));
         CHECK_EQ(session.publisher.confirmationRevision(), QString::number(session.revision()));
@@ -74,20 +75,33 @@ int main(int argc, char **argv)
         session.publisher.cancelConfirmation();
         CHECK(!session.publisher.confirmationPending());
         CHECK_EQ(session.messages,
-                 QStringList{QStringLiteral("Resolution cancelled. The text and choices are unchanged.")});
+                 (QStringList{QStringLiteral(
+                                  "Confirm that this result is intentional. Some source choices are still undecided."),
+                              QStringLiteral("Resolution cancelled. The text and choices are unchanged.")}));
         CHECK(!session.file().publication().reviewed());
         CHECK_EQ(session.records(), before);
     });
     suite.run("conflict markers refuse Mark resolved and name the first marker line", [] {
         Publishing session(test_support::markedFile());
         CHECK(session.file().current().draft.unresolvedMarkers > 0);
-        const auto refused = session.publisher.start("choices", session.revision(), true);
-        CHECK(refused.transition == Transition::Blocked);
-        CHECK(refused.markers.has_value() && refused.markers->first().has_value());
-        const auto line = static_cast<qulonglong>(refused.markers->first()->line + 1);
-        CHECK(refused.detail.startsWith(QStringLiteral("Mark resolved is blocked: ")));
-        CHECK(
-            refused.detail.endsWith(QStringLiteral("; first at line %1. The repository file is unchanged.").arg(line)));
+        int refusals = 0;
+        quint64 firstLine = 0;
+        QString detail;
+        QObject::connect(&session.publisher, &ResolutionPublisher::markersBlocked, &session.publisher,
+                         [&](const QString &id, quint64 revision, quint64 count, quint64 line, const QString &message) {
+                             CHECK(id == "choices" && revision == session.revision());
+                             CHECK(count == session.file().markers().count());
+                             ++refusals;
+                             firstLine = line;
+                             detail = message;
+                         });
+        const auto started = session.publisher.start("choices", session.revision(), true);
+        CHECK(started.transition == Transition::Applied && session.publisher.busy());
+        test_support::waitUntil([&] { return !session.publisher.busy(); }, "marker review did not finish");
+        CHECK_EQ(refusals, 1);
+        CHECK_EQ(firstLine, session.file().markers().first()->line + 1);
+        CHECK(detail.startsWith(QStringLiteral("Mark resolved is blocked: ")));
+        CHECK(detail.endsWith(QStringLiteral("; first at line %1. The repository file is unchanged.").arg(firstLine)));
         CHECK(!session.file().publication().reviewed() && !session.file().publication().writeOutcome()
               && !session.publisher.busy());
     });

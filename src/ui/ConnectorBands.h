@@ -2,6 +2,7 @@
 #pragma once
 #include "TextBlocks.h"
 #include "app/ComparisonPresentation.h"
+#include <QMap>
 #include <QObject>
 #include <QVariant>
 #include <QtQmlIntegration/qqmlintegration.h>
@@ -92,6 +93,14 @@ Q_SIGNALS:
 
 private:
     void update();
+    QVariantList projectBands() const;
+    QVariantList projectPassages(const QMap<int, QString> &lines) const;
+    void appendBand(const QVariantMap &passage, const QVariantMap &rows, const QMap<int, QString> &lines,
+                    const QMap<int, QString> &boundaries, QVariantList &all, QMap<int, int> &folded) const;
+    qreal bandEdge(bool source, int begin, int end, bool bottom) const;
+    qsizetype shownIndex(const QVariantList &all, bool below) const;
+    bool currentBand(int begin, int end) const;
+    QVariantList collectVisibleBands(const QVariantList &all) const;
     QString side_;
     QVariantList passages_, markerBlocks_, current_, bands_, visibleBands_;
     QList<ComparisonContribution> contributions_;

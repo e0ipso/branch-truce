@@ -30,8 +30,8 @@ class ResultEditorAdapter : public QObject, public SelectionGuard {
     QML_ELEMENT
     QML_UNCREATABLE("Owned by the application")
     // Whether the result takes edits; the editor's readOnly binds to the inverse.
-    Q_PROPERTY(bool decorationPending READ decorationPending NOTIFY stateChanged)
-    Q_PROPERTY(bool editable READ editable NOTIFY stateChanged)
+    Q_PROPERTY(bool decorationPending READ decorationPending NOTIFY decorationPendingChanged)
+    Q_PROPERTY(bool editable READ editable NOTIFY editableChanged)
     Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY stateChanged)
     Q_PROPERTY(bool canPaste READ canPaste NOTIFY stateChanged)
     // Where the editor put a newly shown file: its first undecided region, in
@@ -97,8 +97,10 @@ Q_SIGNALS:
     void loadRefused(const QString &message);
     // A newly selected file was loaded and its cursor moved to placement().
     void placed();
-    // editable(), hasSelection() or canPaste() may have changed.
+    // hasSelection() or canPaste() may have changed.
     void stateChanged();
+    void editableChanged();
+    void decorationPendingChanged();
 
 private:
     struct Location {

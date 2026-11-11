@@ -22,7 +22,7 @@ namespace detail {
 // Measured Git process-output budget. Every phase starts a fresh counter so
 // preflight cannot consume the operation or a later representation.
 inline constexpr qsizetype outputLimit = static_cast<qsizetype>(branch_truce::kMaxGitReadBytes);
-inline constexpr qsizetype inspectionLimit = 1024 * 1024;
+inline constexpr qsizetype inspectionLimit = qsizetype{1024} * 1024;
 inline constexpr int inspectionMs = 5000;
 // How long Git may take to exit after SIGTERM, which lets it remove its lock files, before SIGKILL.
 inline constexpr int killGraceMs = 500;

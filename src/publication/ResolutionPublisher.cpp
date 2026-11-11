@@ -224,11 +224,12 @@ bool ResolutionPublisher::launch(Step step, git::Request request)
     if (!attempt_) return false;
     attempt_->step = step;
     QPointer<ResolutionPublisher> self(this);
-    const auto id =
-        coordinator_.submitGit(attempt_->fileId, attempt_->revision, request, [self](const TaskCompletion &completion) {
-            if (!self || !self->accept(completion)) return;
-            if (const auto handler = handling(self->attempt_->step).task) (self.data()->*handler)(completion);
-        });
+    const auto id = coordinator_.submitGit(attempt_->fileId, attempt_->revision, std::move(request),
+                                           [self](const TaskCompletion &completion) {
+                                               if (!self || !self->accept(completion)) return;
+                                               if (const auto handler = handling(self->attempt_->step).task)
+                                                   (self.data()->*handler)(completion);
+                                           });
     if (!attempt_) return false;
     attempt_->task = id;
     if (id != 0) return true;
@@ -297,10 +298,15 @@ ResolutionPublisher::StartResult ResolutionPublisher::reviewed(Transition review
     session = file(fileId);
     if (review == Transition::Blocked && session && session->current().draft.unresolvedMarkers != 0) {
         auto markers = session->markers();
+        const auto first = markers.first();
+        if (!first) {
+            clearAttempt();
+            return result(review, tr("Mark resolved is blocked. The repository file is unchanged."));
+        }
         auto refused = result(review,
                               tr("Mark resolved is blocked: %1; first at line %2. The repository file is unchanged.")
                                   .arg(remainingMarkers(markers))
-                                  .arg(static_cast<qulonglong>(markers.first()->line + 1)));
+                                  .arg(static_cast<qulonglong>(first->line) + 1));
         refused.markers = std::move(markers);
         clearAttempt();
         return refused;
@@ -548,14 +554,19 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
     inspectDestination([this](storage::DestinationCapture capture) { inspectedIndex(std::move(capture)); });
 }
 
+bool ResolutionPublisher::matchesWrittenBaseline(const FileSession &session, const Attempt &attempt) const
+{
+    if (!previouslyWritten(session, attempt.revision) || !baselines_.contains(attempt.fileId)) return false;
+    const auto &destination = baselines_.at(attempt.fileId).destination;
+    return destination && destination->bytes() == attempt.serialized;
+}
+
 void ResolutionPublisher::inspectedIndex(storage::DestinationCapture current)
 {
     if (!attempt_) return;
     const auto *session = file(attempt_->fileId);
     if (!session || !session->snapshots()) return;
-    const bool written = previouslyWritten(*session, attempt_->revision) && baselines_.contains(attempt_->fileId)
-        && baselines_.at(attempt_->fileId).destination
-        && baselines_.at(attempt_->fileId).destination->bytes() == attempt_->serialized;
+    const bool written = matchesWrittenBaseline(*session, *attempt_);
     if (written && !attempt_->parentOwned
         && (!current.destination || current.destination->bytes() != attempt_->serialized)) {
         fail(Outcome::Failed,
@@ -719,7 +730,7 @@ void ResolutionPublisher::parentPreflight(const TaskCompletion &completion)
 void ResolutionPublisher::verified(const git::TextConversionResult &result)
 {
     if (!attempt_ || attempt_->step != Step::Verify) return;
-    if (result.outcome == git::Outcome::Success && result.text
+    if (result.outcome == git::Outcome::Success && result.text && attempt_->prepared
         && result.text->canonicalObjectId == attempt_->prepared->canonicalObjectId
         && result.text->mode == attempt_->mode) {
         finishResolved();

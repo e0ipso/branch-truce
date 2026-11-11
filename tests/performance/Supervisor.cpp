@@ -3,6 +3,9 @@
 #include "fixtures/performance/WorkloadText.h"
 #include "performance/Workload.h"
 
+#include <QByteArray>
+#include <QtGlobal>
+
 #include <algorithm>
 #include <cerrno>
 #include <csignal>
@@ -101,94 +104,30 @@ bool exited(pid_t pid)
     return ::waitid(P_PID, static_cast<id_t>(pid), &info, WEXITED | WNOHANG | WNOWAIT) == 0 && info.si_pid == pid;
 }
 
-// One run of `spec` in a worker process: the records it reported, with a record for each
-// expected name it did not report when it was killed or crashed. Cleanup failures are appended
-// to `problems`.
-std::vector<Record> runOnce(const Spec &spec, const std::string &executable, std::vector<std::string> *problems)
+// Snapshot the single-threaded supervisor's native environment before fork.
+// The child only performs async-signal-safe setup and execs these owned bytes.
+std::vector<std::string> workerEnvironment()
 {
-    const std::string scratch = makeScratch();
-    if (scratch.empty()) {
-        problems->push_back("could not create a scratch directory in " + scratchBase());
-        return {};
+    std::vector<std::string> values;
+    bool platform = false, backend = false;
+    for (char *const *current = ::environ; current && *current; ++current) {
+        const std::string_view entry(*current);
+        if (!platform && entry.starts_with("QT_QPA_PLATFORM=")) {
+            values.emplace_back("QT_QPA_PLATFORM=offscreen");
+            platform = true;
+        } else if (!backend && entry.starts_with("QT_QUICK_BACKEND=")) {
+            values.emplace_back("QT_QUICK_BACKEND=software");
+            backend = true;
+        } else
+            values.emplace_back(entry);
     }
-    std::vector<std::string> args{executable,
-                                  "--worker",
-                                  spec.kind,
-                                  "--name",
-                                  spec.name,
-                                  "--mode",
-                                  spec.mode,
-                                  "--scratch",
-                                  scratch,
-                                  "--timeout-ms",
-                                  std::to_string(spec.timeoutMs),
-                                  "--lines",
-                                  std::to_string(spec.lines),
-                                  "--bytes",
-                                  std::to_string(spec.bytes)};
-    if (spec.startup) args.emplace_back("--startup");
-    std::vector<char *> pointers;
-    pointers.reserve(args.size() + 1);
-    for (auto &arg : args) pointers.push_back(arg.data());
-    pointers.push_back(nullptr);
-    int pipefd[2];
-    if (pipe(pipefd) != 0) {
-        problems->push_back("pipe failed");
-        removeScratch(scratch, problems);
-        return {};
-    }
-    const pid_t parent = getpid();
-    const pid_t pid = fork();
-    if (pid == 0) {
-        // The worker leads its own process group, so a kill reaches the Git processes it starts,
-        // and it dies with the supervisor, which a CTest timeout kills.
-        setpgid(0, 0);
-        if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0 || getppid() != parent) _exit(127);
-        if (dup2(pipefd[1], STDOUT_FILENO) < 0) _exit(127);
-        ::close(pipefd[0]);
-        ::close(pipefd[1]);
-        setenv("QT_QPA_PLATFORM", "offscreen", 1);
-        setenv("QT_QUICK_BACKEND", "software", 1);
-        execv(executable.c_str(), pointers.data());
-        _exit(127);
-    }
-    if (pid > 0) setpgid(pid, pid);
-    ::close(pipefd[1]);
-    if (pid < 0) {
-        ::close(pipefd[0]);
-        problems->push_back("fork failed");
-        removeScratch(scratch, problems);
-        return {};
-    }
-    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
-    std::string output;
-    bool resource = false;
-    bool timedOut = false;
-    const auto started = std::chrono::steady_clock::now();
-    for (;;) {
-        const bool done = exited(pid);
-        char buffer[1024];
-        const ssize_t count = ::read(pipefd[0], buffer, sizeof buffer);
-        if (count > 0) output.append(buffer, static_cast<std::size_t>(count));
-        if (done) break;
-        if (currentRssKb(pid) > kRssKillKb) {
-            resource = true;
-            break;
-        }
-        if (since(started) > static_cast<std::uint64_t>(spec.timeoutMs)) {
-            timedOut = true;
-            break;
-        }
-        pollfd ready{pipefd[0], POLLIN, 0};
-        poll(&ready, 1, 50);
-    }
-    const int status = endGroup(pid);
-    char buffer[1024];
-    ssize_t count = 0;
-    while ((count = ::read(pipefd[0], buffer, sizeof buffer)) > 0)
-        output.append(buffer, static_cast<std::size_t>(count));
-    ::close(pipefd[0]);
-    removeScratch(scratch, problems);
+    if (!platform) values.emplace_back("QT_QPA_PLATFORM=offscreen");
+    if (!backend) values.emplace_back("QT_QUICK_BACKEND=software");
+    return values;
+}
+
+std::vector<Record> workerRecords(const Spec &spec, const std::string &output, int status, bool resource, bool timedOut)
+{
     // A worker that reported and then failed on its own, by exit status or by a signal the
     // supervisor did not send, cannot vouch for what it reported.
     std::string failedExit;
@@ -235,6 +174,100 @@ std::vector<Record> runOnce(const Spec &spec, const std::string &executable, std
     return records;
 }
 
+// One run of `spec` in a worker process: the records it reported, with a record for each
+// expected name it did not report when it was killed or crashed. Cleanup failures are appended
+// to `problems`.
+std::vector<Record> runOnce(const Spec &spec, const std::string &executable, std::vector<std::string> *problems)
+{
+    const std::string scratch = makeScratch();
+    if (scratch.empty()) {
+        problems->push_back("could not create a scratch directory in " + scratchBase());
+        return {};
+    }
+    std::vector<std::string> args{executable,
+                                  "--worker",
+                                  spec.kind,
+                                  "--name",
+                                  spec.name,
+                                  "--mode",
+                                  spec.mode,
+                                  "--scratch",
+                                  scratch,
+                                  "--timeout-ms",
+                                  std::to_string(spec.timeoutMs),
+                                  "--lines",
+                                  std::to_string(spec.lines),
+                                  "--bytes",
+                                  std::to_string(spec.bytes)};
+    if (spec.startup) args.emplace_back("--startup");
+    std::vector<char *> pointers;
+    pointers.reserve(args.size() + 1);
+    for (auto &arg : args) pointers.push_back(arg.data());
+    pointers.push_back(nullptr);
+    auto environment = workerEnvironment();
+    std::vector<char *> environmentPointers;
+    environmentPointers.reserve(environment.size() + 1);
+    for (auto &entry : environment) environmentPointers.push_back(entry.data());
+    environmentPointers.push_back(nullptr);
+    int pipefd[2];
+    if (pipe(pipefd) != 0) {
+        problems->emplace_back("pipe failed");
+        removeScratch(scratch, problems);
+        return {};
+    }
+    const pid_t parent = getpid();
+    const pid_t pid = fork();
+    if (pid == 0) {
+        // The worker leads its own process group, so a kill reaches the Git processes it starts,
+        // and it dies with the supervisor, which a CTest timeout kills.
+        setpgid(0, 0);
+        if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0 || getppid() != parent) _exit(127);
+        if (dup2(pipefd[1], STDOUT_FILENO) < 0) _exit(127);
+        ::close(pipefd[0]);
+        ::close(pipefd[1]);
+        execve(executable.c_str(), pointers.data(), environmentPointers.data());
+        _exit(127);
+    }
+    if (pid > 0) setpgid(pid, pid);
+    ::close(pipefd[1]);
+    if (pid < 0) {
+        ::close(pipefd[0]);
+        problems->emplace_back("fork failed");
+        removeScratch(scratch, problems);
+        return {};
+    }
+    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+    std::string output;
+    bool resource = false;
+    bool timedOut = false;
+    const auto started = std::chrono::steady_clock::now();
+    for (;;) {
+        const bool done = exited(pid);
+        char buffer[1024];
+        const ssize_t count = ::read(pipefd[0], buffer, sizeof buffer);
+        if (count > 0) output.append(buffer, static_cast<std::size_t>(count));
+        if (done) break;
+        if (currentRssKb(pid) > kRssKillKb) {
+            resource = true;
+            break;
+        }
+        if (since(started) > static_cast<std::uint64_t>(spec.timeoutMs)) {
+            timedOut = true;
+            break;
+        }
+        pollfd ready{pipefd[0], POLLIN, 0};
+        poll(&ready, 1, 50);
+    }
+    const int status = endGroup(pid);
+    char buffer[1024];
+    ssize_t count = 0;
+    while ((count = ::read(pipefd[0], buffer, sizeof buffer)) > 0)
+        output.append(buffer, static_cast<std::size_t>(count));
+    ::close(pipefd[0]);
+    removeScratch(scratch, problems);
+    return workerRecords(spec, output, status, resource, timedOut);
+}
+
 bool overStall(const Aggregate &item)
 {
     if (item.metric == "startup") return false;
@@ -250,14 +283,29 @@ bool nameInSpec(const std::string &name, const Spec &spec)
     const auto names = recordNames(spec);
     return std::find(names.begin(), names.end(), name) != names.end();
 }
+Aggregate &findOrAdd(std::vector<Aggregate> &results, const Record &record, const std::string &group)
+{
+    for (auto &item : results)
+        if (item.name == record.name) return item;
+    Aggregate created;
+    created.kind = record.kind;
+    created.name = record.name;
+    created.metric = record.metric;
+    created.group = group;
+    created.outcome = "completed";
+    created.bytes = record.bytes;
+    created.lines = record.lines;
+    created.maxLine = record.maxLine;
+    results.push_back(created);
+    return results.back();
+}
 } // namespace
 
 std::string scratchBase()
 {
     std::error_code error;
-    if (const char *chosen = std::getenv("BRANCH_TRUCE_WORKLOAD_SCRATCH");
-        chosen && chosen[0] == '/' && std::filesystem::is_directory(chosen, error))
-        return chosen;
+    const auto chosen = qgetenv("BRANCH_TRUCE_WORKLOAD_SCRATCH");
+    if (chosen.startsWith('/') && std::filesystem::is_directory(chosen.constData(), error)) return chosen.toStdString();
     return "/var/tmp";
 }
 
@@ -266,21 +314,6 @@ std::vector<Aggregate> measure(const std::vector<Spec> &specs, std::vector<std::
     const std::string executable = selfPath();
     std::map<std::string, bool> halted;
     std::vector<Aggregate> results;
-    auto findOrAdd = [&](const Record &record, const std::string &group) -> Aggregate & {
-        for (auto &item : results)
-            if (item.name == record.name) return item;
-        Aggregate created;
-        created.kind = record.kind;
-        created.name = record.name;
-        created.metric = record.metric;
-        created.group = group;
-        created.outcome = "completed";
-        created.bytes = record.bytes;
-        created.lines = record.lines;
-        created.maxLine = record.maxLine;
-        results.push_back(created);
-        return results.back();
-    };
     for (const auto &spec : specs) {
         if (spec.escalating && halted[spec.group]) {
             for (const auto &expected : recordNames(spec)) {
@@ -293,7 +326,7 @@ std::vector<Aggregate> measure(const std::vector<Spec> &specs, std::vector<std::
                 record.bytes = spec.bytes;
                 record.maxLine = maxLineOf(spec);
                 record.detail = "not attempted because a smaller workload in this group missed the stall rule";
-                auto &item = findOrAdd(record, spec.group);
+                auto &item = findOrAdd(results, record, spec.group);
                 item.outcome = "not-attempted";
                 item.ranked = true;
                 item.detail = record.detail;
@@ -305,7 +338,7 @@ std::vector<Aggregate> measure(const std::vector<Spec> &specs, std::vector<std::
         for (int repeat = 0; repeat < spec.repeats; ++repeat) {
             const auto records = runOnce(spec, executable, problems);
             for (const auto &record : records) {
-                auto &item = findOrAdd(record, spec.group);
+                auto &item = findOrAdd(results, record, spec.group);
                 if (!item.ranked || outcomeRank(record.outcome) < outcomeRank(item.outcome))
                     item.outcome = record.outcome;
                 item.ranked = true;

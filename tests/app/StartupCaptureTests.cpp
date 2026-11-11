@@ -8,7 +8,8 @@ using test_support::await;
 
 using namespace startup_routes;
 
-void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &)
+namespace {
+void addInventoryCaptureCases(test_support::Suite &suite)
 {
     suite.run(
         "mixed inventory retains every exact path sources initial results and persistent outstanding reasons", [] {
@@ -141,6 +142,10 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
         CHECK(!controller.files()->hasPendingRecovery() && !controller.completion()->handoff().clean);
         CHECK(repo.snapshot() == before);
     });
+}
+
+void addCapturePersistenceCases(test_support::Suite &suite)
+{
     suite.run(
         "failed placeholder recovery keeps captured files visible blocks editing and retries the captured state", [] {
             Repository repo;
@@ -195,10 +200,18 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
                 }
                 if (failRecovery) {
                     CHECK(QFile::remove(location));
-                    for (const auto path : {"tracked.txt", "excluded.txt"}) {
-                        const auto id = openedFile(controller, path).id();
-                        CHECK(await(model->retryRecovery(id)) == Transition::Applied);
-                    }
+                    const auto first = openedFile(controller, "tracked.txt").id();
+                    const auto second = openedFile(controller, "excluded.txt").id();
+                    CHECK(model->pendingDraft(first) && model->pendingDraft(second));
+                    CHECK(await(model->retryRecovery(first)) == Transition::Applied);
+                    CHECK(!model->pendingDraft(first) && !model->pendingDraft(second));
+                    const auto committed = storage::RecoveryStore(location).read();
+                    CHECK(committed.succeeded && committed.transactions.size() == 2);
+                    CHECK(await(model->retryRecovery(second)) == Transition::NoChange);
+                    const auto unchanged = storage::RecoveryStore(location).read();
+                    CHECK(unchanged.succeeded && unchanged.transactions.size() == committed.transactions.size());
+                    for (qsizetype row = 0; row < committed.transactions.size(); ++row)
+                        CHECK(unchanged.transactions[row].id == committed.transactions[row].id);
                 }
                 CHECK(!model->hasPendingRecovery());
                 storage::RecoveryStore store(location);
@@ -226,6 +239,10 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
                       && repo.snapshot() == before);
             }
         });
+}
+
+void addCaptureProvenanceCases(test_support::Suite &suite)
+{
     suite.run("merge and rebase captures retain verified sources provenance and the manual launch result", [] {
         for (const auto operation : {"merge", "rebase-merge", "rebase-apply"}) {
             Repository repo;
@@ -366,6 +383,10 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
             CHECK(*selected.snapshots() == captured);
         }
     });
+}
+
+void addEarlierCaptureCases(test_support::Suite &suite)
+{
     suite.run("add-add has an unavailable earlier source while an empty base remains captured", [] {
         for (const bool missing : {false, true}) {
             Repository repo;
@@ -402,4 +423,13 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
             CHECK(*selected.snapshots() == expected);
         }
     });
+}
+} // namespace
+
+void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &)
+{
+    addInventoryCaptureCases(suite);
+    addCapturePersistenceCases(suite);
+    addCaptureProvenanceCases(suite);
+    addEarlierCaptureCases(suite);
 }

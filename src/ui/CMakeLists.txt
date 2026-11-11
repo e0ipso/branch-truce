@@ -9,6 +9,7 @@ qt_add_qml_module(branch_truce_ui STATIC
         CodeRows.qml
         Main.qml
         PlainLabel.qml
+        PlainToolTip.qml
         Pill.qml
         PaneHeader.qml
         DiffStyle.qml

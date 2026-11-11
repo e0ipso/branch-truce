@@ -91,8 +91,8 @@ ColumnLayout {
         }
         return null
     }
-    function editorNamed(name: string): Item {
-        return panesByRole.editor(name)
+    function editorNamed(name: string): TextArea {
+        return panesByRole.editor(name) as TextArea
     }
     function openSearch(): void { readingBar.open() }
     function updateSearch(): void {
@@ -359,6 +359,7 @@ ColumnLayout {
                 id: leftChoices
                 pane: leftPane
                 rows: comparison.presentation.leftRows
+                rowModel: comparison.presentation.leftRowModel
                 rowHeight: comparison.rowHeight
                 choosing: comparison.choosing
                 onHovered: target => comparison.setHover("stage2Choice", target ? comparison.presentation.choiceTarget(target) : null)
@@ -369,6 +370,7 @@ ColumnLayout {
                 id: rightChoices
                 pane: rightPane
                 rows: comparison.presentation.rightRows
+                rowModel: comparison.presentation.rightRowModel
                 rowHeight: comparison.rowHeight
                 choosing: comparison.choosing
                 onHovered: target => comparison.setHover("stage3Choice", target ? comparison.presentation.choiceTarget(target) : null)

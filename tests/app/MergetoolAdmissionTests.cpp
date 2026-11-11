@@ -118,6 +118,7 @@ struct Peer {
                   "peer got no reply");
         const auto decoded = decodeMergetoolMessage(payload);
         CHECK(decoded.message.has_value());
+        if (!decoded.message) throw test_support::Failure("the peer reply has no decoded message");
         return *decoded.message;
     }
     void closed()
@@ -146,8 +147,15 @@ void disconnectPressureKeepsAdmissionUntilCompletion()
     waitUntil([&] { return owner.reader->entered.load(); }, "first read never entered");
     Peer queued(owner, owner.attach());
     waitUntil([&] { return owner.session->pendingIntakes() == 2; }, "second intake never queued");
+    int disconnected = 0;
+    QObject observer;
+    auto *server = owner.session->findChild<MergetoolServer *>();
+    CHECK(server);
+    QObject::connect(server, &MergetoolServer::closed, &observer, [&] { ++disconnected; });
     first.socket.abort();
     queued.socket.abort();
+    waitUntil([&] { return disconnected == 2; }, "server did not release the disconnected socket slots");
+    CHECK_EQ(owner.session->pendingIntakes(), 2);
     for (int attempt = 0; attempt < 12; ++attempt) {
         Peer excess(owner, owner.attach());
         excess.refused(QStringLiteral("Too many mergetool inputs are being checked. Try again when a check finishes."));

@@ -74,7 +74,7 @@ public:
     // retains uncommitted typing and retries admission when capacity returns.
     Record commitBehind(const FileSession &candidate, RecoveryAction action, const FileSession *previous,
                         Callback written, Command command = {}, Record predecessor = {});
-    void retryPending(const std::string &id, std::function<void(FileSession, RecoveryAction)> acknowledged,
+    void retryPending(const std::string &id, const std::function<void(FileSession, RecoveryAction)> &acknowledged,
                       std::function<void()> written);
     [[nodiscard]] bool recording(const std::string &id) const;
     [[nodiscard]] bool busy() const { return writing_.has_value() || !behind_.empty(); }

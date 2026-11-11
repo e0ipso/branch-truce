@@ -36,6 +36,7 @@ std::string capture(const std::vector<std::string> &args)
         ::close(pipefd[0]);
         ::close(pipefd[1]);
         std::vector<char *> pointers;
+        pointers.reserve(args.size() + 1);
         for (const auto &arg : args) pointers.push_back(const_cast<char *>(arg.c_str()));
         pointers.push_back(nullptr);
         execvp(pointers[0], pointers.data());
@@ -206,13 +207,15 @@ std::vector<Aggregate> readEvidenceRows(const std::string &path, std::string *er
     std::getline(table, line); // The header.
     while (std::getline(table, line)) {
         std::vector<std::string> fields;
+        fields.reserve(13);
         std::istringstream split(line);
         for (std::string field; std::getline(split, field, '\t');) fields.push_back(field);
         const auto bytes = fields.size() >= 13 ? number(fields[5]) : std::nullopt;
         const auto lines = fields.size() >= 13 ? number(fields[6]) : std::nullopt;
         const auto maxLine = fields.size() >= 13 ? number(fields[7]) : std::nullopt;
         if (!bytes || !lines || !maxLine) {
-            *error = path + ": malformed row: " + line;
+            *error = path;
+            error->append(": malformed row: ").append(line);
             return {};
         }
         Aggregate row;

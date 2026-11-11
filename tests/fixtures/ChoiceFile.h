@@ -141,8 +141,11 @@ inline std::string gitDiff3(const std::string &left, const std::string &earlier,
         arguments.push_back((directory / name).string());
     }
     std::vector<std::string> environment;
-    for (const auto &[name, value] : isolatedGitVariables(directory.string(), "/dev/null"))
-        environment.push_back(name + '=' + value);
+    for (const auto &[name, value] : isolatedGitVariables(directory.string(), "/dev/null")) {
+        auto &variable = environment.emplace_back(name);
+        variable += '=';
+        variable += value;
+    }
     const auto merged = written ? readProcess(std::move(arguments), environment) : ProcessOutput{};
     std::filesystem::remove_all(directory);
     if (!merged.diagnostic.empty()) throw std::runtime_error(merged.diagnostic);

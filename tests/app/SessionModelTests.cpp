@@ -61,7 +61,7 @@ int main(int argc, char **argv)
         CHECK(!decisions[1].toMap().contains("order"));
         const auto names = rows.roleNames();
         // Progress and the view roles follow the recovery roles.
-        CHECK(names.size() == SessionModel::ConflictCountRole - SessionModel::FileIdRole + 1);
+        CHECK(names.size() == SessionModel::StatusKindRole - SessionModel::FileIdRole + 1);
         CHECK(names.value(SessionModel::ProgressRole) == "progress");
         CHECK(names.value(SessionModel::StatusIconRole) == "statusIcon");
         CHECK(names.value(SessionModel::StatusLineRole) == "statusLine");
@@ -115,7 +115,7 @@ int main(int argc, char **argv)
               == Transition::Applied);
         CHECK(role(rows, SessionModel::StatusIconRole).toString() == "emblem-checked");
     });
-    suite.run("row insertion and notifications occur only for applied commands", [] {
+    suite.run("rows publish command admission and completion without false insertion", [] {
         auto [store, rows] = test_support::TestSession{};
         int summaries = 0;
         int changes = 0;
@@ -141,16 +141,17 @@ int main(int argc, char **argv)
         CHECK(await(store.replaceDraft("id", 1, draft())) == Transition::NoChange);
         CHECK(await(store.replaceDraft("id", 99, draft("stale"))) == Transition::StaleRevision);
         CHECK(await(store.recordWrite("id", 1, Outcome::Succeeded)) == Transition::StaleRevision);
-        CHECK(summaries == 2 && changes == 1);
+        CHECK_EQ(summaries, 8);
+        CHECK_EQ(changes, 7);
         CHECK(await(store.replaceDraft("id", 1, draft("changed"))) == Transition::Applied);
-        CHECK(changes == 3 && summaries == 4);
+        CHECK(changes == 9 && summaries == 10);
         CHECK(await(store.beginMarkResolved("id", 2)) == Transition::Applied);
         CHECK(await(store.recordWrite("id", 2, Outcome::Succeeded)) == Transition::InvalidOutcome);
-        CHECK(changes == 5 && summaries == 6);
+        CHECK(changes == 13 && summaries == 14);
         CHECK(store.appendFile(FileSession("second", "second", draft())));
         test_support::awaitRecovery(store);
         CHECK(first.isValid() && first.row() == 0 && first.data(SessionModel::FileIdRole) == "id");
-        CHECK(insertions == 2 && summaries == 8);
+        CHECK(insertions == 2 && summaries == 16);
     });
     suite.run("Save and publication roles stay distinct and handoff includes every file", [] {
         auto [store, rows] = test_support::TestSession{};
@@ -183,7 +184,8 @@ int main(int argc, char **argv)
         CHECK(await(store.recordCheckpoint("third", 1, Outcome::Failed, "disk full")) == Transition::Applied);
         CHECK(!SessionHandoff::build(store, {}).clean && rows.resolvedFiles() == 1);
         CHECK(store.file("third")->publication().checkpointOutcome()->detail == "disk full");
-        CHECK(role(rows, SessionModel::StatusRole, 2).toString() == "Draft save failed");
+        CHECK_EQ(role(rows, SessionModel::StatusRole, rows.rowOf("third")).toString(),
+                 QStringLiteral("Draft save failed"));
     });
     suite.run("the English catalog supplies the plural forms of numerus messages", [] {
         const auto left = [](int count) {
@@ -500,14 +502,17 @@ int main(int argc, char **argv)
         int changes = 0;
         QObject::connect(&rows, &SessionModel::summaryChanged, &store, [&] { ++changes; });
         CHECK(await(store.beginMarkResolved("id", 1)) == Transition::ConfirmationRequired);
-        CHECK(changes == 0 && !store.file("id")->publication().reviewed());
+        EXPECT_EQ(changes, 2);
+        CHECK(!store.recording("id") && store.file("id")->current().id == 1);
+        CHECK(!store.file("id")->publication().reviewed());
         CHECK(role(rows, SessionModel::UndecidedRole).toULongLong() == 1);
         CHECK(await(store.beginMarkResolved("id", 1, true)) == Transition::Applied);
         CHECK(store.file("id")->publication().reviewed()->confirmedUndecided);
         undecided.text = "=======\n";
         CHECK(await(store.replaceDraft("id", 1, undecided)) == Transition::Applied);
         CHECK(await(store.beginMarkResolved("id", 2, true)) == Transition::Blocked);
-        CHECK(changes == 4);
+        // Each admitted command publishes its pending and terminal state, even on refusal.
+        CHECK(changes == 8);
         CHECK(role(rows, SessionModel::FinishBlockersRole).toStringList().contains("Known conflict markers remain"));
     });
     for (const auto outcome : {Outcome::Succeeded, Outcome::Failed, Outcome::Uncertain}) {

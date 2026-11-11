@@ -3,13 +3,11 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import BranchTruce.App
-import QtQuick.Controls
 import QtQuick.Layouts
-import org.kde.kirigami as Kirigami
 
 PreviewDialog {
     id: replacementDialog
-    required property ChoicePreviewFlow choices
+    scope: ChoicePreviewFlow.Scope.Choice
     required property CommandFeedback feedback
     required property SelectedFile selectedFile
     objectName: "replacementDialog"

@@ -38,7 +38,7 @@ bool privateDirectory(const QByteArray &path)
 {
     struct stat info{};
     return ::lstat(path.constData(), &info) == 0 && S_ISDIR(info.st_mode) && info.st_uid == ::geteuid()
-        && (info.st_mode & 077) == 0;
+        && (info.st_mode & 077U) == 0;
 }
 
 // The /tmp directory a link in this user's cache directory names, made with
@@ -124,7 +124,7 @@ bool prepareMergetoolSocketDirectory(const QString &directory, Problem *error)
     struct stat info{};
     if (::lstat(native.constData(), &info) != 0 || !S_ISDIR(info.st_mode))
         return fail(ProblemCode::MergetoolSocketNotDirectory);
-    if (info.st_uid != ::geteuid() || (info.st_mode & 077) != 0) return fail(ProblemCode::MergetoolSocketNotPrivate);
+    if (info.st_uid != ::geteuid() || (info.st_mode & 077U) != 0) return fail(ProblemCode::MergetoolSocketNotPrivate);
     return true;
 }
 

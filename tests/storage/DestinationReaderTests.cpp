@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QTemporaryDir>
 #include <cerrno>
+#include <cstdint>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -35,7 +36,7 @@ public:
         const auto result = FileSystem::status(fd, value);
         if (result || !S_ISREG(value->st_mode)) return result;
         if (fault == Fault::Status) return fail();
-        if (fault == Fault::Metadata) value->st_mode ^= S_IXUSR;
+        if (fault == Fault::Metadata) value->st_mode ^= static_cast<mode_t>(S_IXUSR);
         if (fault == Fault::Grow) {
             fault = Fault::None;
             if (::truncate(path.constData(), static_cast<off_t>(kMaxDestinationBytes) + 1) != 0) return -1;
@@ -76,7 +77,7 @@ int main(int argc, char **argv)
         const auto captured = captureDestination(root, "result", files);
         CHECK(captured.destination);
         const auto identity = captured.destination->identity();
-        CHECK(::truncate(path.constData(), off_t{1} << 40) == 0);
+        CHECK(::truncate(path.constData(), static_cast<off_t>(std::uint64_t{1} << 40U)) == 0);
         files->reads = 0;
         CHECK(captureDestination(root, "result", files).failure == DestinationFailure::ReadLimit);
         CHECK(captureDestination(root, "result", files, &identity).failure == DestinationFailure::ContentChanged);

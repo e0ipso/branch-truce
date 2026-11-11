@@ -99,7 +99,7 @@ public:
     // `found` is sections() of draft.text, listed once by the caller.
     [[nodiscard]] std::vector<MarkerEdit> edits(const Draft &draft, const CorrespondenceMap &mapping,
                                                 const std::map<std::string, Decision> &decided,
-                                                const std::vector<MarkerSection> &found) const;
+                                                const std::vector<MarkerSection> &sections) const;
 
 private:
     const ChoiceCatalogue &choices_;

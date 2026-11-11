@@ -13,6 +13,7 @@
 #include "core/internal/ComputationInput.h"
 #include <QStringList>
 #include <map>
+#include <optional>
 #include <utility>
 
 namespace branch_truce {
@@ -50,11 +51,50 @@ std::optional<SourceSide> wholeFileSide(ChoicePreviewFlow::Side side)
     return std::nullopt;
 }
 
+using PendingPreview = std::variant<std::monostate, ChoicePreview, NonConflictingPreview, WholeFilePreview>;
+
+Transition previewState(const PendingPreview &pending)
+{
+    return std::visit(
+        [](const auto &preview) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(preview)>, std::monostate>)
+                return Transition::Blocked;
+            else
+                return preview.state;
+        },
+        pending);
+}
+
+QString previewMessage(const PendingPreview &pending)
+{
+    return std::visit(
+        [](const auto &preview) -> QString {
+            using T = std::decay_t<decltype(preview)>;
+            if constexpr (std::is_same_v<T, ChoicePreview>)
+                return engine_text::choice(preview);
+            else if constexpr (std::is_same_v<T, NonConflictingPreview>)
+                return (preview.state == Transition::NoChange
+                            ? ChoicePreviewFlow::tr("No eligible non-conflicting changes. ")
+                            : QString{})
+                    + engine_text::batch(preview.note);
+            else if constexpr (std::is_same_v<T, WholeFilePreview>)
+                return engine_text::wholeFile(preview.note);
+            else
+                return {};
+        },
+        pending);
+}
+
 // One file's captured sources, each numbered on first use.
 class Sources {
 public:
     explicit Sources(const FileSnapshots &snapshots) : snapshots_(snapshots) {}
-    [[nodiscard]] const SourceSnapshot &at(SourceSide side) const { return *snapshotFor(snapshots_, side); }
+    [[nodiscard]] const SourceSnapshot &at(SourceSide side) const
+    {
+        const auto &source = snapshotFor(snapshots_, side);
+        if (source) return *source;
+        throw std::bad_optional_access{};
+    }
     [[nodiscard]] const TextPositions &lines(SourceSide side)
     {
         auto found = lines_.find(side);
@@ -207,29 +247,8 @@ bool ChoicePreviewFlow::prepare(Scope scope, const QString &fileId, RevisionId e
                 return;
             }
             auto pending = std::get<Pending>(computed);
-            const auto state = std::visit(
-                [](const auto &preview) {
-                    if constexpr (std::is_same_v<std::decay_t<decltype(preview)>, std::monostate>)
-                        return Transition::Blocked;
-                    else
-                        return preview.state;
-                },
-                pending);
-            const auto message = std::visit(
-                [](const auto &preview) -> QString {
-                    using T = std::decay_t<decltype(preview)>;
-                    if constexpr (std::is_same_v<T, ChoicePreview>)
-                        return engine_text::choice(preview);
-                    else if constexpr (std::is_same_v<T, NonConflictingPreview>)
-                        return (preview.state == Transition::NoChange ? tr("No eligible non-conflicting changes. ")
-                                                                      : QString{})
-                            + engine_text::batch(preview.note);
-                    else if constexpr (std::is_same_v<T, WholeFilePreview>)
-                        return engine_text::wholeFile(preview.note);
-                    else
-                        return {};
-                },
-                pending);
+            const auto state = previewState(pending);
+            const auto message = previewMessage(pending);
             if (state != Transition::Applied && state != Transition::ConfirmationRequired) {
                 cancel();
                 if (state == Transition::ResourceLimit || state == Transition::OutOfMemory
@@ -272,14 +291,20 @@ bool ChoicePreviewFlow::apply(Scope scope, bool confirm)
     if (!result.isValid()) return feedback_.report(Transition::Blocked);
     const auto request = request_;
     const auto settled = [this, scope, request](Transition outcome) {
-        if (request != request_) return false;
+        const bool succeeded = outcome == Transition::Applied || outcome == Transition::NoChange;
+        if (request != request_) {
+            Q_EMIT applyFinished(scope, QString::number(request), succeeded);
+            return succeeded;
+        }
         if (outcome == Transition::Applied || outcome == Transition::NoChange) {
             pending_ = std::monostate{};
             fileId_.clear();
             Q_EMIT changed(scope);
             Q_EMIT previewPendingChanged();
         }
-        return feedback_.report(outcome);
+        feedback_.report(outcome);
+        Q_EMIT applyFinished(scope, QString::number(request), succeeded);
+        return succeeded;
     };
     if (result.isFinished()) return settled(result.result());
     feedback_.show(tr("Command pending. Waiting for durable recovery."));
@@ -335,10 +360,10 @@ QVariantMap ChoicePreviewFlow::choiceView(const ChoicePreview &preview, const Fi
     Sources sources(*file.snapshots());
     QStringList scopes;
     for (const auto &scope : preview.sourceOrder) {
+        const auto &captured = sources.at(scope.side);
         scopes.push_back(tr("%1 · %2").arg(
             rangeLabel(sideLabel(scope.side), sources.lines(scope.side), scope.range),
-            sourceIdentity(utf8(sources.at(scope.side).label),
-                           sources.at(scope.side).commitId ? utf8(*sources.at(scope.side).commitId) : QString{})));
+            sourceIdentity(utf8(captured.label), captured.commitId ? utf8(*captured.commitId) : QString{})));
     }
     return {{QStringLiteral("before"), utf8(preview.before)},
             {QStringLiteral("replacement"), utf8(preview.replacement)},
@@ -360,9 +385,9 @@ QVariantMap ChoicePreviewFlow::nonConflictingView(const NonConflictingPreview &p
         for (const auto &source : change.sources) {
             const auto side = sideLabel(source.side);
             const auto &lines = sources.lines(source.side);
+            const auto &captured = sources.at(source.side);
             const auto label =
-                sourceIdentity(utf8(sources.at(source.side).label),
-                               sources.at(source.side).commitId ? utf8(*sources.at(source.side).commitId) : QString{});
+                sourceIdentity(utf8(captured.label), captured.commitId ? utf8(*captured.commitId) : QString{});
             scopes.push_back(
                 source.range.begin == source.range.end
                     ? tr("%1 deletion at line %2 · %3").arg(side).arg(lines.line(source.range.begin)).arg(label)
@@ -407,18 +432,18 @@ QVariantMap ChoicePreviewFlow::wholeFileView(const WholeFilePreview &preview, co
     QVariantList contributions;
     for (const auto &contribution : preview.contributions) {
         const auto side = contribution.source.side;
-        const auto &value = sources.at(side).worktree.utf8;
-        contributions.push_back(
-            QVariantMap{{QStringLiteral("scope"),
-                         tr("%1 · %2").arg(
-                             rangeLabel(sideLabel(side), sources.lines(side), contribution.source.range),
-                             sourceIdentity(utf8(sources.at(side).label),
-                                            sources.at(side).commitId ? utf8(*sources.at(side).commitId) : QString{}))},
-                        {QStringLiteral("sourceText"),
-                         utf8(value.substr(contribution.source.range.begin,
-                                           contribution.source.range.end - contribution.source.range.begin))},
-                        {QStringLiteral("beforeState"), decisionLabel(contribution.before)},
-                        {QStringLiteral("afterState"), decisionLabel(contribution.after)}});
+        const auto &capturedSource = sources.at(side);
+        const auto &value = capturedSource.worktree.utf8;
+        contributions.push_back(QVariantMap{
+            {QStringLiteral("scope"),
+             tr("%1 · %2").arg(rangeLabel(sideLabel(side), sources.lines(side), contribution.source.range),
+                               sourceIdentity(utf8(capturedSource.label),
+                                              capturedSource.commitId ? utf8(*capturedSource.commitId) : QString{}))},
+            {QStringLiteral("sourceText"),
+             utf8(value.substr(contribution.source.range.begin,
+                               contribution.source.range.end - contribution.source.range.begin))},
+            {QStringLiteral("beforeState"), decisionLabel(contribution.before)},
+            {QStringLiteral("afterState"), decisionLabel(contribution.after)}});
     }
     const TextPositions before(preview.before);
     const TextPositions replacement(preview.replacement);
