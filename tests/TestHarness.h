@@ -404,7 +404,7 @@ public:
             failure = detail::takePending();
             if (failure.empty()) {
                 ++skipped_;
-                std::cout << "SKIP " << name << ": " << skipped.what() << '\n';
+                std::cout << "SKIP " << name << ": " << skipped.what() << '\n' << std::flush;
                 return;
             }
         } catch (const std::exception &error) {
@@ -415,7 +415,8 @@ public:
         if (const auto deferred = detail::takePending(); !deferred.empty())
             failure += (failure.empty() ? "" : "\n    ") + deferred;
         if (failure.empty()) {
-            std::cout << "PASS " << name << '\n';
+            // Preserve the last completed case even when a later case times out or crashes.
+            std::cout << "PASS " << name << '\n' << std::flush;
             return;
         }
         ++failures_;
