@@ -383,6 +383,8 @@ void blockedStartupRestoresTheChosenSession(Sandbox &sandbox)
         expectContains(shown, "Edited files: shared.txt", "choice files");
     }
     const auto repository = repo.snapshot();
+    // Recovery selection refuses while this window is still recording its launch captures.
+    test_support::awaitRecovery(*app.store());
     scene.click(("recoveryChoice-" + firstName).toLatin1().constData());
     waitFor(
         "the chosen session to be restored",
