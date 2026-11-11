@@ -14,7 +14,7 @@ A standalone text conflict resolver for Git on Linux and KDE. Review captured so
   <img src="docs/images/comparison-light.png" alt="Current Branch Truce comparing C++ retry policies, with an editable result, one unresolved conflict, one accepted line and one ignored line" width="1200">
 </picture>
 
-*Breeze Light and Dark captures from 2026-11-11, produced locally from source `919935200fd6`. [Media provenance](docs/images/readme-media-provenance.json) records the source and original files. These development captures use headless Wayland; [installed-desktop validation](docs/platform-validation.md#redesign-evidence-still-required) has a separate scope.*
+*Breeze Light and Dark captures from 2026-11-11, produced locally from source `18d528e73502`. [Media provenance](docs/images/readme-media-provenance.json) records the source and original files. These development captures use headless Wayland; [installed-desktop validation](docs/platform-validation.md#redesign-evidence-still-required) has a separate scope.*
 
 ## Explore the current app
 

@@ -18,7 +18,7 @@ That run's documentation pair and review scenes remain historical CI evidence. C
 
 ## Current development captures
 
-Local development captures from 2026-11-11 use source `919935200fd68e4b715f43fc60a0e6e041937303`. The native replay runs the real application in a private headless Wayland session with Breeze Light and Dark at 1280x720 and 1280x800, repeating each scene. Acceptance journeys retain the actual ordered-choice preview and earlier-context windows with offscreen Fusion controls.
+Local development captures from 2026-11-11 use source `18d528e7350285bc9d73bf2ab5d3580e319b578d`. The native replay runs the real application in a private headless Wayland session with Breeze Light and Dark at 1280x720 and 1280x800, repeating each scene. Acceptance journeys retain the actual ordered-choice preview and earlier-context windows with offscreen Fusion controls.
 
 The [media provenance](images/readme-media-provenance.json) records the source, executable SHA-256, producing commands, original frame hashes and encoding. The documentation pair at 1440x900 is copied unchanged from `native/720/documentation-readme/`; [its provenance](images/redesigned-comparison-provenance.json) records both originals. The GIF and MP4 are a four-state screenshot gallery with four seconds per state, rather than a continuous interaction recording.
 

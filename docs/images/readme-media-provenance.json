@@ -1,11 +1,11 @@
 {
   "schema": 2,
-  "source": "919935200fd68e4b715f43fc60a0e6e041937303",
+  "source": "18d528e7350285bc9d73bf2ab5d3580e319b578d",
   "capture_origin": "local automated development captures",
-  "captured_at_utc": "2026-11-11T02:52:17.145573+00:00",
-  "capture_finished_at_utc": "2026-11-11T02:58:58.497134+00:00",
+  "captured_at_utc": "2026-11-11T06:24:55.257807+00:00",
+  "capture_finished_at_utc": "2026-11-11T06:31:38.418204+00:00",
   "physical_desktop": false,
-  "executable_sha256": "f484215d1ff976d8fd0fa4c36783c6f9c5ac719e277074394a406e93b1c1ff6d",
+  "executable_sha256": "42ce9013157342276397af9665daa752d26a2bd4903b359616414a043d325f4a",
   "command_path_aliases": {
     "$SOURCE_ROOT": "source checkout at the recorded revision",
     "$BUILD_DIR": "built desktop CMake tree",
@@ -81,7 +81,7 @@
     {
       "published": "docs/images/choice-preview.png",
       "original": "ui-scenes/ordered-choice-preview-800.png",
-      "sha256": "4c74aa94fd0afb2bece05143e40f3a72ea6add41afee90f97544443f76ab3778",
+      "sha256": "24cc67180b2613e91d530ab1856685eaa10ff5b4edde24c0ea7c8f31aef44fa1",
       "observation": {
         "controls_style": "Fusion",
         "focused_selection": "right",
@@ -98,7 +98,7 @@
         "reference_image": null,
         "row_advance": 20,
         "schema": 1,
-        "source_revision": "919935200fd68e4b715f43fc60a0e6e041937303",
+        "source_revision": "18d528e7350285bc9d73bf2ab5d3580e319b578d",
         "stage": "replacementAfterText",
         "synthetic_stress": false
       }
@@ -106,7 +106,7 @@
     {
       "published": "docs/images/earlier-version.png",
       "original": "ui-scenes/earlier-context-800.png",
-      "sha256": "582eff0d71717cbfdfb831b4452f580a8167bda6dc4b107b581ea38a7c2c396c",
+      "sha256": "4418f57ea376fc02fe64b3746e9ac62c4a2b5cf8c7cf495cfa6524ee077d8089",
       "observation": {
         "controls_style": "Fusion",
         "focused_selection": "notes",
@@ -123,7 +123,7 @@
         "reference_image": null,
         "row_advance": 20,
         "schema": 1,
-        "source_revision": "919935200fd68e4b715f43fc60a0e6e041937303",
+        "source_revision": "18d528e7350285bc9d73bf2ab5d3580e319b578d",
         "stage": "earlierText",
         "synthetic_stress": false
       }
@@ -141,7 +141,7 @@
     {
       "published": "docs/images/redesigned-choice-preview.png",
       "original": "ui-scenes/ordered-choice-preview-800.png",
-      "sha256": "4c74aa94fd0afb2bece05143e40f3a72ea6add41afee90f97544443f76ab3778",
+      "sha256": "24cc67180b2613e91d530ab1856685eaa10ff5b4edde24c0ea7c8f31aef44fa1",
       "observation": {
         "controls_style": "Fusion",
         "focused_selection": "right",
@@ -158,7 +158,7 @@
         "reference_image": null,
         "row_advance": 20,
         "schema": 1,
-        "source_revision": "919935200fd68e4b715f43fc60a0e6e041937303",
+        "source_revision": "18d528e7350285bc9d73bf2ab5d3580e319b578d",
         "stage": "replacementAfterText",
         "synthetic_stress": false
       }
@@ -166,7 +166,7 @@
     {
       "published": "docs/images/redesigned-earlier-version.png",
       "original": "ui-scenes/earlier-context-800.png",
-      "sha256": "582eff0d71717cbfdfb831b4452f580a8167bda6dc4b107b581ea38a7c2c396c",
+      "sha256": "4418f57ea376fc02fe64b3746e9ac62c4a2b5cf8c7cf495cfa6524ee077d8089",
       "observation": {
         "controls_style": "Fusion",
         "focused_selection": "notes",
@@ -183,7 +183,7 @@
         "reference_image": null,
         "row_advance": 20,
         "schema": 1,
-        "source_revision": "919935200fd68e4b715f43fc60a0e6e041937303",
+        "source_revision": "18d528e7350285bc9d73bf2ab5d3580e319b578d",
         "stage": "earlierText",
         "synthetic_stress": false
       }
@@ -200,11 +200,11 @@
       },
       {
         "original": "ui-scenes/ordered-choice-preview-800.png",
-        "sha256": "4c74aa94fd0afb2bece05143e40f3a72ea6add41afee90f97544443f76ab3778"
+        "sha256": "24cc67180b2613e91d530ab1856685eaa10ff5b4edde24c0ea7c8f31aef44fa1"
       },
       {
         "original": "ui-scenes/earlier-context-800.png",
-        "sha256": "582eff0d71717cbfdfb831b4452f580a8167bda6dc4b107b581ea38a7c2c396c"
+        "sha256": "4418f57ea376fc02fe64b3746e9ac62c4a2b5cf8c7cf495cfa6524ee077d8089"
       },
       {
         "original": "native/800/replay-1-light/light-binary.png",
@@ -227,12 +227,12 @@
     },
     "artifacts": {
       "demo.gif": {
-        "sha256": "0cef9a791a0c5ab54cce33937ad5026b96bf1ef3ec616801616c718f8b4c64b7",
-        "bytes": 409212
+        "sha256": "55a085208f247e7631881088a69004bf24af1cb6652983db660b38cb63bae5bd",
+        "bytes": 406204
       },
       "demo.mp4": {
-        "sha256": "cc0ee3a6fb49778c861a45abc45f5670f11ece0d325d2486ff0a986a4273da75",
-        "bytes": 248810
+        "sha256": "88c73927a7e44d15f37c03844f2efaec9fcc35b12e12832900756fa9c0928c39",
+        "bytes": 248829
       }
     }
   }

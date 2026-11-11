@@ -309,7 +309,7 @@ Agents sharing the headless session run the script under
 the package checkers and the install-prefix check use the same functions for
 their single `tracked.txt` conflict.
 
-The README uses inspected local captures from 2026-11-11, source `919935200fd68e4b715f43fc60a0e6e041937303`. Their [provenance](images/readme-media-provenance.json) records the executable hash, commands and original image hashes. Comparison and binary scenes use Breeze on private headless Wayland; preview and earlier-context scenes use the acceptance suite's offscreen Fusion controls. The animation is an encoded gallery of actual application states, not a continuous interaction recording.
+The README uses inspected local captures from 2026-11-11, source `18d528e7350285bc9d73bf2ab5d3580e319b578d`. Their [provenance](images/readme-media-provenance.json) records the executable hash, commands and original image hashes. Comparison and binary scenes use Breeze on private headless Wayland; preview and earlier-context scenes use the acceptance suite's offscreen Fusion controls. The animation is an encoded gallery of actual application states, not a continuous interaction recording.
 
 | Breeze Light | Breeze Dark |
 | --- | --- |
