@@ -26,7 +26,6 @@
 #include <QQuickWindow>
 #include <QRegularExpression>
 #include <QScreen>
-#include <QSequentialIterable>
 #include <QSettings>
 #include <QStringList>
 #include <QTest>
@@ -34,6 +33,7 @@
 #include <QTextDocument>
 #include <QTextLayout>
 #include <QTimer>
+#include <QVariant>
 
 #include <cmath>
 #include <limits>
@@ -118,9 +118,10 @@ QJsonValue value(const QVariant &variant)
         }
         return object;
     }
-    if (variant.canConvert<QSequentialIterable>()) {
+    if (variant.canConvert<QVariantList>()) {
+        const auto entries = variant.toList();
         QJsonArray array;
-        for (const auto &entry : variant.value<QSequentialIterable>()) array.append(value(entry));
+        for (const auto &entry : entries) array.append(value(entry));
         return array;
     }
     return QJsonValue::fromVariant(variant);
