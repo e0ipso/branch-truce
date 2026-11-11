@@ -673,6 +673,8 @@ void addComparisonLayoutCases(Group &scenes)
         clickItem(fixture, entry);
         settle([&] { return !menu->property("visible").toBool(); });
         CHECK(triggered.count() == 1);
+        // Dismissing the menu does not acknowledge the asynchronous Undo commit.
+        fixture.settleCommand();
         CHECK(fixture.file().current().draft == beforeTyping.draft);
     });
     scenes.run("resizing earlier context and collapsed choices preserve current sources and manual work", [] {
