@@ -2,6 +2,8 @@
 
 // A storage file system that fails one sync with EIO or one publication exchange with EACCES.
 // Give it to the store, journal or session under test; nothing else sees its faults.
+// Await asynchronous setup before arming a one-shot fault, then check the failed operation's
+// file and action. Otherwise an unfinished initial capture can consume an edit's fault.
 
 #include "storage/FileSystem.h"
 

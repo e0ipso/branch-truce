@@ -472,6 +472,9 @@ void addReadingStateLayoutCases(Group &scenes)
         Application controller(std::move(config));
         Fixture fixture(controller);
         CHECK(controller.store()->appendFile(namedChoiceFile("other")));
+        // The one-shot fault must reach the edit, after both initial captures are durable.
+        test_support::awaitRecovery(*controller.store());
+        CHECK(!controller.files()->hasPendingRecovery());
         const auto original = fixture.text();
         select(fixture, 0, 0);
         {
@@ -482,6 +485,8 @@ void addReadingStateLayoutCases(Group &scenes)
             CHECK_EQ(faults->failures.load(), 1);
         }
         settle([&] { return controller.files()->hasPendingRecovery(); });
+        CHECK(!controller.store()->pendingAction("other"));
+        CHECK(controller.store()->pendingAction("choices") == SessionStore::Action::ReplaceDraft);
         const std::function<QQuickItem *(QQuickItem *)> rowFor = [&](QQuickItem *item) -> QQuickItem * {
             if (item->property("fileId").toString() == QStringLiteral("choices")
                 && item->property("subtitle").isValid())

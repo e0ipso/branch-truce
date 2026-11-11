@@ -142,6 +142,7 @@ void comparison_scene::addSessionCases(Groups groups)
         {
             const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
             clickItem(fixture, discardButton);
+            fixture.settleCommand();
             CHECK_EQ(faults->failures.load(), 1);
         }
         settle([&] { return controller.files()->hasPendingRecovery(); });
