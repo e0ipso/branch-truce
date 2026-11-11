@@ -43,6 +43,20 @@ void checkLiteralRepositoryText()
     };
     readPath(pathLabel);
     CHECK(renderedPath == shown);
+    auto *choicesButton = test_support::fileToolbarControl(fixture.window, "sourceChoicesMenu");
+    auto *choicesTip = choicesButton->findChild<QObject *>(QStringLiteral("sourceChoicesMenuLiteralToolTip"));
+    const auto guidance =
+        QStringLiteral("Preview non-conflicting changes or a whole side of %1 before applying").arg(shown);
+    CHECK(choicesTip && choicesTip->property("literalText").toString() == guidance);
+    CHECK(QMetaObject::invokeMethod(choicesTip, "open"));
+    settleFor("the source-choice tooltip opened", [&] { return choicesTip->property("opened").toBool(); });
+    auto *guidanceText = choicesTip->property("contentItem").value<QQuickItem *>();
+    CHECK(guidanceText && guidanceText->property("text").toString() == guidance);
+    CHECK(guidanceText->property("textFormat").toInt() == Qt::PlainText);
+    test_support::waitForFrames(fixture.window, "the literal source-choice guidance is drawn");
+    CHECK(QMetaObject::invokeMethod(choicesTip, "close"));
+    settleFor("the source-choice tooltip closed", [&] { return !choicesTip->property("visible").toBool(); });
+    test_support::closeFileToolbarMenu(fixture.window);
     const auto initialRequests = fixture.networkRequests().size();
     const auto message = QStringLiteral("Waiting for Git to stage %1.").arg(shown);
     // Every label inside the item must show the message as plain characters. A label
@@ -111,6 +125,17 @@ void checkLiteralRepositoryText()
                             .arg(handoffRequests)
                             .arg(noticeRequests)
                             .arg(fixture.networkRequests().size()));
+    for (const auto &url : fixture.networkRequests()) problems.append(QStringLiteral("requested ") + url.toString());
+    if (requested)
+        for (auto *child : fixture.window->findChildren<QObject *>())
+            if (child->property("text").toString().contains(QStringLiteral("<img"))
+                && child->property("textFormat").isValid() && child->property("textFormat").toInt() != Qt::PlainText)
+                problems.append(QStringLiteral("text owner %1 format=%2 parent=%3")
+                                    .arg(QString::fromLatin1(child->metaObject()->className()),
+                                         child->property("textFormat").toString(),
+                                         child->parent()
+                                             ? QString::fromLatin1(child->parent()->metaObject()->className())
+                                             : QStringLiteral("none")));
     CHECK(tooltip->setProperty("visible", false));
     if (!problems.isEmpty()) throw std::runtime_error(problems.join(QStringLiteral("; ")).toStdString());
 }

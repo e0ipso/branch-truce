@@ -50,7 +50,8 @@ void openController(Application &controller, const ParentRepository &repo)
     CHECK(controller.loader()->openRepository(repo.root));
     // Opening takes about 0.5 s on an idle host. At load averages of 25 to 36 on 8 cores it
     // averaged 2.5 s and some opens took over 10 s.
-    pump([&] { return !controller.loader()->opening(); }, QStringLiteral("the repository opening did not finish"));
+    pump([&] { return !controller.loader()->opening() && !controller.store()->recording(); },
+         QStringLiteral("the repository opening did not finish"));
     CHECK(!controller.loader()->opening());
     if (controller.loader()->startupState() != SessionLoader::StartupState::Ready)
         throw std::runtime_error("controller startup: " + controller.loader()->detail().toStdString());
@@ -215,7 +216,7 @@ QString twoEditedStores(const ParentRepository &repo)
     // A second window on the operation finds the socket taken and does not listen.
     Application other{test_support::windowConfig()};
     CHECK(other.loader()->openRepository(repo.root));
-    pump([&] { return !other.loader()->opening(); },
+    pump([&] { return !other.loader()->opening() && !other.store()->recording(); },
          QStringLiteral("the second window's repository opening did not finish"));
     CHECK(other.loader()->startupState() == SessionLoader::StartupState::Ready
           && !other.mergetoolSession()->listening());

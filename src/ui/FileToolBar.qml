@@ -71,7 +71,7 @@ RowLayout {
         controlName: "sourceChoicesMenu"
         displayHint: Kirigami.DisplayHint.AlwaysHide
         text: qsTr("Source choices")
-        tooltip: qsTr("Preview non-conflicting changes or a whole side of %1 before applying")
+        literalToolTip: qsTr("Preview non-conflicting changes or a whole side of %1 before applying")
             .arg(fileToolBar.selectedFile.path || "")
         icon.name: "document-import"
         enabled: !!fileToolBar.selectedFile.canEdit && !fileToolBar.composing

@@ -8,6 +8,9 @@ import org.kde.kirigami as Kirigami
 
 NamedAction {
     id: menuAction
+    // Native toolbar delegates create their own auto-text tooltip from Action.tooltip.
+    // Project text belongs only in our owned plain-text popup.
+    property string literalToolTip: ""
     // Keep our named button in overflow too. Kirigami otherwise turns Action.children
     // into its own unnamed submenu and bypasses this action's display component.
     default property list<MenuEntry> entries
@@ -53,6 +56,12 @@ NamedAction {
         ToolTip.text: menuAction.tooltip
         ToolTip.visible: hovered && !entryPopup.visible && ToolTip.text.length > 0
         ToolTip.delay: Kirigami.Units.toolTipDelay
+        PlainToolTip {
+            objectName: menuAction.controlName + "LiteralToolTip"
+            literalText: menuAction.literalToolTip
+            visible: menuButton.hovered && !entryPopup.visible && literalText.length > 0
+            delay: Kirigami.Units.toolTipDelay
+        }
         onClicked: {
             menuAction.containingMenu = containingMenu
             const overlay = Overlay.overlay
