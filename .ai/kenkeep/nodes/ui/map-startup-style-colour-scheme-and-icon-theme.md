@@ -48,5 +48,7 @@ Startup code is not covered by the offscreen `Main` scene harness, which never r
 - Related: [map-recovery-journal-and-acknowledgment-boundary → map-recovery-journal-format-and-validation](../recovery/journal/map-recovery-journal-format-and-validation.md)
 - Related: [map-recovery-journal-and-acknowledgment-boundary → map-recovery-of-copied-launches-and-interrupted-publication](../recovery/journal/map-recovery-of-copied-launches-and-interrupted-publication.md)
 - Related: [map-recovery-journal-and-acknowledgment-boundary → map-recovery-store-selection-and-failure-scope](../recovery/journal/map-recovery-store-selection-and-failure-scope.md)
-- Related: [map-installed-artifact-validation-in-base-containers](../packaging/map-installed-artifact-validation-in-base-containers.md)
+- Related: [map-installed-artifact-validation-in-base-containers → map-installed-deb-validation-execution](../packaging/installed-validation/map-installed-deb-validation-execution.md)
+- Related: [map-installed-artifact-validation-in-base-containers → map-installed-validation-evidence-and-desktop-limits](../packaging/installed-validation/map-installed-validation-evidence-and-desktop-limits.md)
+- Related: [map-installed-artifact-validation-in-base-containers → map-installed-validation-tooling-regression-suite](../packaging/installed-validation/map-installed-validation-tooling-regression-suite.md)
 <!-- kk:related:end -->

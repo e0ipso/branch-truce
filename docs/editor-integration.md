@@ -17,6 +17,17 @@ initialized with the launch-time working file. Showing earlier-version context,
 resizing panes and revealing choices preserve the result and selection. An absent
 earlier source is explained; a present empty earlier source remains available.
 
+Source-choice rows come from typed C++ list models. An update publishes both
+panes' joined data together and changes only affected rows when their identities
+remain stable. Unchanged controls retain focus and open menus. Precise-choice
+menu delegates are created when their menu opens, rather than on every edit.
+
+Paths and captured identities render as plain text, including in native tooltips.
+Controls with custom labels leave their native backing text empty because a
+style can retain an unused label that would otherwise interpret markup. Preview
+confirmation and staged-discard dialogs await their correlated durable command
+completion before closing; a refused or failed operation retains the draft.
+
 Every pane has a line-number gutter. The `LineGutter` component sits inside the
 pane's Flickable as a sibling of the TextArea, so the result TextArea is still
 the Flickable's content child, and the TextArea pads its text by the gutter's

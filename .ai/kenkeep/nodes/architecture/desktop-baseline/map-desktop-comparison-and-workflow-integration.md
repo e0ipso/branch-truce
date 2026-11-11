@@ -24,6 +24,7 @@ kk_derived_from:
   - docs/mergetool-launcher.md
   - tests/app/ComparisonViewTests.cpp
   - tools/verify-install-prefix.sh
+  - 'eafaf840-7389-45ad-aa53-003771d300c2:map:0'
 kk_relates_to:
   - practice-design-desktop-apps-around-screens-and-components
   - map-branch-truce-first-release-scope
@@ -35,6 +36,8 @@ kk_depends_on: []
 kk_confidence: high
 ---
 [TECH_SPEC.md](../../../../../TECH_SPEC.md) is the technical design reference and takes precedence over earlier research recommendations. Save checkpoints app-owned drafts only; Mark resolved publishes and verifies Git resolution. Repository-session mode stages directly; mergetool mode assigns the launched path to parent-owned staging and verifies its acknowledgment. First-release conversion/helper restrictions apply before reading sources as well as before staging. Recovery precedes acknowledgment of completed edits; the [versioned recovery journal](../../recovery/journal/index.md) defines the implemented layout and commit boundary. The [correspondence engine](../../core/map-revision-bound-passage-correspondence.md) maps source passages to result revisions. [ComparisonView](../../../../../src/ui/ComparisonView.qml) implements the comparison. It has resizable identified source panes around an editable center, optional earlier context, and command-owned direct edits and basic shortcuts. Search is literal and case-sensitive and covers one pane at a time. Wrap lines and space and tab markers start off. The markers are drawn on the left source, the result, the right source, and the earlier version, because Qt Quick ignores `QTextOption::ShowTabsAndSpaces`. [Main](../../../../../src/ui/Main.qml) collapses the choice list beside that comparison. Full keyboard operation across files, choices, review, and saving remains unimplemented. Physical desktop verification was not run. `branch-truce --mergetool` is the blocking launcher for Git's mergetool parent. Its transport and lifecycle are in the [mergetool launcher note](../../../../../docs/mergetool-launcher.md). That note declares compatibility only for the passing behaviours a real Git 2.43.0 parent was tested against on the development host, as described in the [session socket and real-parent node](../../git/mergetool/index.md).
+
+[ResultEditorAdapter::setEditable](../../../../../src/app/ResultEditorAdapter.cpp) preserves the editor's cursor, selection and viewport around `editableChanged`, because changing Qt Quick's `readOnly` can move the cursor to the end. Restoration is conditional on unchanged shown document text. The [adapter properties](../../../../../src/app/ResultEditorAdapter.h) separate `editableChanged`, `decorationPendingChanged` and clipboard/selection `stateChanged`, so decoration or clipboard updates do not toggle the editing binding.
 
 <!-- kk:related:start -->
 # Related
@@ -66,4 +69,5 @@ kk_confidence: high
 [10] [docs/mergetool-launcher.md](../../../../../docs/mergetool-launcher.md)
 [11] [tests/app/ComparisonViewTests.cpp](../../../../../tests/app/ComparisonViewTests.cpp)
 [12] [tools/verify-install-prefix.sh](../../../../../tools/verify-install-prefix.sh)
+[13] eafaf840-7389-45ad-aa53-003771d300c2:map:0
 <!-- kk:citations:end -->

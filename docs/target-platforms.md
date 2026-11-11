@@ -68,7 +68,7 @@ compatibility claims.
 | Base image | `ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7` | `ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55` |
 | Container OS | Ubuntu 26.04.1 LTS, resolute | Ubuntu 24.04.5 LTS, noble |
 | Package sources | Ubuntu resolute archive in the image | Only Tuxedo OS sources: [packaging/tuxedo/tuxedo-os.sources](../packaging/tuxedo/tuxedo-os.sources) |
-| Definition | [packaging/kubuntu/Dockerfile](../packaging/kubuntu/Dockerfile) | [packaging/tuxedo/Dockerfile](../packaging/tuxedo/Dockerfile) |
+| Definition | `packaging/kubuntu/Dockerfile`, retired | [packaging/tuxedo/Dockerfile](../packaging/tuxedo/Dockerfile) |
 | Package version | `0.1.0+kubuntu26.04` | `0.1.0+tuxedo24.04` |
 | Artifact | `branch-truce_0.1.0+kubuntu26.04_amd64.deb` | `branch-truce_0.1.0+tuxedo24.04_amd64.deb` |
 

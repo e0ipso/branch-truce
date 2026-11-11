@@ -107,7 +107,8 @@ in the attach frame, with the hidden `--mergetool-path` option, so the window
 opens on that file. The started GUI's standard input, output and error go to
 `/dev/null`, so it writes nothing into the `git mergetool` terminal. It waits
 15 seconds for that window to listen; `--session-wait <seconds>` after
-`--mergetool` changes the wait. `--no-window` after `--mergetool` disables
+`--mergetool` changes the wait, accepting finite values from 0 through 3600.
+`--no-window` after `--mergetool` disables
 that start. The session has 15 seconds to answer the attach; no answer, an
 invalid frame or an answer for another invocation returns 1.
 

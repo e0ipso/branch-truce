@@ -1,11 +1,11 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:8becafdffad8d69040a93ea6fe8f36d552086f609630945a4b537b11db511880'
-node_count: 46
+nodes_hash: 'sha256:47d7bec9331e5bd37916ba68a7e6cef09532aae4fb4fb98c771e3c89484a9682'
+node_count: 50
 ---
 # kenkeep Graph
 
-Total nodes: 46
+Total nodes: 50
 
 ## map-branch-truce-first-release-scope
 
@@ -48,7 +48,7 @@ Total nodes: 46
 - **path:** architecture/desktop-baseline/map-desktop-comparison-and-workflow-integration.md
 - **tags:** architecture, desktop, platform, cpp
 - **relates_to:** practice-design-desktop-apps-around-screens-and-components, map-branch-truce-first-release-scope, practice-treat-mergetool-file-state-as-live-evidence, map-mergetool-session-socket-and-real-git-parent, map-per-base-debian-artifacts-and-container-inspection, practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins
-- **derived_from:** TECH_SPEC.md, src/ui/ComparisonView.qml, src/ui/Main.qml, src/app/Application.cpp, docs/editor-integration.md, docs/build.md, tests/fixtures/performance/evidence.md, src/core/ResourceLimits.h, docs/resource-limits.md, docs/mergetool-launcher.md, tests/app/ComparisonViewTests.cpp, tools/verify-install-prefix.sh
+- **derived_from:** TECH_SPEC.md, src/ui/ComparisonView.qml, src/ui/Main.qml, src/app/Application.cpp, docs/editor-integration.md, docs/build.md, tests/fixtures/performance/evidence.md, src/core/ResourceLimits.h, docs/resource-limits.md, docs/mergetool-launcher.md, tests/app/ComparisonViewTests.cpp, tools/verify-install-prefix.sh, eafaf840-7389-45ad-aa53-003771d300c2:map:0
 
 ## map-desktop-platform-and-implementation-stack
 
@@ -77,11 +77,11 @@ Total nodes: 46
 - **relates_to:** practice-design-desktop-apps-around-screens-and-components, map-branch-truce-first-release-scope, practice-treat-mergetool-file-state-as-live-evidence, map-mergetool-session-socket-and-real-git-parent, map-per-base-debian-artifacts-and-container-inspection, practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins
 - **derived_from:** TECH_SPEC.md, src/ui/ComparisonView.qml, src/ui/Main.qml, src/app/Application.cpp, docs/editor-integration.md, docs/build.md, tests/fixtures/performance/evidence.md, src/core/ResourceLimits.h, docs/resource-limits.md, docs/mergetool-launcher.md, tests/app/ComparisonViewTests.cpp, tools/verify-install-prefix.sh, dcc586bc-c490-4186-893e-e9ac032ec77c:map:3
 
-## map-installed-artifact-validation-in-base-containers
+## map-installed-deb-validation-execution
 
 - **kind:** map
-- **title:** Installed-artifact validation in base containers
-- **path:** packaging/map-installed-artifact-validation-in-base-containers.md
+- **title:** Installed DEB validation execution
+- **path:** packaging/installed-validation/map-installed-deb-validation-execution.md
 - **tags:** packaging, platform, validation, wayland, accessibility, compatibility
 - **relates_to:** map-per-base-debian-artifacts-and-container-inspection, map-branch-truce-desktop-implementation-baseline, map-journey-acceptance-suite
 
@@ -94,6 +94,22 @@ Total nodes: 46
 - **relates_to:** practice-design-desktop-apps-around-screens-and-components, map-branch-truce-first-release-scope, practice-treat-mergetool-file-state-as-live-evidence, map-mergetool-session-socket-and-real-git-parent, map-per-base-debian-artifacts-and-container-inspection, practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins
 - **derived_from:** TECH_SPEC.md, src/ui/ComparisonView.qml, src/ui/Main.qml, src/app/Application.cpp, docs/editor-integration.md, docs/build.md, tests/fixtures/performance/evidence.md, src/core/ResourceLimits.h, docs/resource-limits.md, docs/mergetool-launcher.md, tests/app/ComparisonViewTests.cpp, tools/verify-install-prefix.sh
 
+## map-installed-validation-evidence-and-desktop-limits
+
+- **kind:** map
+- **title:** Installed validation evidence and desktop limits
+- **path:** packaging/installed-validation/map-installed-validation-evidence-and-desktop-limits.md
+- **tags:** packaging, platform, validation, wayland, accessibility, compatibility
+- **relates_to:** map-per-base-debian-artifacts-and-container-inspection, map-branch-truce-desktop-implementation-baseline, map-journey-acceptance-suite
+
+## map-installed-validation-tooling-regression-suite
+
+- **kind:** map
+- **title:** Installed validation tooling regression suite
+- **path:** packaging/installed-validation/map-installed-validation-tooling-regression-suite.md
+- **tags:** packaging, platform, validation, wayland, accessibility, compatibility
+- **relates_to:** map-per-base-debian-artifacts-and-container-inspection, map-branch-truce-desktop-implementation-baseline, map-journey-acceptance-suite
+
 ## map-journey-acceptance-suite
 
 - **kind:** map
@@ -101,6 +117,16 @@ Total nodes: 46
 - **path:** ui/map-journey-acceptance-suite.md
 - **tags:** testing, acceptance, qml, offscreen, git
 - **relates_to:** practice-wait-for-layout-before-clicking-offscreen-dialog-items, map-branch-truce-first-release-scope, practice-make-conflict-choices-explicit-and-reversible, map-mergetool-session-socket-and-real-git-parent
+- **derived_from:** eafaf840-7389-45ad-aa53-003771d300c2:map:4
+
+## map-literal-project-text-in-native-controls
+
+- **kind:** map
+- **title:** Literal project text in native controls
+- **path:** ui/map-literal-project-text-in-native-controls.md
+- **tags:** ui, qml, paths, testing
+- **relates_to:** practice-keep-unsupported-and-unfinished-work-visible, map-journey-acceptance-suite, map-startup-style-colour-scheme-and-icon-theme
+- **derived_from:** eafaf840-7389-45ad-aa53-003771d300c2:map:2
 
 ## map-mergetool-launcher-decisions-and-reloads
 
@@ -141,7 +167,7 @@ Total nodes: 46
 - **path:** recovery/journal/map-recovery-acknowledgment-and-retained-input.md
 - **tags:** recovery, storage, editing, failures
 - **relates_to:** practice-recover-unfinished-work-without-changing-its-status, practice-keep-session-captures-immutable-across-revisions, practice-keep-failed-work-outstanding, map-mergetool-session-socket-and-real-git-parent
-- **derived_from:** docs/recovery-journal.md, src/recovery/RecoveryInventory.cpp, src/app/SessionModel.h, tests/fixtures/performance/evidence.md, src/storage/RecoveryStore.cpp, src/app/Application.cpp, src/app/main.cpp, src/ui/Main.qml, dcc586bc-c490-4186-893e-e9ac032ec77c:map:1
+- **derived_from:** docs/recovery-journal.md, src/recovery/RecoveryInventory.cpp, src/app/SessionModel.h, tests/fixtures/performance/evidence.md, src/storage/RecoveryStore.cpp, src/app/Application.cpp, src/app/main.cpp, src/ui/Main.qml, dcc586bc-c490-4186-893e-e9ac032ec77c:map:1, eafaf840-7389-45ad-aa53-003771d300c2:map:3
 
 ## map-recovery-journal-format-and-validation
 
@@ -194,6 +220,15 @@ Total nodes: 46
 - **path:** core/map-revision-bound-passage-correspondence.md
 - **tags:** comparison, editing, revisions, failures
 - **relates_to:** practice-keep-session-captures-immutable-across-revisions, practice-make-conflict-choices-explicit-and-reversible, practice-keep-failed-work-outstanding
+
+## map-revision-bound-source-control-presentation
+
+- **kind:** map
+- **title:** Revision-bound source control presentation
+- **path:** ui/map-revision-bound-source-control-presentation.md
+- **tags:** comparison, qml, editing, revisions
+- **relates_to:** practice-keep-sources-identifiable-and-the-result-editable, practice-make-conflict-choices-explicit-and-reversible, map-revision-bound-passage-correspondence
+- **derived_from:** eafaf840-7389-45ad-aa53-003771d300c2:map:1
 
 ## map-runtime-qml-and-plugin-package-dependencies
 
@@ -296,7 +331,7 @@ Total nodes: 46
 - **title:** Keep sources identifiable and the result editable
 - **path:** product/practice-keep-sources-identifiable-and-the-result-editable.md
 - **tags:** product, comparison, editing
-- **derived_from:** PRD.md, src/ui/ComparisonView.qml, src/ui/Main.qml, src/app/Application.cpp, docs/editor-integration.md
+- **derived_from:** PRD.md, src/ui/ComparisonView.qml, src/ui/Main.qml, src/app/ResultEditorAdapter.cpp, docs/editor-integration.md
 
 ## practice-keep-techspecs-and-prds-independent
 

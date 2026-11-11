@@ -25,6 +25,9 @@ summaries:
   packaging/artifact-paths: >-
     developer artifacts, native releases and runtime dependency checks; read
     when changing package construction or artifact inspection
+  packaging/installed-validation: >-
+    installed DEB validation execution, evidence limits and tooling checks; read
+    when changing installed-package validation or interpreting container results
   product: >-
     product scope, file status and conflict-resolution behavior; read when
     changing user workflows or PRD requirements
@@ -48,6 +51,7 @@ summaries:
 - `git/mergetool`: mergetool socket transport, launcher lifecycle and real-parent tests; read when changing attachment, parent staging or socket isolation
 - `packaging`: native package construction, dependencies and installed validation; read when changing release artifacts, Qt packaging or container checks
 - `packaging/artifact-paths`: developer artifacts, native releases and runtime dependency checks; read when changing package construction or artifact inspection
+- `packaging/installed-validation`: installed DEB validation execution, evidence limits and tooling checks; read when changing installed-package validation or interpreting container results
 - `product`: product scope, file status and conflict-resolution behavior; read when changing user workflows or PRD requirements
 - `recovery`: durable recovery records and guarded destination publication; read when changing persistence, restoration or publication failure handling
 - `recovery/journal`: recovery journal format, acknowledgment, store selection and interrupted publication; read when changing persistence or restart behavior

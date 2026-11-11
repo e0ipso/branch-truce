@@ -72,6 +72,12 @@ is active, an unlaunched path waits instead of being staged here. The blocking
 launcher and its local socket are recorded in
 [the mergetool launcher note](mergetool-launcher.md).
 
+Command return values acknowledge request admission. Review confirmation,
+marker refusal and persistence failures can arrive later. Preview and staged
+discard dialogs wait for their correlated durable completion before closing;
+a failed apply remains visible with its error. A completion for an older
+preview cannot close a newer preview.
+
 `Outcome::Uncertain` represents timeouts or other uninspected mutation results.
 It blocks finish until an adapter inspects the outcome. Successful snapshots
 and the most recent operation outcomes are separate: a failed newer write or

@@ -13,8 +13,8 @@ _None._
 - Open [**Keep session captures immutable across revisions**](practice-keep-session-captures-immutable-across-revisions.md) to learn about: Retain source bytes, conversion policy, provenance and the launch result separately from editable revision history. #session #snapshots #editing #source-identity
 
 ## Components (what exists)
-- Open [**Conflict marker scan**](map-conflict-marker-scan.md) to learn about: FileSession derives marker counts from complete blocks and stray lines while preserving marker-like source text. #git #editing #markers #recovery
 - Open [**Revision-bound passage correspondence**](map-revision-bound-passage-correspondence.md) to learn about: Map immutable source ranges to one result revision; reject uncertain targets and keep alignment memory linear. #comparison #editing #revisions #failures
+- Open [**Conflict marker scan**](map-conflict-marker-scan.md) to learn about: FileSession derives marker counts from complete blocks and stray lines while preserving marker-like source text. #git #editing #markers #recovery
 - Open [**Conflict marker sections**](map-conflict-marker-sections.md) to learn about: Marker sections tie intact Git conflict frames to choices and clean up fully decided blocks in the same undo entry. #git #editing #markers #undo #recovery
 
 ## By topic
@@ -36,7 +36,7 @@ _None._
 - Open [**Recovery journal format and validation**](../recovery/journal/map-recovery-journal-format-and-validation.md) — Version 3 frames and complete domain checkpoints preserve retained history and reject invalid recovery.
 - Open [**Recovery of copied launches and interrupted publication**](../recovery/journal/map-recovery-of-copied-launches-and-interrupted-publication.md) — Copied launch destinations and interrupted mutations require current evidence and durable observations.
 ### #comparison
-- Open [**Keep sources identifiable and the result editable**](../product/practice-keep-sources-identifiable-and-the-result-editable.md) — Require truthful source identities, an editable center result, earlier context, and reading aids that preserve text.
+- Open [**Revision-bound source control presentation**](../ui/map-revision-bound-source-control-presentation.md) — Stable source-row models publish complete comparison snapshots and update command fields without recreating unaffected controls.
 - Open [**Revision-bound passage correspondence**](map-revision-bound-passage-correspondence.md) — Map immutable source ranges to one result revision; reject uncertain targets and keep alignment memory linear.
 - Open [**Result conflict-marker folding**](../ui/map-result-conflict-marker-folding.md) — TextBlocks folds recognized conflict content without changing result bytes, line numbers or application history.
 ### #failures
@@ -45,6 +45,7 @@ _None._
 - Open [**Recovery of copied launches and interrupted publication**](../recovery/journal/map-recovery-of-copied-launches-and-interrupted-publication.md) — Copied launch destinations and interrupted mutations require current evidence and durable observations.
 ### #revisions
 - Open [**Revision-bound passage correspondence**](map-revision-bound-passage-correspondence.md) — Map immutable source ranges to one result revision; reject uncertain targets and keep alignment memory linear.
+- Open [**Revision-bound source control presentation**](../ui/map-revision-bound-source-control-presentation.md) — Stable source-row models publish complete comparison snapshots and update command fields without recreating unaffected controls.
 ### #session
 - Open [**Keep session captures immutable across revisions**](practice-keep-session-captures-immutable-across-revisions.md) — Retain source bytes, conversion policy, provenance and the launch result separately from editable revision history.
 ### #snapshots

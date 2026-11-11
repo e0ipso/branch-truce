@@ -12,7 +12,8 @@ tags:
   - git
 kk_schema_version: 3
 kk_id: map-journey-acceptance-suite
-kk_derived_from: []
+kk_derived_from:
+  - 'eafaf840-7389-45ad-aa53-003771d300c2:map:4'
 kk_relates_to:
   - practice-wait-for-layout-before-clicking-offscreen-dialog-items
   - map-branch-truce-first-release-scope
@@ -31,7 +32,9 @@ The window-fit journey retains strict 1280x720 eight-row pane height and control
 
 Controls have stable `objectName` locators; per-range actions include `choiceAccept-<id>` and menus use `choiceMore-<owner id>`. Precise line and order-aware actions remain menu entries. Fully decided ranges remove their chrome and retain an editor-anchored menu. `clickChoice` uses real hover targets or `sourceLineMenu` to open the source editor menu; precise commands remain reachable without a persistent menu button. Public right-click, hold and keyboard routing require current runtime evidence when changed. [tests/acceptance/README.md](../../../../tests/acceptance/README.md) records the locator contract and remaining obligations. `namedButton` in [tests/fixtures/QuickScene.h](../../../../tests/fixtures/QuickScene.h) falls back to accessible names for unnamed native controls. Assert state through properties such as `checked`; a conflict count and an undecided-decision count are independent.
 
-Uncovered PRD examples and environment-dependent gaps are listed in [tests/acceptance/README.md](../../../../tests/acceptance/README.md). The write-failure journey relies on a read-only directory and fails when the suite runs as root.
+Uncovered PRD examples and environment-dependent gaps are listed in [tests/acceptance/README.md](../../../../tests/acceptance/README.md). The write-failure journey in [HandoffJourneys.cpp](../../../../tests/acceptance/HandoffJourneys.cpp) injects one failure at the publication exchange and asserts that it fired, independently of host privileges. Raw permission enforcement remains an unprivileged storage integration concern.
+
+The close/retry journey in [WindowJourneys.cpp](../../../../tests/acceptance/WindowJourneys.cpp) injects the real journal sync failure through [SyncFaults::JournalSync](../../../../tests/fixtures/SyncFaults.h). Its scoped `ArmedFault` remains alive until pending completion is observed; a second intended failure must be rearmed because injection is one-shot. [RecoveryLease](../../../../src/storage/RecoveryStore.cpp) owns the lifetime `session.lock`; creating an unused `journal.lock` does not fail the writer. The journey retains exact pending input, close/cancel behavior, retry outcomes and restored text assertions.
 
 <!-- kk:related:start -->
 # Related
@@ -43,3 +46,9 @@ Uncovered PRD examples and environment-dependent gaps are listed in [tests/accep
 - Related: [map-mergetool-session-socket-and-real-git-parent → map-mergetool-socket-lookup-and-access](../git/mergetool/map-mergetool-socket-lookup-and-access.md)
 - Related: [map-mergetool-session-socket-and-real-git-parent → map-real-git-parent-compatibility-and-fixture-isolation](../git/mergetool/map-real-git-parent-compatibility-and-fixture-isolation.md)
 <!-- kk:related:end -->
+
+<!-- kk:citations:start -->
+# Citations
+
+[1] eafaf840-7389-45ad-aa53-003771d300c2:map:4
+<!-- kk:citations:end -->

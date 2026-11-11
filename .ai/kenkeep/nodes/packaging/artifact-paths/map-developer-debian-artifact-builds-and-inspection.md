@@ -35,7 +35,9 @@ Each format runs image preparation, desktop tests, candidate/predecessor packagi
 - Related: [map-branch-truce-desktop-implementation-baseline → map-editing-and-recovery-resource-envelope](../../architecture/desktop-baseline/map-editing-and-recovery-resource-envelope.md)
 - Related: [map-branch-truce-desktop-implementation-baseline → map-installed-desktop-application](../../architecture/desktop-baseline/map-installed-desktop-application.md)
 - Related: [practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins](../practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins.md)
-- Related: [map-installed-artifact-validation-in-base-containers](../map-installed-artifact-validation-in-base-containers.md)
+- Related: [map-installed-artifact-validation-in-base-containers → map-installed-deb-validation-execution](../installed-validation/map-installed-deb-validation-execution.md)
+- Related: [map-installed-artifact-validation-in-base-containers → map-installed-validation-evidence-and-desktop-limits](../installed-validation/map-installed-validation-evidence-and-desktop-limits.md)
+- Related: [map-installed-artifact-validation-in-base-containers → map-installed-validation-tooling-regression-suite](../installed-validation/map-installed-validation-tooling-regression-suite.md)
 <!-- kk:related:end -->
 
 <!-- kk:citations:start -->

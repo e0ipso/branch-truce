@@ -112,17 +112,23 @@ text. Each pane still gets a plain `PaneHighlighter` for decorations, and the
 CTest includes the core build canary, revisioned session tests, correspondence
 command fixtures and CLI guards. Desktop builds also test the Qt session model,
 the asynchronous Git adapter in temporary repositories, and the accepted editor
-fixture. The session, correspondence, model and Git tests report case and
-assertion counts; the editor reports assertions.
+fixture. The shared C++ harness reports case, assertion, failure and skip counts.
 The Git test runs its deadline case with a 300 ms deadline and has a 90-second
 suite timeout. Its scripted executables live outside the temporary repositories.
+
+Set `BRANCH_TRUCE_TEST_FILTER` when starting a test binary to select cases by
+name substring. Git fixtures likewise choose `BRANCH_TRUCE_TEST_GIT` and `PATH`
+from the launch environment; later changes inside a case do not retarget them.
+These settings use Linux's [initial process environment](https://man7.org/linux/man-pages/man5/proc_pid_environ.5.html).
+The harness fails if it cannot read that snapshot. Binaries using the harness's
+argument parser also accept `--filter` and `--list`.
 
 The desktop startup canary loads the embedded QML and Kirigami with offscreen
 software rendering, then waits for repository discovery and file loading. The
 executable accepts `--smoke-test` to print a `BRANCH_TRUCE_SESSION=` JSON record and
 exit after startup settles, including an unsupported or invalid selection. Its
 exit code checks window loading; the record describes session opening separately.
-GUI tests retain a 30-second timeout. Startup does not report an assertion count.
+The startup canary has a 30-second timeout. Startup does not report an assertion count.
 
 Launch directly into a repository's current merge or rebase with
 `build/desktop/src/app/branch-truce /path/to/repository`. A subdirectory selects

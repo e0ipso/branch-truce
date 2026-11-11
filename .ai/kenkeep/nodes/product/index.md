@@ -12,8 +12,8 @@ _None._
 ## Conventions (how we build)
 - Open [**Keep failed work outstanding**](practice-keep-failed-work-outstanding.md) to learn about: Keep failed saves and resolutions visible, retain edited results, and claim resolution only after both steps succeed. #product #failures #saving #resolution
 - Open [**Keep unsupported and unfinished work visible**](practice-keep-unsupported-and-unfinished-work-visible.md) to learn about: Show all current files, prominent outside-app warnings, and an honest handoff that directs users to outstanding work. #product #scope #progress #handoff
-- Open [**Recover unfinished work without changing its status**](practice-recover-unfinished-work-without-changing-its-status.md) to learn about: Restore unsaved edits and outstanding decisions after closing or a crash while preserving honest work status. #product #recovery #editing #progress
 - Open [**Keep sources identifiable and the result editable**](practice-keep-sources-identifiable-and-the-result-editable.md) to learn about: Require truthful source identities, an editable center result, earlier context, and reading aids that preserve text. #product #comparison #editing
+- Open [**Recover unfinished work without changing its status**](practice-recover-unfinished-work-without-changing-its-status.md) to learn about: Restore unsaved edits and outstanding decisions after closing or a crash while preserving honest work status. #product #recovery #editing #progress
 - Open [**Make conflict choices explicit and reversible**](practice-make-conflict-choices-explicit-and-reversible.md) to learn about: Keep accept, ignore, combine, and broader choices distinct, inspectable, and reversible with their decision states. #product #choices #editing #undo
 - Open [**Separate Save from Mark resolved**](practice-separate-save-from-mark-resolved.md) to learn about: Save keeps app-only drafts; Mark resolved writes the reviewed result and resolves the file in Git. #product #saving #resolution #review
 - Open [**Keep PRD.md focused on user needs**](practice-keep-prd-focused-on-user-needs.md) to learn about: PRD.md describes user needs, interactions, and capabilities without technical or implementation details. #product #prd #documentation
@@ -47,7 +47,7 @@ _None._
 ### #choices
 - Open [**Make conflict choices explicit and reversible**](practice-make-conflict-choices-explicit-and-reversible.md) — Keep accept, ignore, combine, and broader choices distinct, inspectable, and reversible with their decision states.
 ### #comparison
-- Open [**Keep sources identifiable and the result editable**](practice-keep-sources-identifiable-and-the-result-editable.md) — Require truthful source identities, an editable center result, earlier context, and reading aids that preserve text.
+- Open [**Revision-bound source control presentation**](../ui/map-revision-bound-source-control-presentation.md) — Stable source-row models publish complete comparison snapshots and update command fields without recreating unaffected controls.
 - Open [**Revision-bound passage correspondence**](../core/map-revision-bound-passage-correspondence.md) — Map immutable source ranges to one result revision; reject uncertain targets and keep alignment memory linear.
 - Open [**Result conflict-marker folding**](../ui/map-result-conflict-marker-folding.md) — TextBlocks folds recognized conflict content without changing result bytes, line numbers or application history.
 ### #documentation

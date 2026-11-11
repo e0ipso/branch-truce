@@ -14,7 +14,7 @@ kk_derived_from:
   - PRD.md
   - src/ui/ComparisonView.qml
   - src/ui/Main.qml
-  - src/app/Application.cpp
+  - src/app/ResultEditorAdapter.cpp
   - docs/editor-integration.md
 kk_relates_to: []
 kk_depends_on: []
@@ -30,7 +30,7 @@ Show corresponding passages with enough surrounding text to judge them. Distingu
 
 Provide search within sources and result with a clear scope, line wrapping, and controls to reveal spaces and tabs. Keep whitespace-only changes discoverable. Make these reading controls preserve the text and resolution decisions.
 
-[ComparisonView](../../../../src/ui/ComparisonView.qml) shows resizable labeled source panes around an editable center result, and shows common earlier context when that capture exists. [Main](../../../../src/ui/Main.qml) hides and shows the source-choice list. Hiding that list leaves the comparison panes in place. [Application](../../../../src/app/Application.cpp) owns direct result edits and the basic undo, redo, and clipboard shortcuts. Its event filter groups the document notifications from one native input event, including an input-method commit, into one command. The result `TextArea` sets `TextArea.flickable` on its `Flickable`, and that scroll surface follows the editor content. Search is literal and case-sensitive. Each Find stays inside the one selected pane and, after the last match, wraps to the first match in that same text. The earlier version is a search scope only while that pane is shown. Wrap lines and show spaces and tabs both start off. Those view controls leave the draft, decisions, history, and progress unchanged. Space and tab markers are drawn in the view on the left source, the result, the right source, and the earlier version, because Qt Quick ignores `QTextOption::ShowTabsAndSpaces`. The markers are view drawings and stay out of the document text. Full keyboard operation across files, choices, review, and saving remains unimplemented. Physical desktop checks of composed input, clipboard, pointer selection, scrolling, and theme behavior have not been run. See [editor integration](../../../../docs/editor-integration.md).
+[ComparisonView](../../../../src/ui/ComparisonView.qml) shows resizable labeled source panes around an editable center result, and shows common earlier context when that capture exists. [Main](../../../../src/ui/Main.qml) hides and shows the source-choice list. Hiding that list leaves the comparison panes in place. [ResultEditorAdapter](../../../../src/app/ResultEditorAdapter.cpp) captures direct result edits and connects editing actions to shared file history. Its event filter groups the document notifications from one native input event, including an input-method commit, into one command. The result `TextArea` sets `TextArea.flickable` on its `Flickable`, and that scroll surface follows the editor content. Search is literal and case-sensitive. Each Find stays inside the one selected pane and, after the last match, wraps to the first match in that same text. The earlier version is a search scope only while that pane is shown. Wrap lines and show spaces and tabs both start off. Those view controls leave the draft, decisions, history, and progress unchanged. Space and tab markers are drawn in the view on the left source, the result, the right source, and the earlier version, because Qt Quick ignores `QTextOption::ShowTabsAndSpaces`. The markers are view drawings and stay out of the document text. Full keyboard operation across files, choices, review, and saving remains unimplemented. Physical desktop checks of composed input, clipboard, pointer selection, scrolling, and theme behavior have not been run. See [editor integration](../../../../docs/editor-integration.md).
 
 <!-- kk:citations:start -->
 # Citations
@@ -38,6 +38,6 @@ Provide search within sources and result with a clear scope, line wrapping, and 
 [1] [PRD.md](../../../../PRD.md)
 [2] [src/ui/ComparisonView.qml](../../../../src/ui/ComparisonView.qml)
 [3] [src/ui/Main.qml](../../../../src/ui/Main.qml)
-[4] [src/app/Application.cpp](../../../../src/app/Application.cpp)
+[4] [src/app/ResultEditorAdapter.cpp](../../../../src/app/ResultEditorAdapter.cpp)
 [5] [docs/editor-integration.md](../../../../docs/editor-integration.md)
 <!-- kk:citations:end -->

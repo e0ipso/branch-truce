@@ -5,6 +5,11 @@
     "map-installed-desktop-application",
     "map-editing-and-recovery-resource-envelope"
   ],
+  "map-installed-artifact-validation-in-base-containers": [
+    "map-installed-deb-validation-execution",
+    "map-installed-validation-evidence-and-desktop-limits",
+    "map-installed-validation-tooling-regression-suite"
+  ],
   "map-mergetool-session-socket-and-real-git-parent": [
     "map-mergetool-socket-lookup-and-access",
     "map-mergetool-launcher-decisions-and-reloads",

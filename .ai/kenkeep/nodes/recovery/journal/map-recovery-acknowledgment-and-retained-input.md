@@ -21,6 +21,7 @@ kk_derived_from:
   - src/app/main.cpp
   - src/ui/Main.qml
   - 'dcc586bc-c490-4186-893e-e9ac032ec77c:map:1'
+  - 'eafaf840-7389-45ad-aa53-003771d300c2:map:3'
 kk_relates_to:
   - practice-recover-unfinished-work-without-changing-its-status
   - practice-keep-session-captures-immutable-across-revisions
@@ -34,6 +35,10 @@ kk_confidence: high
 The model publishes an applied candidate and acknowledges a completed editing transaction only after recovery commits. Undo, redo and discard use the same boundary; composition stays visibly pending until submitted as a command. A write failure leaves the acknowledged revision unchanged and retains pending text and decisions separately for retry. `retryRecovery` uses the same transaction UUID to avoid duplicate appends after an uncertain flush. A failed Save keeps one `manual-save` transaction. A failed Discard keeps one `discard-to-checkpoint` transaction. Retry commits that same transaction id, and other commands stay blocked until then. Retry preserves publication state; saving alone does not write or stage repository content. Automatic recovery does not move the manual Save checkpoint or imply review or Git resolution. A recovery payload larger than 8388608 bytes is refused. [RecoveryStore](../../../../../src/storage/RecoveryStore.cpp) fails the commit, names that size, and leaves the acknowledged journal in place. An unread oversized recovery file reports missing or unsafe. Until retry acknowledges the same discard transaction, the editor stays on the restored checkpoint. The message says the restored result is shown until retry finishes it, and the acknowledged draft stays in place until that commit.
 
 Opening persists captures before editing. If an initial placeholder recovery commit fails, [SessionCoordinator::completeRecoveryLoad](../../../../../src/session/SessionCoordinator.cpp) can still replace that load's untouched placeholders with files captured by [SessionLoader](../../../../../src/app/SessionLoader.cpp). Their text and sources stay available, and retry commits those captures. Failed pending commits block dependent commands across the shared recovery store until retry succeeds. A recovery failure alone must not discard loaded files or turn them into empty unreadable placeholders; a writable store opens the same captured file as ready and supported.
+
+The GUI command booleans report request admission; a pending request has not yet succeeded durably. [ChoicePreviewFlow](../../../../../src/app/ChoicePreviewFlow.cpp) completes preview applies with scope, request identity and outcome. [PreviewDialog](../../../../../src/ui/PreviewDialog.qml) closes only for its matching successful completion, so a stale completion cannot close a newer preview. [FileCommands](../../../../../src/app/FileCommands.cpp) and [DiscardStagedDialog](../../../../../src/ui/DiscardStagedDialog.qml) similarly correlate staged-discard completion by file and revision.
+
+[RecoveryJournal::retryPending](../../../../../src/recovery/RecoveryJournal.cpp) retries the whole dependent FIFO in its original order, preserving the encoded transactions and their IDs. One successful retry can clear pending captures for several files; a later per-file retry can therefore return `NoChange`. The [capture regression](../../../../../tests/app/StartupCaptureTests.cpp) checks both restored captures and the absence of duplicate final records.
 
 <!-- kk:related:start -->
 # Related
@@ -58,4 +63,5 @@ Opening persists captures before editing. If an initial placeholder recovery com
 [7] [src/app/main.cpp](../../../../../src/app/main.cpp)
 [8] [src/ui/Main.qml](../../../../../src/ui/Main.qml)
 [9] dcc586bc-c490-4186-893e-e9ac032ec77c:map:1
+[10] eafaf840-7389-45ad-aa53-003771d300c2:map:3
 <!-- kk:citations:end -->

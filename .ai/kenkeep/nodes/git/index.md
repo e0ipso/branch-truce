@@ -60,5 +60,5 @@
 - Open [**Conflict admission and offline startup**](map-conflict-admission-and-offline-startup.md) — ConflictClassifier admits editable merge/rebase files; startup preserves excluded reasons and existing manual edits.
 ### #testing
 - Open [**Wait for layout before clicking offscreen dialog items**](../ui/practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) — In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles.
+- Open [**Literal project text in native controls**](../ui/map-literal-project-text-in-native-controls.md) — File rows and tooltips keep native backing text empty so retained auto-text labels never receive repository markup.
 - Open [**Wait for rendered frames before capturing native scenes**](../ui/practice-wait-for-rendered-frames-before-capturing-native-scenes.md) — Capture native replay after publication, layout and rendered frames settle while preserving real controls and focus.
-- Open [**Journey acceptance suite**](../ui/map-journey-acceptance-suite.md) — CTest acceptance groups drive Main offscreen over real Git merges and rebases with private XDG directories and an offline Git guard.
