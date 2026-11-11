@@ -33,6 +33,9 @@ rpmbuild -bb --define "_topdir $work/rpmbuild" \
 cache_end
 [ "$status" -eq 0 ] || exit "$status"
 
-built=("$work"/rpmbuild/RPMS/*/*.rpm)
-[ "${#built[@]}" -eq 1 ] && [ -f "${built[0]}" ] || { echo "error: expected one RPM, found: ${built[*]}" >&2; exit 1; }
-builder_publish "$format" "$version" "${built[0]}" "$output"
+# Fedora also generates debug subpackages; publish the declared runtime artifact.
+architecture=$(format_field "$format" architecture) || exit 2
+filename=$(package_filename "$format" "$version") || exit 2
+built=$work/rpmbuild/RPMS/$architecture/$filename
+[ -f "$built" ] || { echo "error: expected RPM $built" >&2; exit 1; }
+builder_publish "$format" "$version" "$built" "$output"
