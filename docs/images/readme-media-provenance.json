@@ -1,39 +1,215 @@
 {
-  "schema": 1,
-  "ci_run": "https://github.com/e0ipso/branch-truce/actions/runs/42222287914",
-  "source": "63c9b89d4348a9650e17bb603ff4164de7f84efa",
-  "producing_merge": "1cc64d1371887b5c475b8cdf7a6fbff23d8a86c2",
-  "captured_date": "2026-11-06",
+  "schema": 2,
+  "source": "919935200fd68e4b715f43fc60a0e6e041937303",
+  "capture_origin": "local automated development captures",
+  "captured_at_utc": "2026-11-11T02:52:17.145573+00:00",
+  "capture_finished_at_utc": "2026-11-11T02:58:58.497134+00:00",
+  "physical_desktop": false,
+  "executable_sha256": "f484215d1ff976d8fd0fa4c36783c6f9c5ac719e277074394a406e93b1c1ff6d",
+  "command_path_aliases": {
+    "$SOURCE_ROOT": "source checkout at the recorded revision",
+    "$BUILD_DIR": "built desktop CMake tree",
+    "$CAPTURE_DIR": "owned capture output directory"
+  },
+  "commands_note": "Machine-specific paths use the documented aliases; arguments and relative artifact paths are unchanged.",
+  "commands": [
+    [
+      "/usr/bin/python3",
+      "$SOURCE_ROOT/tools/native-replay/replay.py",
+      "capture",
+      "--source",
+      "$SOURCE_ROOT",
+      "--build",
+      "$BUILD_DIR",
+      "--height",
+      "720",
+      "--repeat",
+      "2",
+      "--output",
+      "$CAPTURE_DIR/native/720",
+      "--documentation"
+    ],
+    [
+      "/usr/bin/python3",
+      "$SOURCE_ROOT/tools/native-replay/calibration.py",
+      "--verify",
+      "$CAPTURE_DIR/native/720"
+    ],
+    [
+      "/usr/bin/python3",
+      "$SOURCE_ROOT/tools/native-replay/replay.py",
+      "capture",
+      "--source",
+      "$SOURCE_ROOT",
+      "--build",
+      "$BUILD_DIR",
+      "--height",
+      "800",
+      "--repeat",
+      "2",
+      "--output",
+      "$CAPTURE_DIR/native/800"
+    ],
+    [
+      "/usr/bin/python3",
+      "$SOURCE_ROOT/tools/native-replay/calibration.py",
+      "--verify",
+      "$CAPTURE_DIR/native/800"
+    ]
+  ],
+  "acceptance_command": [
+    "ctest",
+    "--test-dir",
+    "$BUILD_DIR",
+    "-R",
+    "^acceptance.journeys-review$",
+    "--output-on-failure",
+    "-V",
+    "-j1"
+  ],
   "screenshots": [
     {
       "published": "docs/images/comparison-light.png",
-      "original": "tests/kubuntu-deb/native/800/replay-1-light/light-text.png",
-      "sha256": "7eae344c947cb857094f127706111245e4503dc307a797fee55290396049646a"
+      "original": "native/800/replay-1-light/light-text.png",
+      "sha256": "14139594851c023a5392e05e7e668d469ed802be2fd9bf5fccbc24d3c445163a"
     },
     {
       "published": "docs/images/comparison-dark.png",
-      "original": "tests/kubuntu-deb/native/800/replay-1-dark/dark-text.png",
-      "sha256": "63ac6cd4c5a95f48e8877203d6ee55b97f0130ac9d0ea1623daa1a3bf63856c5"
+      "original": "native/800/replay-1-dark/dark-text.png",
+      "sha256": "9fc861ce22650c28ad5fc6d7fb9210a8e2ac2dd16ad33762e62ebb4a801006aa"
     },
     {
       "published": "docs/images/choice-preview.png",
-      "original": "tests/kubuntu-deb/ui-scenes/ordered-choice-preview-800.png",
-      "sha256": "8a2adc9d13d37224b619688fce5586c0652c8360e414c6c4da5f98e571d8cace"
+      "original": "ui-scenes/ordered-choice-preview-800.png",
+      "sha256": "4c74aa94fd0afb2bece05143e40f3a72ea6add41afee90f97544443f76ab3778",
+      "observation": {
+        "controls_style": "Fusion",
+        "focused_selection": "right",
+        "font_family": "monospace",
+        "font_point_size": 9,
+        "header": "Proposed text \u00b7 Right then Left",
+        "image_height": 800,
+        "image_width": 1280,
+        "logical_height": 800,
+        "logical_width": 1280,
+        "observation": "actual offscreen Qt scene with runtime controls style; not a physical Plasma or AT-SPI capture",
+        "platform": "offscreen",
+        "read_only": true,
+        "reference_image": null,
+        "row_advance": 20,
+        "schema": 1,
+        "source_revision": "919935200fd68e4b715f43fc60a0e6e041937303",
+        "stage": "replacementAfterText",
+        "synthetic_stress": false
+      }
     },
     {
       "published": "docs/images/earlier-version.png",
-      "original": "tests/kubuntu-deb/ui-scenes/earlier-context-800.png",
-      "sha256": "18eba65ef1fef524ac9c5edbad2b3de07c07693496fab99bdd2aeac0e0d5b866"
+      "original": "ui-scenes/earlier-context-800.png",
+      "sha256": "582eff0d71717cbfdfb831b4452f580a8167bda6dc4b107b581ea38a7c2c396c",
+      "observation": {
+        "controls_style": "Fusion",
+        "focused_selection": "notes",
+        "font_family": "monospace",
+        "font_point_size": 9,
+        "header": "Common earlier version",
+        "image_height": 800,
+        "image_width": 1280,
+        "logical_height": 800,
+        "logical_width": 1280,
+        "observation": "actual offscreen Qt scene with runtime controls style; not a physical Plasma or AT-SPI capture",
+        "platform": "offscreen",
+        "read_only": true,
+        "reference_image": null,
+        "row_advance": 20,
+        "schema": 1,
+        "source_revision": "919935200fd68e4b715f43fc60a0e6e041937303",
+        "stage": "earlierText",
+        "synthetic_stress": false
+      }
+    },
+    {
+      "published": "docs/images/redesigned-comparison-light.png",
+      "original": "native/720/documentation-readme/branch-truce-BreezeLight-1440x900.png",
+      "sha256": "67fce1912dd76897c3b94bb1e8db670498a6d9655ea2d6613ede8d1fe1cab246"
+    },
+    {
+      "published": "docs/images/redesigned-comparison-dark.png",
+      "original": "native/720/documentation-readme/branch-truce-BreezeDark-1440x900.png",
+      "sha256": "89e8f17aa4a7dc463756e2ebe177ad560261abeefd097e9b762e8d0482ea8389"
+    },
+    {
+      "published": "docs/images/redesigned-choice-preview.png",
+      "original": "ui-scenes/ordered-choice-preview-800.png",
+      "sha256": "4c74aa94fd0afb2bece05143e40f3a72ea6add41afee90f97544443f76ab3778",
+      "observation": {
+        "controls_style": "Fusion",
+        "focused_selection": "right",
+        "font_family": "monospace",
+        "font_point_size": 9,
+        "header": "Proposed text \u00b7 Right then Left",
+        "image_height": 800,
+        "image_width": 1280,
+        "logical_height": 800,
+        "logical_width": 1280,
+        "observation": "actual offscreen Qt scene with runtime controls style; not a physical Plasma or AT-SPI capture",
+        "platform": "offscreen",
+        "read_only": true,
+        "reference_image": null,
+        "row_advance": 20,
+        "schema": 1,
+        "source_revision": "919935200fd68e4b715f43fc60a0e6e041937303",
+        "stage": "replacementAfterText",
+        "synthetic_stress": false
+      }
+    },
+    {
+      "published": "docs/images/redesigned-earlier-version.png",
+      "original": "ui-scenes/earlier-context-800.png",
+      "sha256": "582eff0d71717cbfdfb831b4452f580a8167bda6dc4b107b581ea38a7c2c396c",
+      "observation": {
+        "controls_style": "Fusion",
+        "focused_selection": "notes",
+        "font_family": "monospace",
+        "font_point_size": 9,
+        "header": "Common earlier version",
+        "image_height": 800,
+        "image_width": 1280,
+        "logical_height": 800,
+        "logical_width": 1280,
+        "observation": "actual offscreen Qt scene with runtime controls style; not a physical Plasma or AT-SPI capture",
+        "platform": "offscreen",
+        "read_only": true,
+        "reference_image": null,
+        "row_advance": 20,
+        "schema": 1,
+        "source_revision": "919935200fd68e4b715f43fc60a0e6e041937303",
+        "stage": "earlierText",
+        "synthetic_stress": false
+      }
     }
   ],
+  "scope": "Native comparison and binary scenes use Breeze on private headless Wayland; preview scenes use the actual offscreen acceptance controls style. Development build; no installed-package, physical Plasma/KWin or AT-SPI claim.",
   "animation": {
-    "type": "Animated gallery of actual CI screenshots; not a continuous interaction recording",
+    "type": "Animated gallery of actual application screenshots; not a continuous interaction recording",
     "frame_duration_seconds": 4,
     "original_frames": [
-      "tests/kubuntu-deb/native/800/replay-1-light/light-text.png",
-      "tests/kubuntu-deb/ui-scenes/ordered-choice-preview-800.png",
-      "tests/kubuntu-deb/ui-scenes/earlier-context-800.png",
-      "tests/kubuntu-deb/native/800/replay-1-light/light-binary.png"
+      {
+        "original": "native/800/replay-1-light/light-text.png",
+        "sha256": "14139594851c023a5392e05e7e668d469ed802be2fd9bf5fccbc24d3c445163a"
+      },
+      {
+        "original": "ui-scenes/ordered-choice-preview-800.png",
+        "sha256": "4c74aa94fd0afb2bece05143e40f3a72ea6add41afee90f97544443f76ab3778"
+      },
+      {
+        "original": "ui-scenes/earlier-context-800.png",
+        "sha256": "582eff0d71717cbfdfb831b4452f580a8167bda6dc4b107b581ea38a7c2c396c"
+      },
+      {
+        "original": "native/800/replay-1-light/light-binary.png",
+        "sha256": "2c709368d8076ee44748ea91bbdd74facfa1c6bf57b1a870700ea81362d37571"
+      }
     ],
     "logical_size": [
       1280,
@@ -43,19 +219,21 @@
       1200,
       750
     ],
-    "changes": "Resize and GIF/video encoding only; no altered application pixels or synthetic actions",
-    "demo.gif": {
-      "sha256": "072fdf4035b601ee4a55f4849e145590dc0ac624e0e3c790a1ec243f42198967",
-      "bytes": 407947
-    },
-    "demo.mp4": {
-      "sha256": "970990755cff75552356709d3d3624ade678eb17ff24495eddc171c557d2fe98",
-      "bytes": 249008
-    },
+    "fps": 8,
+    "changes": "Resize and GIF/video encoding only; no altered application states or synthetic actions",
     "encoding": {
       "gif": "ffmpeg fps=8, scale=1200:750:lanczos, palettegen=stats_mode=diff, paletteuse=dither=bayer, loop=0",
       "video": "ffmpeg fps=8, scale=1200:750:lanczos, libx264 crf20 yuv420p, faststart"
+    },
+    "artifacts": {
+      "demo.gif": {
+        "sha256": "0cef9a791a0c5ab54cce33937ad5026b96bf1ef3ec616801616c718f8b4c64b7",
+        "bytes": 409212
+      },
+      "demo.mp4": {
+        "sha256": "cc0ee3a6fb49778c861a45abc45f5670f11ece0d325d2486ff0a986a4273da75",
+        "bytes": 248810
+      }
     }
-  },
-  "scope": "Native comparison and binary scenes use Breeze on headless Wayland; read-only preview scenes use Fusion offscreen. No physical desktop claim."
+  }
 }

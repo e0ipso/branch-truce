@@ -309,7 +309,7 @@ Agents sharing the headless session run the script under
 the package checkers and the install-prefix check use the same functions for
 their single `tracked.txt` conflict.
 
-The README uses the inspected 2026-11-06 CI captures below. Their [provenance](images/readme-media-provenance.json) records the producing source and original image hashes. The comparison, preview, earlier-context, GIF and video files now show the current app. The animation is an encoded gallery of actual CI states, not a continuous interaction recording.
+The README uses inspected local captures from 2026-11-11, source `919935200fd68e4b715f43fc60a0e6e041937303`. Their [provenance](images/readme-media-provenance.json) records the executable hash, commands and original image hashes. Comparison and binary scenes use Breeze on private headless Wayland; preview and earlier-context scenes use the acceptance suite's offscreen Fusion controls. The animation is an encoded gallery of actual application states, not a continuous interaction recording.
 
 | Breeze Light | Breeze Dark |
 | --- | --- |
@@ -325,7 +325,7 @@ PREVIEW_FILE=notes.md PREVIEW_SIZE=1440x900 PREVIEW_OUTPUT="$capture_dir" \
     build/desktop/src/app/branch-truce
 ```
 
-Retain the printed `branch-truce-BreezeLight-1440x900.png` and `branch-truce-BreezeDark-1440x900.png`, the source revision, build identity, command, date and display environment. Inspect the actual captures before updating the documentation images, provenance and README caption. The published pair was copied unchanged from [CI run 42222287914](https://github.com/e0ipso/branch-truce/actions/runs/42222287914); no application capture ran during this documentation edit. Development-build captures on sway do not replace installed-package or real Plasma evidence.
+Retain the printed `branch-truce-BreezeLight-1440x900.png` and `branch-truce-BreezeDark-1440x900.png`, the source revision, build identity, command, date and display environment. Inspect the actual captures before updating the documentation images, provenance and README caption. The published pair was copied unchanged from the 2026-11-11 local replay's `720/documentation-readme/` originals. [Its provenance](images/redesigned-comparison-provenance.json) records the source and commands. Development-build captures on sway do not replace installed-package or real Plasma evidence.
 
 Collect separate 1280x720 and 1280x800 evidence with the corresponding `PREVIEW_SIZE` examples above. Screenshots alone do not establish eight visible rows, control/menu reachability or no-wrap fit. Those obligations need the final acceptance and native interaction checks, including source context-menu gestures, source-fill continuity and connector hover behaviour. Keep the narrow strict-960x540 fit waiver separate from these required checks.
 

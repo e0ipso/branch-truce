@@ -14,13 +14,13 @@ A standalone text conflict resolver for Git on Linux and KDE. Review captured so
   <img src="docs/images/comparison-light.png" alt="Current Branch Truce comparing C++ retry policies, with an editable result, one unresolved conflict, one accepted line and one ignored line" width="1200">
 </picture>
 
-*Current Breeze Light and Dark captures from 2026-11-06, produced by [CI](https://github.com/e0ipso/branch-truce/actions/runs/42222287914). [Media provenance](docs/images/readme-media-provenance.json) records the source and original files. These development captures use headless Wayland; [installed-desktop validation](docs/platform-validation.md#redesign-evidence-still-required) has a separate scope.*
+*Breeze Light and Dark captures from 2026-11-11, produced locally from source `919935200fd6`. [Media provenance](docs/images/readme-media-provenance.json) records the source and original files. These development captures use headless Wayland; [installed-desktop validation](docs/platform-validation.md#redesign-evidence-still-required) has a separate scope.*
 
 ## Explore the current app
 
 <img src="docs/images/demo.gif" alt="Animated gallery of the current comparison, ordered-choice preview, common earlier version and binary-file guidance" width="1200">
 
-*An animated sequence of actual current CI captures, showing comparison, preview, earlier context and binary-file guidance. This is a gallery of application states, not a continuous interaction recording. [Watch the video version](docs/images/demo.mp4).*
+*An animated sequence of actual application captures, showing comparison, preview, earlier context and binary-file guidance. This is a gallery of application states, not a continuous interaction recording. [Watch the video version](docs/images/demo.mp4).*
 
 ## Work through the conflict
 
@@ -39,7 +39,7 @@ A standalone text conflict resolver for Git on Linux and KDE. Review captured so
   </tr>
 </table>
 
-*Reading-view screenshots from the same 2026-11-06 CI run, using the Fusion controls style. [Provenance](docs/images/readme-media-provenance.json) records their original files and hashes.*
+*Reading-view screenshots from the same 2026-11-11 local run, using the Fusion controls style. [Provenance](docs/images/readme-media-provenance.json) records their original files and hashes.*
 
 Step through remaining conflicts, find a passage, wrap long lines or reveal spaces and tabs. Choices and typing share an undo history.
 
