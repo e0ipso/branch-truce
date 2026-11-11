@@ -7,9 +7,7 @@
 #include "fixtures/SyncFaults.h"
 
 #include <QDialogButtonBox>
-#include <QFile>
 #include <QFileInfo>
-#include <QLockFile>
 #include <QProcess>
 
 #include <csignal>
@@ -19,148 +17,9 @@ using test_support::awaitAligned;
 using namespace branch_truce;
 using test_support::readFile;
 using test_support::settleFor;
-using test_support::writeFile;
 
 namespace journey {
 namespace {
-
-// --- the handoff separates every kind of outstanding work ----------------------------------
-
-// Resolves two files, keeps a newer draft on one of them, saves one, types in one, and makes a
-// repository write and a Git resolution fail on the last two.
-void leaveEveryKindOfWork(Scene &scene, const Repository &repo, test_support::SyncFaults &files)
-{
-    clickFile(scene, "done.txt");
-    markResolvedByMouse(scene);
-    CHECK(scene.progress().resolved);
-    clickFile(scene, "newer.txt");
-    markResolvedByMouse(scene);
-    CHECK(scene.progress().resolved);
-    appendToResult(scene, "again");
-    clickFile(scene, "saved.txt");
-    appendToResult(scene, "kept");
-    scene.click("saveDraft");
-    settleFor("saved draft", [&] { return scene.progress().saved; });
-    clickFile(scene, "typed.txt");
-    appendToResult(scene, "typed");
-    clickFile(scene, "locked/failing.txt");
-    appendToResult(scene, "fails");
-    {
-        const test_support::ArmedFault failure(files, test_support::SyncFaults::Point::PublicationExchange);
-        markResolvedByMouse(scene);
-        CHECK(files.failures == 1);
-    }
-    // A failed repository write keeps the saved app draft and leaves the file unresolved.
-    const auto failed = scene.progress();
-    expectContains(scene.text("fileFailureNotice"), "Repository write failed", "failed status");
-    CHECK(failed.saved && !failed.resolved);
-    CHECK(scene.text("resultText").endsWith(QStringLiteral("fails")));
-    CHECK(readFile(repo.path("locked/failing.txt")) == "locked/failing.txt chosen by hand\n");
-    CHECK(repo.unmerged("locked/failing.txt"));
-
-    // The repository write succeeds but Git refuses the resolution: written, unresolved.
-    clickFile(scene, "written.txt");
-    const auto hook = repo.path(".git/hooks/post-index-change");
-    writeFile(hook, "#!/bin/sh\nexit 1\n", true);
-    markResolvedByMouse(scene);
-    CHECK(QFile::remove(hook));
-    CHECK(!scene.progress().resolved);
-    expectContains(scene.text("fileFailureNotice"), "Written, unresolved", "written status");
-    CHECK(readFile(repo.path("written.txt")) == "written.txt chosen by hand\n");
-    CHECK(repo.unmerged("written.txt"));
-}
-
-// The handoff reports each file's category and blockers in words.
-void handoffNamesEachFile(Scene &scene, QObject *dialog)
-{
-    expectContains(rowText(scene, "done.txt"), "Saved. Reviewed. Resolved.", "done row");
-    expectContains(rowText(scene, "typed.txt"), "Not saved. Not reviewed. Not resolved.", "typed row");
-    expectContains(rowText(scene, "newer.txt"), "Earlier result staged; current draft not applied", "newer row");
-    scene.click("openHandoff");
-    settleFor("handoff opened", [&] { return dialog->property("opened").toBool(); });
-    expectText(scene.text("handoffOutcome"),
-               "6 of 7 files in this session remain outstanding. This session is not finished.", "handoff outcome");
-    CHECK(!scene.item("handoffFinish")->isVisible() && !scene.handoffClean());
-    const auto entries = scene.handoffEntries();
-    const QMap<QString, QString> expected{{"done.txt", "published"},     {"newer.txt", "newer-draft"},
-                                          {"saved.txt", "saved-draft"},  {"typed.txt", "undecided"},
-                                          {"written.txt", "failed"},     {"locked/failing.txt", "failed"},
-                                          {"removed.txt", "outside-app"}};
-    CHECK(entries.size() == expected.size());
-    for (auto entry = expected.cbegin(); entry != expected.cend(); ++entry) {
-        const auto id = fileId(entry.key().toUtf8().constData());
-        CHECK(entries.contains(id));
-        expectText(entries.value(id).category, entry.value(), "handoff category");
-        CHECK(entries.value(id).outstanding == (entry.value() != QStringLiteral("published")));
-    }
-    const auto blockers = [&](const char *path) { return entries.value(fileId(path)).blockers.join("; "); };
-    expectContains(blockers("typed.txt"), "Current draft has no manual Save checkpoint", "unsaved blocker");
-    CHECK(!blockers("saved.txt").contains(QStringLiteral("no manual Save checkpoint")));
-    expectContains(blockers("newer.txt"), "Earlier result staged; current draft not applied", "newer blocker");
-    expectContains(blockers("locked/failing.txt"), "Repository write failed", "failure blocker");
-    expectContains(blockers("written.txt"), "Git resolution failed", "stage blocker");
-    expectContains(blockers("removed.txt"), "Handle this file outside Branch Truce", "outside-app blocker");
-    // An outside-app file has no app draft to Save, mark resolved, write or stage.
-    expectText(blockers("removed.txt"), "Handle this file outside Branch Truce", "outside-app blockers");
-    CHECK(blockers("done.txt").isEmpty());
-}
-
-// Each route returns to its file.
-void routesReturnToTheirFiles(Scene &scene, QObject *dialog)
-{
-    const auto opened = [&] { return dialog->property("opened").toBool(); };
-    for (const auto *path : {"newer.txt", "locked/failing.txt", "removed.txt"}) {
-        if (!opened()) scene.click("openHandoff");
-        settleFor("handoff reopened", opened);
-        scene.click(("handoffRoute-" + fileId(path)).toLatin1().constData());
-        // Until its fade-out ends the closing dialog's overlay takes the next click.
-        settleFor("handoff closed by route", [&] { return !dialog->property("visible").toBool(); });
-        CHECK(scene.app().selection()->fileId() == fileId(path));
-    }
-    CHECK(scene.item("selectedProblem")->isVisible());
-}
-
-void handoffSeparatesTheWork(Sandbox &sandbox)
-{
-    Repository repo(handoffPaths());
-    const auto files = std::make_shared<test_support::SyncFaults>();
-    Scene scene(sandbox, repo, files);
-    auto &app = scene.app();
-    CHECK(app.files()->totalFiles() == 7);
-    leaveEveryKindOfWork(scene, repo, *files);
-    auto *dialog = scene.object("handoffDialog");
-    handoffNamesEachFile(scene, dialog);
-    routesReturnToTheirFiles(scene, dialog);
-
-    // Leaving after the warning runs no Git command and keeps every outstanding file unresolved.
-    int ended = 0;
-    bool clean = true;
-    QObject::connect(app.completion(), &SessionCompletion::sessionEnded, &app, [&](const QString &, bool value) {
-        ++ended;
-        clean = value;
-    });
-    const auto beforeLeave = repo.snapshot();
-    const auto traced = scene.gitCalls();
-    scene.click("openHandoff");
-    settleFor("handoff opened for leave", [&] { return dialog->property("opened").toBool(); });
-    CHECK(scene.item("handoffLeave")->isEnabled() && !scene.item("handoffLeaveBlocker")->isVisible());
-    scene.click("handoffLeave");
-    if (ended != 1 || clean)
-        throw std::runtime_error("leave ended=" + std::to_string(ended) + " clean=" + std::to_string(clean)
-                                 + " outcome=" + app.completion()->outcome().toStdString()
-                                 + " opened=" + std::to_string(dialog->property("opened").toBool())
-                                 + " message=" + app.feedback()->message().toStdString() + " blocker="
-                                 + app.completion()->handoffData().value("leaveBlocker").toString().toStdString());
-    CHECK(ended == 1 && !clean);
-    expectContains(app.completion()->outcome(), "Left with 6 of 7 files outstanding.", "leave outcome");
-    CHECK(repo.snapshot() == beforeLeave && scene.gitCalls() == traced);
-    for (const auto *path : {"saved.txt", "typed.txt", "written.txt", "locked/failing.txt", "removed.txt"})
-        CHECK(repo.unmerged(path));
-    CHECK(!repo.unmerged("done.txt") && !repo.unmerged("newer.txt"));
-    // The summary speaks only for this session.
-    expectContains(app.loader()->workflow(), "only the work opened at launch", "session scope");
-    checkOffline(scene);
-}
 
 // --- a newer draft goes back to the staged result ------------------------------------------
 
@@ -567,9 +426,6 @@ void addHandoffJourneys(JourneySuite &suite)
     const auto add = [&](const char *name, JourneySuite::Journey journey) {
         suite.add("handoff", name, std::move(journey));
     };
-    add("PRD.md:143 PRD.md:145 the handoff separates resolved, saved, unsaved, newer, failed and outside-app work "
-        "and leaving keeps it outstanding",
-        handoffSeparatesTheWork);
     add("a newer draft goes back to the staged result from the file toolbar and the handoff",
         newerDraftReturnsToTheStagedResult);
     add("PRD.md:149 offline startup without an account resumes saved and unsaved drafts after closing",

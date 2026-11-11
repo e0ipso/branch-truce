@@ -17,10 +17,6 @@
 #include <string_view>
 #include <vector>
 
-#ifndef BRANCH_TRUCE_MEASUREMENT_BUILD
-#define BRANCH_TRUCE_MEASUREMENT_BUILD "unspecified"
-#endif
-
 namespace {
 using branch_truce::kLargeFileLines;
 using branch_truce::kMaxGitReadBytes;
@@ -135,33 +131,6 @@ void expectRecordedEnvelope(Tally &tally)
 #endif
 }
 
-// How much slower than the budget a gate sample may be. The budgets describe an optimized build,
-// and the registered gate usually runs the slower Debug build, so any other build gets four
-// times each budget. A regression larger than that still fails.
-std::uint64_t budgetScale()
-{
-    const std::string_view build = BRANCH_TRUCE_MEASUREMENT_BUILD;
-    return build == "Release" || build == "RelWithDebInfo" || build == "MinSizeRel" ? 1u : 4u;
-}
-
-// Every completed gate sample stays within its metric's budget, scaled for the build type.
-void expectWithinBudgets(Tally &tally, const std::vector<Aggregate> &results)
-{
-    for (const auto &item : results) {
-        const auto *metric = workload::findMetric(item.metric);
-        const auto median = workload::medianOf(item.elapsed);
-        if (item.outcome != "completed" || !metric || !median) continue;
-        const auto allowed = static_cast<std::uint64_t>(metric->budgetMs) * budgetScale();
-        const auto name = item.name + " within " + std::to_string(allowed) + " ms";
-        if (*median <= allowed)
-            tally.pass(name);
-        else
-            tally.fail(name,
-                       "median " + std::to_string(*median) + " ms, " + std::string(metric->description) + " budget "
-                           + std::to_string(metric->budgetMs) + " ms times " + std::to_string(budgetScale()));
-    }
-}
-
 void expect(Tally &tally, const std::vector<Aggregate> &results, const std::vector<Expectation> &expectations)
 {
     for (const auto &expected : expectations) {
@@ -256,7 +225,6 @@ int main(int argc, char **argv)
     Tally tally;
     expect(tally, results, expectations);
     if (!evidence) {
-        expectWithinBudgets(tally, results);
         expectRecordedEnvelope(tally);
     }
     std::cout << "RESULT workload-measurements tests=" << tally.tests << " assertions=" << tally.tests

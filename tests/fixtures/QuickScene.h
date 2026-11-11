@@ -9,6 +9,7 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QKeyEvent>
+#include <QPointer>
 #include <QQmlExpression>
 #include <QQuickItem>
 #include <QQuickTextDocument>
@@ -143,14 +144,6 @@ inline QQuickItem *popupRoot(QObject *popup)
     return item;
 }
 
-inline void clickItem(QQuickWindow *window, QQuickItem *target)
-{
-    CHECK(target->isVisible() && target->isEnabled() && target->width() > 0 && target->height() > 0);
-    const auto center = target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0)).toPoint();
-    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, center);
-    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-}
-
 // Dialog rows and list delegates get their final position only after a layout
 // pass, so wait until the found item is visible and its scene position stops moving.
 // stableMs requires the position to hold for that long, so a click cannot land
@@ -202,6 +195,39 @@ inline QQuickItem *waitForLayout(QQuickWindow *window, const QString &name, int 
             return visualItem(window->contentItem(), name);
         },
         stableMs);
+}
+
+inline void clickItem(QQuickWindow *window, QQuickItem *target)
+{
+    CHECK(target->isVisible() && target->isEnabled() && target->width() > 0 && target->height() > 0);
+    const auto center = target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0)).toPoint();
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, center);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+}
+
+inline void hoverAndClickItem(QQuickWindow *window, QQuickItem *target)
+{
+    CHECK(target->isVisible() && target->isEnabled() && target->width() > 0 && target->height() > 0);
+    const QPointer<QQuickItem> guarded(target);
+    QPoint pointer(-1, -1);
+    // Hover can move native controls. Follow the target without pressing, then
+    // deliver one click only after its position and rendered frames settle.
+    auto *ready = waitForStable(
+        window, target->objectName().toStdString() + " under the pointer",
+        [&]() -> QQuickItem * {
+            if (!guarded) return nullptr;
+            const auto center = guarded->mapToScene(QPointF(guarded->width() / 2.0, guarded->height() / 2.0)).toPoint();
+            if (center != pointer) {
+                pointer = center;
+                QTest::mouseMove(window, pointer);
+            }
+            if (guarded && guarded->property("hoverEnabled").toBool() && guarded->property("hovered").isValid()
+                && !guarded->property("hovered").toBool())
+                return nullptr;
+            return guarded.data();
+        },
+        60);
+    clickItem(window, ready);
 }
 
 inline bool painted(QQuickItem *item)

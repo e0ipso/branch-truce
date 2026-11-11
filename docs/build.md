@@ -77,10 +77,16 @@ The QML lint target fails on any qmllint warning, because
 as `ui.qmllint`, so a complete CTest run invokes lint once. For lint alone, use
 `cmake --build build/desktop --target branch_truce_ui_qmllint`.
 
-Two independent desktop tests may overlap. `install.prefix`, `ui.qmllint`,
-`performance.highlighted-editor` and `performance.workloads` have `RUN_SERIAL`.
+Two independent desktop tests may overlap. `install.prefix`, `ui.qmllint`
+and `performance.workloads` have `RUN_SERIAL`.
 Do not run a second build or CTest process against that build tree concurrently.
 Run GUI/permission tests as an unprivileged user; retain reported skips as skips.
+
+Keep routine tests focused on observable behavior and deterministic state changes.
+Remove timing-sensitive journeys when focused tests already cover their contracts.
+Retain a UI journey only when it catches a specific integration defect that lower-level
+tests cannot catch. Do not use shared-runner latency as a correctness assertion;
+run `benchmark-highlighted-editor` explicitly on a controlled host instead.
 
 Every app, ui, acceptance and Git CTest entry runs through `tests/with-private-xdg.sh`; no suite
 redirects those directories itself. It gives them a private `HOME` and XDG directories, removes

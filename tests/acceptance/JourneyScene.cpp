@@ -182,11 +182,16 @@ QString Scene::text(const char *name) const
 
 void Scene::click(const char *name)
 {
-    auto *target = test_support::fileOverflowControl(name)
-        ? test_support::fileToolbarControl(window_, name, settleMs)
-        : test_support::waitForLayout(window_, QString::fromLatin1(name), settleMs);
-    if (reveal(target)) target = test_support::waitForLayout(window_, QString::fromLatin1(name), settleMs);
-    test_support::clickItem(window_, target);
+    const bool toolbar = test_support::fileOverflowControl(name);
+    auto *target = toolbar ? test_support::fileToolbarControl(window_, name, settleMs)
+                           : test_support::waitForLayout(window_, QString::fromLatin1(name), settleMs);
+    if (reveal(target))
+        target = toolbar ? test_support::fileToolbarControl(window_, name, settleMs)
+                         : test_support::waitForLayout(window_, QString::fromLatin1(name), settleMs);
+    if (toolbar)
+        test_support::hoverAndClickItem(window_, target);
+    else
+        test_support::clickItem(window_, target);
 }
 
 bool Scene::reveal(QQuickItem *target)

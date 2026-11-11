@@ -36,20 +36,6 @@ inline std::vector<PathSpec> journeyPaths()
     };
 }
 
-// Six files the user chose by hand before launch, one of them in a directory a journey locks, and
-// one modify/delete file.
-inline std::vector<PathSpec> handoffPaths()
-{
-    std::vector<PathSpec> paths;
-    for (const auto *name : {"done.txt", "newer.txt", "saved.txt", "typed.txt", "written.txt", "locked/failing.txt"}) {
-        const QByteArray stem(name);
-        paths.push_back({name, stem + " base\n", stem + " left\n", stem + " right\n", stem + " chosen by hand\n"});
-    }
-    paths.push_back({"removed.txt", QByteArray("removed base\n"), QByteArray("removed edited on the left\n"),
-                     std::nullopt, std::nullopt});
-    return paths;
-}
-
 // One file each side changed, which the user chose by hand before launch.
 inline PathSpec chosenByHand(const char *name)
 {

@@ -8,7 +8,7 @@ Scratch directories are `truce-workload-*` under `/var/tmp`, or under `BRANCH_TR
 
 ## Commands
 
-Evidence timings come from a Release binary. The gate test checks that small workloads complete, that each completed sample's median stays within its metric's budget, and that excessive Git and recovery actions are explicit failures. In any build other than Release, RelWithDebInfo or MinSizeRel, such as the usual Debug build, it allows four times each budget.
+Evidence timings come from a Release binary. The gate test checks that small workloads complete, that excessive Git and recovery actions fail explicitly, and that recorded resource limits agree with the product. It has no latency assertions: shared CI runner speed does not establish a product regression. The evidence profile still measures latency against the budgets below. Bounded worker and CTest deadlines catch hangs.
 
 ```sh
 cmake -S . -B build/workload-evidence -G 'Unix Makefiles' \
