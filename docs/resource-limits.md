@@ -92,9 +92,8 @@ Exhaustion keeps unproved separator-like lines outstanding as markers.
 
 ## Typing and scrolling in highlighted panes
 
-The ctest `performance.highlighted-editor`, under the `performance` and `ui`
-labels, opens a 200-line C++ file with a conflict every 20 lines in the real
-comparison view, with syntax highlighting and word differences on. It types
+The explicit benchmark target `benchmark-highlighted-editor` opens a 200-line
+C++ file with a conflict every 20 lines in the real comparison view, with syntax highlighting and word differences on. It types
 six letters into the result and turns the mouse wheel fifteen notches over it,
 three times, and measures the process CPU time from each key press or notch to
 the next rendered frame. A key that never reaches the document or a notch that
@@ -117,9 +116,14 @@ the medians about 1.6 times. The limits hold at that load. On an idle host they
 catch a cost about 3 times the measured typing and scrolling costs, not a
 doubling.
 
-The table records the original development-host calibration, not a new timing
-claim for each build. The current performance gates rerun the real editor and
-worker workloads against their budgets. Command computation and persistence use
+The table records the original development-host calibration. Run
+`cmake --build build/desktop --target benchmark-highlighted-editor` explicitly
+to compare the highlighted editor against these limits on a controlled host.
+It is excluded from routine CTest and CI because CPU cost depends on the runner
+and native style. The registered `performance.workloads` test checks completion,
+refusal and recorded resource limits without latency assertions; its evidence
+profile still measures budgets. Focused editor and syntax-highlighting tests
+cover correctness in CI. Command computation and persistence use
 the serial journal worker; these historical synchronous cost breakdowns cannot
 predict current GUI latency. A journal append compares `fstat` with the last
 verified stamp and rereads the journal when it differs.

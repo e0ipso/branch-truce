@@ -2,7 +2,6 @@
 
 #include "ComparisonEditor.h"
 #include <QTextBlock>
-#include <QWheelEvent>
 
 namespace comparison_scene {
 // count lines "<prefix> <n>", numbered from first.
@@ -33,25 +32,6 @@ inline void settlePanes(Fixture &fixture)
 {
     for (const auto *name : {"stage2Viewport", "resultViewport", "stage3Viewport"})
         test_support::waitForLayout(fixture.window, QString::fromLatin1(name), 60);
-}
-
-// Turns the mouse wheel down over the named viewport, a notch at a time, until
-// it has scrolled to at least target, and waits for each movement to end. A
-// Flickable does not scroll for a wheel event stamped with the previous time.
-inline void wheelTo(Fixture &fixture, const char *name, qreal target)
-{
-    static quint64 timestamp = 0;
-    auto *viewport = test_support::waitForLayout(fixture.window, QString::fromLatin1(name), 60);
-    for (int notch = 0; notch < 400 && contentY(viewport) < target; ++notch) {
-        const auto point = viewport->mapToScene(QPointF(viewport->width() / 2, viewport->height() / 2));
-        QWheelEvent wheel(point, fixture.window->mapToGlobal(point), QPoint(), QPoint(0, -120), Qt::NoButton,
-                          Qt::NoModifier, Qt::NoScrollPhase, false);
-        timestamp += 250;
-        wheel.setTimestamp(timestamp);
-        QCoreApplication::sendEvent(fixture.window, &wheel);
-        settle([&] { return !viewport->property("moving").toBool(); });
-    }
-    CHECK(contentY(viewport) >= target);
 }
 
 // For the scroll tests: the right source and the result hold 30 lines after

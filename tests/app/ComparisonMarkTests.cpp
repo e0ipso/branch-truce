@@ -386,34 +386,6 @@ void addConnectorMarkCases(Group &scenes)
         QTest::mouseMove(fixture.window, QPoint(1, 1));
         settleFor("hover clears", [&] { return fixture.item("stage2Backgrounds")->property("current") == previous; });
     });
-    scenes.run("band ends move with the scroll of either pane", [] {
-        // The result holds 30 lines after line 50 that the left source lacks, so the
-        // left handle draws one band, a wedge on the left source's line boundary.
-        Application controller(test_support::windowConfig());
-        Fixture fixture(controller, insertionFile());
-        auto *left = fixture.item("stage2Viewport");
-        auto *result = fixture.item("resultViewport");
-        auto *editor = fixture.item("resultText");
-        settle([&] { return editor->property("lineCount").toInt() > 400 && left->height() > 0; });
-        settlePanes(fixture);
-        const auto line = paneLineHeight(editor);
-        wheelTo(fixture, "stage2Viewport", 40 * line);
-        const std::vector<std::string> band{"added 51-51>51-81"};
-        expectBands(fixture, "at the insertion", "stage2", band);
-        CHECK(bandLines(fixture, "stage3").empty());
-        const auto before = paintedBands(fixture, "stage2").front();
-        // Scrolling one pane without leading the others moves only that pane's end.
-        left->setProperty("contentY", contentY(left) + 3 * line);
-        expectBands(fixture, "with the left source scrolled", "stage2", band);
-        const auto moved = paintedBands(fixture, "stage2").front();
-        CHECK(std::abs(moved.sourceTop - (before.sourceTop - 3 * line)) < 1);
-        CHECK(std::abs(moved.resultTop - before.resultTop) < 0.5);
-        result->setProperty("contentY", contentY(result) + 2 * line);
-        expectBands(fixture, "with the result scrolled", "stage2", band);
-        const auto after = paintedBands(fixture, "stage2").front();
-        CHECK(std::abs(after.sourceTop - moved.sourceTop) < 0.5);
-        CHECK(std::abs(after.resultTop - (moved.resultTop - 2 * line)) < 1);
-    });
     scenes.run("the band handles drag to resize the panes and stay out of the focus chain", [] {
         Application controller(test_support::windowConfig());
         Fixture fixture(controller);

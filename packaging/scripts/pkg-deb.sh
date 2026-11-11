@@ -31,8 +31,9 @@ pkg_recipe_depends() ( set -o pipefail;
 )
 pkg_older() { dpkg --compare-versions "$1" lt "$2"; }
 pkg_target_ready() { command -v apt-get dpkg-query >/dev/null || { echo 'error: use a Debian-based target' >&2; return 1; }; }
-pkg_refresh() { DEBIAN_FRONTEND=noninteractive apt-get update -q; }
-pkg_install() { DEBIAN_FRONTEND=noninteractive apt-get install -y -q "$1"; }
+# Retry transient repository failures, but never continue with a failed index refresh.
+pkg_refresh() { DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o APT::Update::Error-Mode=any update -q; }
+pkg_install() { DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y -q "$1"; }
 pkg_remove() { DEBIAN_FRONTEND=noninteractive apt-get purge -y -q branch-truce; }
 pkg_installed_version() {
     local packages
