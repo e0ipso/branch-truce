@@ -85,6 +85,10 @@ case "$1" in
         esac
         echo "$stage" ;;
     wait)
+        if [ "${NATIVE_WAIT_FAIL:-0}" = 1 ]; then
+            for _ in $(seq 100); do [ -s "$NATIVE_FOLLOW_PID" ] && break; sleep 0.01; done
+            exit 92
+        fi
         if [ -n "${NATIVE_WAIT_SECONDS:-}" ]; then
             trap 'kill "$sleeper"; exit 143' TERM
             sleep "$NATIVE_WAIT_SECONDS" & sleeper=$!
@@ -94,6 +98,10 @@ case "$1" in
             case "$2" in test) echo 42 ;; package) echo 43 ;; check) echo 44 ;; *) echo 0 ;; esac
         else echo 0; fi ;;
     logs)
+        if [ "${NATIVE_FOLLOW_WAIT:-0}" = 1 ] && [ "${2-}" = --follow ]; then
+            echo "$$" > "$NATIVE_FOLLOW_PID"
+            exec sleep 60
+        fi
         if [ "${NATIVE_FINAL_LOG_FAIL:-0}" = 1 ] && [ "${2-}" != --follow ]; then
             echo 'final log read failed' >&2; exit 90
         fi
@@ -172,6 +180,17 @@ NATIVE_FOLLOW_FAIL=1 bash "$runner" --format arch-pkg --version 1.2.3 --output "
 if ! grep -qF 'complete native container logs' "$work/log-recovery/containers/arch-pkg/baseline.log"; then
     echo 'FAIL: complete container logs lost after follow disconnect' >&2; exit 1
 fi
+: > "$work/engine.log"
+status=0
+NATIVE_WAIT_FAIL=1 NATIVE_FOLLOW_WAIT=1 NATIVE_FOLLOW_PID="$work/follower.pid" \
+    timeout -k 2 5 bash "$runner" --format arch-pkg --version 1.2.3 --output "$work/wait-failure" \
+    > "$work/result" 2>&1 || status=$?
+[ "$status" = 1 ] || { cat "$work/result"; echo "FAIL: wait disconnect returned $status instead of 1"; exit 1; }
+grep -qF 'container wait disconnected' "$work/result"
+if kill -0 "$(cat "$work/follower.pid")" 2>/dev/null; then
+    echo 'FAIL: wait disconnect left the log follower running' >&2; exit 1
+fi
+if grep -q '^rm ' "$work/engine.log"; then echo 'FAIL: wait disconnect removed the retained container' >&2; exit 1; fi
 : > "$work/engine.log"
 NATIVE_FINAL_LOG_FAIL=1 expect_failure 'FAILED' bash "$runner" --format arch-pkg --version 1.2.3 --output "$work/log-failure"
 # A log-collection failure must retain the successful container for diagnosis.

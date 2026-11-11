@@ -45,11 +45,12 @@ export async function analyze() {
  * @param {string} version
  * @param {string} root
  * @param {typeof run} [command]
+ * @param {NodeJS.ProcessEnv} [env]
  * @returns {Promise<boolean>}
  */
-export async function packageable(version, root, command = run) {
+export async function packageable(version, root, command = run, env = process.env) {
   try {
-    await command(join(root, 'packaging/scripts/native-version.sh'), ['--style', 'tilde', version], { cwd: root, env: process.env });
+    await command(join(root, 'packaging/scripts/native-version.sh'), ['--style', 'tilde', version], { cwd: root, env });
     return true;
   } catch (error) {
     if (error instanceof Error && 'status' in error && error.status === 2 && 'signal' in error && !error.signal) return false;
@@ -112,7 +113,7 @@ export async function main(argv, root, env, command = run) {
       analyzedRevision: env.BRANCH_TRUCE_ANALYZED_REVISION,
       analyzedVersion: env.BRANCH_TRUCE_ANALYZED_VERSION,
       packageVersion: JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version,
-    }, version => packageable(version, root, command));
+    }, version => packageable(version, root, command, env));
     process.stdout.write(`${JSON.stringify(selection)}\n`);
   } else {
     throw new UsageError(USAGE);
@@ -122,6 +123,6 @@ export async function main(argv, root, env, command = run) {
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   main(process.argv.slice(2), process.cwd(), process.env).catch(error => {
     process.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
-    process.exitCode = error instanceof UsageError ? 2 : 1;
+    if (process.exitCode !== 130 && process.exitCode !== 143) process.exitCode = error instanceof UsageError ? 2 : 1;
   });
 }

@@ -3,6 +3,7 @@
 #include "TestHarness.h"
 
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -84,6 +85,15 @@ void mixedSignednessComparesByValue()
     CHECK(!failureOf([] { CHECK_EQ(-1, 4294967295u); }).empty());
     CHECK_LT(-1, 1u);
     CHECK_GE(std::size_t{5}, 5);
+}
+
+void unorderedValuesFailRelationalAssertions()
+{
+    const auto nan = std::numeric_limits<double>::quiet_NaN();
+    CHECK(!failureOf([&] { CHECK_LE(nan, 1.0); }).empty());
+    CHECK(!failureOf([&] { CHECK_LE(1.0, nan); }).empty());
+    CHECK(!failureOf([&] { CHECK_GE(nan, 1.0); }).empty());
+    CHECK(!failureOf([&] { CHECK_GE(1.0, nan); }).empty());
 }
 
 void valuesWithoutStreamOperatorsStillPrint()
@@ -221,6 +231,7 @@ int main(int argc, char **argv)
     suite.run("a failed equality names both values", aFailedEqualityNamesBothValues);
     suite.run("bytes are quoted with escapes", bytesAreQuotedWithEscapes);
     suite.run("mixed signedness compares by value", mixedSignednessComparesByValue);
+    suite.run("unordered values fail relational assertions", unorderedValuesFailRelationalAssertions);
     suite.run("values without stream operators still print", valuesWithoutStreamOperatorsStillPrint);
     suite.run("scopes label the failure and end with their block", scopesLabelTheFailureAndEndWithTheirBlock);
     suite.run("EXPECT records without throwing until the wait asks", expectRecordsWithoutThrowingUntilTheWaitAsks);

@@ -149,6 +149,9 @@ run_container() {
     waiter=$!
     active_children=("$logger" "$waiter")
     if ! wait "$waiter"; then
+        # A disconnected wait client says nothing about container completion.
+        # Its follower can still be blocked indefinitely on the live container.
+        kill -KILL "$logger" 2>/dev/null || true
         wait "$logger" || true
         active_container='' active_children=()
         echo "error: container wait disconnected; inspect retained container $container_id" >&2

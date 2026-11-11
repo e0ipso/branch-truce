@@ -55,7 +55,7 @@ gui_pids() {
 }
 
 no_gui() { [[ -z "$(gui_pids)" ]]; }
-intake_present() { compgen -G "$home/data/branch-truce/mergetool/*/*" >/dev/null; }
+intake_present() { compgen -G "$home/runtime/branch-truce/intake/*/*" >/dev/null; }
 mergetool_done() { [[ -f "$home/mergetool.status" ]]; }
 
 stop_gui() {

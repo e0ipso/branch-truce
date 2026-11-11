@@ -254,9 +254,9 @@ template <typename A, typename B> bool holds(Relation relation, const A &a, cons
         case Relation::Equal: return static_cast<bool>(a == b);
         case Relation::NotEqual: return static_cast<bool>(!(a == b));
         case Relation::Less: return static_cast<bool>(a < b);
-        case Relation::LessEqual: return static_cast<bool>(!(b < a));
+        case Relation::LessEqual: return static_cast<bool>(a <= b);
         case Relation::Greater: return static_cast<bool>(b < a);
-        case Relation::GreaterEqual: return static_cast<bool>(!(a < b));
+        case Relation::GreaterEqual: return static_cast<bool>(a >= b);
         }
         return false;
     }

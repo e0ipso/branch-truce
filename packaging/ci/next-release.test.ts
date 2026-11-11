@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
+import { once } from 'node:events';
 import { main, packageable, select, UsageError } from './next-release.js';
 
 const require = createRequire(import.meta.url);
@@ -289,6 +290,42 @@ test('release metadata deadlines remain failures including a checker that would 
   mkdirSync(bin);
   writeFileSync(join(bin, 'git'), '#!/bin/bash\nexec /bin/sleep 60\n', { mode: 0o755 });
   await assert.rejects(main([], cwd, { PATH: bin, BRANCH_TRUCE_CI_EVENT: 'pull_request' }, bounded), /timed out/);
+});
+
+test('release selection supplies its environment to every metadata command', async t => {
+  const { cwd } = repository(t);
+  const env = { PATH: '/supplied-path', BRANCH_TRUCE_CI_EVENT: 'pull_request' };
+  let calls = 0;
+  const command: typeof metadata = async (program, _args, context) => {
+    assert.ok(context.env === env, 'Every metadata command must receive the supplied environment');
+    calls++;
+    return program === 'git' ? 'a'.repeat(40) : '';
+  };
+  await main([], cwd, env, command);
+  assert.equal(calls, 2);
+});
+
+for (const [interrupt, expected] of [['SIGINT', 130], ['SIGTERM', 143]] as const)
+test(`release cancellation preserves ${interrupt} exit status`, { timeout: 5000 }, async t => {
+  const { cwd } = repository(t);
+  const bin = join(cwd, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'git'), '#!/bin/sh\necho metadata-ready >&2\nexec /bin/sleep 60\n', { mode: 0o755 });
+  const child = spawn(process.execPath, [selection], {
+    cwd, env: { PATH: bin, BRANCH_TRUCE_CI_EVENT: 'pull_request' }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  const closed = once(child, 'close');
+  let diagnostics = '';
+  let signalled = false;
+  child.stderr.on('data', chunk => {
+    diagnostics += chunk.toString();
+    if (!signalled && diagnostics.includes('metadata-ready')) { signalled = true; child.kill(interrupt); }
+  });
+  const [status, signal] = await closed;
+  assert.ok(signalled, diagnostics);
+  assert.equal(status, expected, diagnostics);
+  assert.equal(signal, null);
 });
 
 test('release help and invalid arguments perform no metadata work', async t => {

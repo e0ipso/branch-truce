@@ -512,6 +512,12 @@ expect_only_output() {
     [[ "$output" == "$1" ]] || fail "output is not exactly: $1"
     pass
 }
+sourced 'mkdir -p "$home/data/branch-truce/mergetool/session/invocation"
+    if intake_present; then exit 9; fi
+    mkdir -p "$home/runtime/branch-truce/intake/session/invocation"
+    intake_present'
+expect_status 0
+expect_only_output ''
 # Sourcing either script defines its functions, sets no shell options and runs nothing.
 for args in '' '--target kubuntu --package /nonexistent.deb --output /nonexistent'; do
     # shellcheck disable=SC2086
