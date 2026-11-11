@@ -51,6 +51,12 @@ arch_package_of() { printf '%s\n' "$1"; }
 arch_installed() { { pacman -Q "$1" 2>/dev/null || true; } | awk '{ print $2 }'; }
 arch_at_least() { [ "$(vercmp "$1" "$2")" -ge 0 ]; }
 
+# A rolling target names only its distribution; a fixed target also names its release.
+baseline_os_matches() {
+    local expected=$1 distribution=$2 version=${3-}
+    [[ "$expected" == "$distribution" || "$expected" == "$distribution${version:+ $version}" ]]
+}
+
 # check_component FAMILY COMPONENT MINIMUM NAME: prints the installed version of
 # the package NAME names and records a failure when it is missing or older.
 check_component() {
@@ -74,8 +80,9 @@ baseline_main() {
     # shellcheck disable=SC1091
     . /etc/os-release
     found="${ID-}${VERSION_ID:+ $VERSION_ID}"
-    [ "$found" = "$os" ] || fail "expected $os, found $found"
+    baseline_os_matches "$os" "${ID-}" "${VERSION_ID-}" || fail "expected $os, found $found"
     echo "os ${PRETTY_NAME:-$found}"
+    if [[ "$os" == "${ID-}" && -n "${VERSION_ID-}" ]]; then echo "image-version $VERSION_ID"; fi
     "${family}_toolchain" || fail 'the toolchain is incomplete'
     while IFS=$'\t' read -r component minimum; do
         name=$(tsv_field "$here/../minimum-versions.tsv" "$component" "$family") || return 2
