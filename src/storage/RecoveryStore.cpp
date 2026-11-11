@@ -227,7 +227,12 @@ RecoveryStore::RecoveryStore(QString directory, std::shared_ptr<const FileSystem
 
 QByteArray RecoveryStore::digest(const QByteArray &bytes)
 {
-    return QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex();
+    // Replay hashes many small records. Reuse the algorithm context instead of
+    // resolving the crypto provider for every value; each worker owns its state.
+    thread_local QCryptographicHash hash(QCryptographicHash::Sha256);
+    hash.reset();
+    hash.addData(bytes);
+    return hash.result().toHex();
 }
 
 QByteArray RecoveryStore::payload(const QByteArray &hash, Problem *error, qint64 maxBytes) const

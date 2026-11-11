@@ -21,7 +21,9 @@
 #include <mutex>
 #include <string>
 #include <sys/stat.h>
+#include <thread>
 #include <utility>
+#include <vector>
 
 using namespace branch_truce::storage;
 using branch_truce::Problem;
@@ -128,6 +130,28 @@ int main(int argc, char **argv)
     QCoreApplication application(argc, argv);
     test_support::configure(argc, argv);
     test_support::Suite suite("RecoveryStoreTests");
+    suite.run("recovery digests reset between inputs and remain independent on worker threads", [] {
+        const std::array vectors{
+            std::pair{QByteArray{}, QByteArray("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")},
+            std::pair{QByteArray("abc"),
+                      QByteArray("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")},
+            std::pair{QByteArray("a\0b\xff", 4),
+                      QByteArray("a37cc3026aae4d519e0b19c298fa913b4dccfdf0658cbccbb7deaa0226d5acdb")}};
+        for (const auto &[bytes, expected] : vectors) CHECK(RecoveryStore::digest(bytes) == expected);
+        std::array<bool, 4> correct{true, true, true, true};
+        {
+            std::vector<std::jthread> workers;
+            workers.reserve(correct.size());
+            for (std::size_t worker = 0; worker < correct.size(); ++worker)
+                workers.emplace_back([&, worker] {
+                    for (std::size_t sample = 0; sample < 50; ++sample) {
+                        const auto &[bytes, expected] = vectors[(worker + sample) % vectors.size()];
+                        if (RecoveryStore::digest(bytes) != expected) correct[worker] = false;
+                    }
+                });
+        }
+        CHECK(std::all_of(correct.begin(), correct.end(), [](bool value) { return value; }));
+    });
     suite.run("interrupted transaction tails preserve the acknowledged prefix and retry once", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
