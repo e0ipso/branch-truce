@@ -72,7 +72,7 @@ if $fidelity; then
         -DBRANCH_TRUCE_SYNTAX_HIGHLIGHTING=OFF > "$off/configure.log" 2>&1 || configure_status=$?
     if [ "$configure_status" -eq 0 ]; then
         cmake --build "$work/build-highlighting-off" --parallel 2 \
-            --target branch-truce branch_truce_syntax_highlighting_tests \
+            --target branch-truce branch_truce_app_syntax_highlighting_tests \
             > "$off/build.log" 2>&1 || build_status=$?
     else
         build_status=125
