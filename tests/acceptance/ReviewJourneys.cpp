@@ -2,6 +2,7 @@
 #include "acceptance/JourneyData.h"
 #include "acceptance/JourneySteps.h"
 #include "acceptance/JourneySuite.h"
+#include "fixtures/AppSession.h"
 #include "fixtures/QuickScene.h"
 #include "fixtures/TextRendering.h"
 #include "fixtures/UiEvidence.h"
@@ -253,6 +254,7 @@ void chooseLinesAndSections(Scene &scene, std::vector<Work> &history)
 
     // Ignore decides against a contribution without changing the result.
     clickChoice(scene, "Right line 2", "Ignore");
+    CHECK(test_support::commandResult(scene.app(), true));
     CHECK(!scene.object("replacementDialog")->property("visible").toBool());
     CHECK(work(scene, "story.txt").shown == history.back().shown);
     CHECK(stateOf(scene, "Right line 2") == QStringLiteral("ignored")
@@ -307,6 +309,7 @@ void previewAndApplyOrder(Scene &scene, std::vector<Work> &history)
 void undoAndRedoWalkTheHistory(Scene &scene, const std::vector<Work> &history, const Work &typed)
 {
     keyClick(scene, Qt::Key_Z, Qt::ControlModifier);
+    CHECK(test_support::commandResult(scene.app(), true));
     const auto onceUndone = work(scene, "story.txt");
     auto *toolbarUndo = scene.item("undoCommand");
     auto *sharedRedo = scene.object("resultEditActions")->property("redo").value<QObject *>();
@@ -320,21 +323,25 @@ void undoAndRedoWalkTheHistory(Scene &scene, const std::vector<Work> &history, c
         toolbarUndo->forceActiveFocus(Qt::TabFocusReason);
         CHECK(toolbarUndo->hasActiveFocus());
         keyClick(scene, Qt::Key_Space);
+        CHECK(test_support::commandResult(scene.app(), true));
         CHECK(toolbarUndo->hasActiveFocus());
         CHECK(work(scene, "story.txt") == history.back());
         CHECK(scene.item("redoCommand")->isEnabled() && scene.file("story.txt").canRedo());
         CHECK(sharedRedo->property("enabled").toBool() && menuRedo->property("enabled").toBool());
         const auto key = binding[0];
         keyClick(scene, key.key(), key.keyboardModifiers());
+        CHECK(test_support::commandResult(scene.app(), true));
         CHECK(work(scene, "story.txt") == onceUndone);
     }
     scene.click("undoCommand");
+    CHECK(test_support::commandResult(scene.app(), true));
     CHECK(work(scene, "story.txt") == history.back());
     for (std::size_t step = history.size() - 1; step-- > 0;) {
         if (step % 2)
             keyClick(scene, Qt::Key_Z, Qt::ControlModifier);
         else
             scene.click("undoCommand");
+        CHECK(test_support::commandResult(scene.app(), true));
         CHECK(work(scene, "story.txt") == history[step]);
     }
     CHECK(!scene.file("story.txt").canUndo() && !scene.item("undoCommand")->isEnabled());
@@ -346,12 +353,15 @@ void undoAndRedoWalkTheHistory(Scene &scene, const std::vector<Work> &history, c
             keyClick(scene, Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
         } else
             scene.click("redoCommand");
+        CHECK(test_support::commandResult(scene.app(), true));
         CHECK(work(scene, "story.txt") == history[step]);
     }
     scene.click("redoCommand");
+    CHECK(test_support::commandResult(scene.app(), true));
     clickText(scene, scene.item("resultText"));
     CHECK(scene.item("resultText")->hasActiveFocus());
     keyClick(scene, Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+    CHECK(test_support::commandResult(scene.app(), true));
     CHECK(work(scene, "story.txt") == typed && !scene.file("story.txt").canRedo());
     CHECK(!scene.item("redoCommand")->isEnabled());
     CHECK(!sharedRedo->property("enabled").toBool() && !menuRedo->property("enabled").toBool());
@@ -372,6 +382,7 @@ void scopedChoicesShareOneHistory(Sandbox &sandbox)
     appendToResult(scene, "o");
     settleFor("the first key recorded", [&] { return !scene.app().store()->recording(); });
     typeText(scene, "k");
+    CHECK(test_support::commandResult(scene.app(), true));
     expectText(scene.text("resultText"),
                "header\nright first\nleft first\nbridge one\nbridge two\nbridge three\nright later\ntail\nok", "typed");
     CHECK(scene.file("story.txt").current().draft.decisions == history.back().draft.decisions);
@@ -413,6 +424,7 @@ void typingMarksTheRegionManual(Sandbox &sandbox)
     keyClick(scene, Qt::Key_Down);
     for (int step = 0; step < 4; ++step) keyClick(scene, Qt::Key_Right);
     typeText(scene, " hand");
+    CHECK(test_support::commandResult(scene.app(), true));
     expectText(scene.text("resultText"),
                "header\nleft hand first\nbridge one\nbridge two\nbridge three\nbase later\ntail\n", "typed");
     const auto typed = work(scene, "story.txt");
@@ -435,6 +447,7 @@ void typingMarksTheRegionManual(Sandbox &sandbox)
 
     // Undo brings back the typed text together with its mark.
     scene.click("undoCommand");
+    CHECK(test_support::commandResult(scene.app(), true));
     CHECK(work(scene, "story.txt") == typed);
     CHECK(region("Left line 2").handEdited);
     CHECK(region("Left line 2").state == QStringLiteral("manual"));
@@ -659,14 +672,18 @@ void clipboardAndHistoryKeys(Scene &scene, const Untouched &untouched)
     untouched.check();
     keyClick(scene, Qt::Key_End, Qt::ControlModifier);
     keyClick(scene, Qt::Key_V, Qt::ControlModifier);
+    CHECK(test_support::commandResult(scene.app(), true));
     const auto pasted = work(scene, "reading.txt");
     expectText(pasted.shown, untouched.before.shown + "REPEAT one", "pasted");
     CHECK(pasted.draft.decisions == untouched.before.draft.decisions);
     keyClick(scene, Qt::Key_Z, Qt::ControlModifier);
+    CHECK(test_support::commandResult(scene.app(), true));
     CHECK(work(scene, "reading.txt") == untouched.before);
     keyClick(scene, Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+    CHECK(test_support::commandResult(scene.app(), true));
     CHECK(work(scene, "reading.txt") == pasted);
     scene.click("undoCommand");
+    CHECK(test_support::commandResult(scene.app(), true));
     CHECK(work(scene, "reading.txt") == untouched.before);
 }
 

@@ -4,6 +4,7 @@
 #include "acceptance/JourneySteps.h"
 #include "acceptance/JourneySuite.h"
 #include "acceptance/WindowChecks.h"
+#include "fixtures/AppSession.h"
 #include "fixtures/FileToolbar.h"
 #include "fixtures/QuickScene.h"
 #include "fixtures/SyncFaults.h"
@@ -503,6 +504,7 @@ void choiceClearsHandEdits(Sandbox &sandbox)
     cursorToLine(scene, 2);
     keyClick(scene, Qt::Key_Down, Qt::ShiftModifier);
     keyClick(scene, Qt::Key_Delete);
+    CHECK(test_support::commandResult(scene.app(), true));
     expectText(scene.text("resultText"), "header\nleft second\nbridge\nleft later\ntail\n", "deleted line");
     CHECK(region("Left line 2").handEdited && !region("Left line 2").mapped);
     const auto deleted = work(scene, "pair.txt");
@@ -515,8 +517,10 @@ void choiceClearsHandEdits(Sandbox &sandbox)
     CHECK(region("Left line 2").state == QStringLiteral("accepted"));
     const auto restored = work(scene, "pair.txt");
     scene.click("undoCommand");
+    CHECK(test_support::commandResult(scene.app(), true));
     CHECK(work(scene, "pair.txt") == deleted && region("Left line 2").handEdited);
     scene.click("redoCommand");
+    CHECK(test_support::commandResult(scene.app(), true));
     CHECK(work(scene, "pair.txt") == restored && noneEdited(scene));
 
     // Typing a character and deleting it again leaves the text as the whole left side but marks it.
@@ -527,6 +531,7 @@ void choiceClearsHandEdits(Sandbox &sandbox)
     keyClick(scene, Qt::Key_End);
     typeText(scene, "X");
     keyClick(scene, Qt::Key_Backspace);
+    CHECK(test_support::commandResult(scene.app(), true));
     expectText(scene.text("resultText"), utf8(left), "typed and deleted");
     CHECK(!noneEdited(scene));
     const auto manual = work(scene, "pair.txt");
@@ -536,9 +541,11 @@ void choiceClearsHandEdits(Sandbox &sandbox)
     expectText(scene.text("resultText"), utf8(left), "whole left again");
     CHECK(noneEdited(scene) && scene.file("pair.txt").current().draft == manual.draft);
     scene.click("undoCommand");
+    CHECK(test_support::commandResult(scene.app(), true));
     CHECK(work(scene, "pair.txt") == manual);
     CHECK(scene.regions() == manualRegions);
     scene.click("redoCommand");
+    CHECK(test_support::commandResult(scene.app(), true));
     CHECK(noneEdited(scene));
     checkOffline(scene);
 }
@@ -598,6 +605,7 @@ void linesFromBothSidesKeepTheirDecisions(Sandbox &sandbox)
 
     // Ignore decides against the first left line and keeps the text.
     clickChoice(scene, "Left line 2", "Ignore");
+    CHECK(test_support::commandResult(scene.app(), true));
     CHECK(!scene.object("replacementDialog")->property("visible").toBool());
     expectText(scene.text("resultText"), "header\nbase one\nleft two\nright three\ntail\n", "ignore left line 2");
     expectLineStates(scene, "ignored accepted undecided undecided undecided accepted");
@@ -606,12 +614,14 @@ void linesFromBothSidesKeepTheirDecisions(Sandbox &sandbox)
     // Undo walks back through text and decisions together, and redo replays them.
     for (std::size_t step = history.size() - 1; step-- > 0;) {
         scene.click("undoCommand");
+        CHECK(test_support::commandResult(scene.app(), true));
         CHECK(work(scene, "lines.txt") == history[step]);
     }
     expectLineStates(scene, "undecided undecided undecided undecided undecided undecided");
     CHECK(!scene.file("lines.txt").canUndo() && !scene.item("undoCommand")->isEnabled());
     for (std::size_t step = 1; step < history.size(); ++step) {
         scene.click("redoCommand");
+        CHECK(test_support::commandResult(scene.app(), true));
         CHECK(work(scene, "lines.txt") == history[step]);
     }
     expectText(scene.text("resultText"), "header\nbase one\nleft two\nright three\ntail\n", "redone");

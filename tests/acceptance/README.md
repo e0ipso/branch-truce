@@ -23,6 +23,8 @@ Each CTest entry runs the binary through `tests/with-private-xdg.sh`, which give
 - `JourneySteps.h` holds the clicks, keys, dialogs and checks journeys share; `WindowChecks.h` the fit, wrapping, wheel and placement checks; `JourneyData.h` the shared file contents.
 - `ReviewJourneys.cpp`, `HandoffJourneys.cpp` and `WindowJourneys.cpp` hold one group each, every journey a named function built from named steps. A new journey is a function and one `add` in its group's file. A new group is a file, one call in `main()` and one name in the CMake list.
 
+Keyboard delivery and mouse clicks do not acknowledge journal writes. History journeys await persistence and revision alignment through `test_support::commandResult` before taking draft snapshots or checking undo and redo. The event pump after an input event is not a completion boundary.
+
 `git mergetool` runs as the leader of its own process group (`mergetool_fixture::ParentProcess`), so a failed journey kills the tool command and the launcher with it.
 
 `tests/fixtures/QuickScene.h` holds the lookup, accessibility and bounded readiness helpers that this suite shares with `tests/app/ComparisonViewTests.cpp`. They are `settle`, `visualItem`, `accessibleName`, `namedButton`, `popupRoot`, `waitForStable`, `waitForLayout`, `clickItem` with toolbar interaction in `FileToolbar.h`, retained screenshots in `UiEvidence.h`, and wrap and whitespace probes in `TextRendering.h`.
