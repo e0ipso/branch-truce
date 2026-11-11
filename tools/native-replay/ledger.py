@@ -6,14 +6,32 @@ import json
 from pathlib import Path
 import sys
 
-sys.dont_write_bytecode = True
+if __name__ == '__main__':
+    # Keep the source checkout read only when run as a script, including without -B.
+    sys.dont_write_bytecode = True
+
+import capture_profile  # noqa: E402
+
 HERE = Path(__file__).resolve().parent
-TEMPLATE = HERE.parents[1] / 'tests/acceptance/fidelity-ledger.json'
+TEMPLATE = HERE / 'fidelity-ledger.json'
 
 
-def assemble(root, template=None):
+def complete_replay(report, shape):
+    """Whether one size's verification.json shows every theme, kind and repeat with zero differences."""
+    themes, kinds, repeat = report.get('themes', []), report.get('kinds', []), report.get('repeat', 0)
+    shots = len(themes) * len(kinds)
+    comparisons = report.get('comparisons', [])
+    return (report.get('cleanup_confirmed') is True and set(themes) == set(shape.schemes) and bool(kinds)
+            and type(repeat) is int and repeat >= shape.repeat
+            and len(report.get('captures', [])) == shots * repeat
+            and len(comparisons) == shots * (repeat - 1)
+            and all(row['differing_pixels'] == 0 for row in comparisons))
+
+
+def assemble(root, template=None, shape=None):
     root = Path(root)
     ledger = deepcopy(template if template is not None else json.loads(TEMPLATE.read_text()))
+    shape = shape or capture_profile.run_shape(capture_profile.load())
     files = sorted(path.relative_to(root).as_posix() for path in root.rglob('*') if path.is_file()
                    and 'driver-build' not in path.relative_to(root).parts)
     ledger['evidence_root'] = str(root)
@@ -33,16 +51,9 @@ def assemble(root, template=None):
                                   count_unit=region['count_unit']))
     ledger['measured_regions'] = residuals
     complete_runs = {}
-    for height in (720, 800):
+    for height in shape.heights:
         report = root / str(height) / 'verification.json'
-        if not report.is_file():
-            complete_runs[height] = False
-            continue
-        replay = json.loads(report.read_text())
-        complete_runs[height] = (replay.get('cleanup_confirmed') is True
-            and len(replay.get('captures', [])) >= 8
-            and len(replay.get('comparisons', [])) >= 4
-            and all(row['differing_pixels'] == 0 for row in replay['comparisons']))
+        complete_runs[height] = report.is_file() and complete_replay(json.loads(report.read_text()), shape)
     for callout in ledger['callouts']:
         callout['outcome'] = 'pending-independent-inspection'
         callout['original_inspection'] = None
@@ -51,7 +62,7 @@ def assemble(root, template=None):
         callout['residuals'] = [row for row in residuals if row['region'] in callout['calibrated_regions']
                                 and row['status'] != 'identical']
         callout['missing_evidence'] = []
-        for height in (720, 800):
+        for height in shape.heights:
             if not complete_runs[height]:
                 callout['missing_evidence'].append(f'{height}: successful complete replay receipt unavailable')
         if not callout['calibrated_regions']:

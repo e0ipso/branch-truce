@@ -1,19 +1,21 @@
-#include "session/ConflictCapture.h"
 #include "TestHarness.h"
+#include "session/ConflictCapture.h"
 #include <functional>
+#include <initializer_list>
+#include <string>
 
 using namespace branch_truce;
 
 namespace {
-const QByteArray path = "dir/file.txt";
-const QByteArray mode = "100644";
-const QString root = QStringLiteral("/work/repository");
+QByteArray capturePath() { return "dir/file.txt"; }
+QByteArray captureMode() { return "100644"; }
+QString captureRoot() { return QStringLiteral("/work/repository"); }
 
 git::RepositoryContext repository(git::RepositoryOperation operation)
 {
     git::RepositoryContext context;
-    context.worktreeRoot = root;
-    context.gitDirectory = root + QStringLiteral("/.git");
+    context.worktreeRoot = captureRoot();
+    context.gitDirectory = captureRoot() + QStringLiteral("/.git");
     context.operation = operation;
     context.supported = true;
     context.baseCommitId = "base-commit";
@@ -47,12 +49,12 @@ git::ConversionPolicy policy()
 void addStage(git::Conflict &conflict, unsigned int stage, const QByteArray &text)
 {
     const auto objectId = "object-" + QByteArray::number(stage);
-    conflict.stages.push_back({path, mode, objectId, stage});
+    conflict.stages.push_back({capturePath(), captureMode(), objectId, stage});
     git::ConvertedText source;
-    source.worktreeRoot = root;
-    source.path = path;
-    source.mode = mode;
-    source.sourceMode = mode;
+    source.worktreeRoot = captureRoot();
+    source.path = capturePath();
+    source.mode = captureMode();
+    source.sourceMode = captureMode();
     source.canonicalObjectId = objectId;
     source.canonicalBytes = text;
     source.document = document(text, text);
@@ -63,9 +65,9 @@ void addStage(git::Conflict &conflict, unsigned int stage, const QByteArray &tex
 git::Conflict conflict(std::initializer_list<unsigned int> stages)
 {
     git::Conflict result;
-    result.path = path;
+    result.path = capturePath();
     result.support = git::ConflictSupport::SupportedText;
-    result.mode = mode;
+    result.mode = captureMode();
     for (const auto stage : stages) addStage(result, stage, "stage " + QByteArray::number(stage) + "\n");
     result.result = document("manual result\n", "manual result\n");
     result.resultIdentity = SnapshotFileIdentity{1, 2, 0100644, 14, 3, 4, 5, 6};
@@ -75,6 +77,8 @@ git::Conflict conflict(std::initializer_list<unsigned int> stages)
 void checkSources(const FileSnapshots &captured, const git::RepositoryContext &context)
 {
     CHECK(captured.earlier && captured.stage2 && captured.stage3);
+    if (!captured.earlier || !captured.stage2 || !captured.stage3)
+        throw test_support::Failure("captured fixture sources are absent");
     CHECK(captured.earlier->objectId == "object-1" && captured.earlier->rawBytes == "stage 1\n");
     CHECK(captured.earlier->worktree.utf8 == "stage 1\n" && captured.earlier->mode == "100644");
     CHECK(captured.earlier->commitId == std::optional<std::string>("base-commit"));
@@ -90,9 +94,11 @@ void checkSources(const FileSnapshots &captured, const git::RepositoryContext &c
 void checkShared(const FileSnapshots &captured, const git::RepositoryContext &context)
 {
     CHECK(captured.path == "dir/file.txt" && captured.resultMode == "100644");
-    CHECK(captured.launchResult.text.utf8 == "manual result\n" && captured.launchResult.text.bytes == "manual result\n");
+    CHECK(captured.launchResult.text.utf8 == "manual result\n"
+          && captured.launchResult.text.bytes == "manual result\n");
     CHECK(captured.launchResult.identity == (SnapshotFileIdentity{1, 2, 0100644, 14, 3, 4, 5, 6}));
-    CHECK(captured.provenance.sessionId == "session" && captured.provenance.worktreeRoot == root.toStdString());
+    CHECK(captured.provenance.sessionId == "session"
+          && captured.provenance.worktreeRoot == captureRoot().toStdString());
     CHECK(captured.provenance.gitDirectory == context.gitDirectory.toStdString());
     CHECK(captured.provenance.stage2CommitId == context.stage2.commitId.toStdString());
     CHECK(captured.provenance.stage3CommitId == context.stage3.commitId.toStdString());
@@ -139,6 +145,23 @@ int main()
         CHECK(!captureFile(conflict({3}), context, "session"));
     });
 
+    // Git reports one entry per stage, numbered 1 to 3. An index entry listed twice, or a stage
+    // number outside that range, is not a conflict the app can attribute, so nothing is captured.
+    struct Stages {
+        const char *name;
+        std::initializer_list<unsigned int> stages;
+    };
+    for (const auto &[name, stages] : std::initializer_list<Stages>{{"stage 2 twice", {1, 2, 2, 3}},
+                                                                    {"stage 3 twice", {2, 3, 3}},
+                                                                    {"stage 1 twice", {1, 1, 2, 3}},
+                                                                    {"stage 0", {0, 2, 3}},
+                                                                    {"stage 4", {2, 3, 4}}}) {
+        suite.run(std::string("a conflict with ") + name + " is not captured", [stages] {
+            const auto context = repository(git::RepositoryOperation::Merge);
+            CHECK(!captureFile(conflict(stages), context, "session"));
+        });
+    }
+
     suite.run("a stage whose path, object ID or mode disagrees with its source is not captured", [] {
         const auto context = repository(git::RepositoryOperation::Merge);
         const std::vector<std::pair<const char *, std::function<void(git::Conflict &)>>> changes{
@@ -153,7 +176,8 @@ int main()
         for (const auto &[name, change] : changes) {
             auto file = conflict({1, 2, 3});
             change(file);
-            if (captureFile(file, context, "session")) throw std::runtime_error(std::string("captured despite ") + name);
+            if (captureFile(file, context, "session"))
+                throw std::runtime_error(std::string("captured despite ") + name);
         }
         CHECK(captureFile(conflict({1, 2, 3}), context, "session").has_value());
     });
@@ -183,7 +207,9 @@ int main()
         utf16.encoding = storage::TextEncoding::Utf16LittleEndian;
         utf16.bom = true;
         utf16.finalNewline = true;
-        const QByteArray utf16Bytes("\xff\xfe" "a\0\n\0", 6);
+        const QByteArray utf16Bytes("\xff\xfe"
+                                    "a\0\n\0",
+                                    6);
         storage::TextFormat crlf;
         crlf.newline = storage::Newline::CrLf;
         crlf.finalNewline = true;
@@ -218,8 +244,9 @@ int main()
             file.support = support;
             CHECK(supportFor(file) == Support::Unreadable);
         }
-        for (const auto support : {git::ConflictSupport::MissingSide, git::ConflictSupport::UnsupportedText,
-                 git::ConflictSupport::UnverifiedSource, git::ConflictSupport::UnsupportedOperation}) {
+        for (const auto support :
+             {git::ConflictSupport::MissingSide, git::ConflictSupport::UnsupportedText,
+              git::ConflictSupport::UnverifiedSource, git::ConflictSupport::UnsupportedOperation}) {
             file.support = support;
             CHECK(supportFor(file) == Support::OutsideApp);
         }

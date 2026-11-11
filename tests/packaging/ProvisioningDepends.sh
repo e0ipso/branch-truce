@@ -8,12 +8,9 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 control=$root/packaging/debian/control
 script=$root/tools/provision-debian.sh
 
-# Package names of the Depends field, without version constraints or substitution variables.
-mapfile -t depends < <(awk '
-        /^Depends:/ { on = 1; sub("^Depends:", "") }
-        on { print }
-        on && $0 !~ /,[ \t]*$/ { on = 0 }
-    ' "$control" | sed 's/([^)]*)//g; s/\${[^}]*}//g' | tr ',' '\n' | awk 'NF { print $1 }')
+# Package names of the Depends field, as the package checker reads them.
+source "$root/packaging/scripts/pkg-deb.sh"
+mapfile -t depends < <(pkg_recipe_depends "$root")
 # Words of the packages=( ... ) array.
 mapfile -t provisioned < <(awk '
         /^packages=\(/ { on = 1; sub("^packages=\\(", "") }

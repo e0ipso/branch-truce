@@ -8,8 +8,8 @@
     "node": ">=24"
   },
   "scripts": {
-    "typecheck": "tsc -p scripts/tsconfig.json",
-    "test": "node --test --test-reporter=spec 'scripts/**/*.test.ts'",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test --test-reporter=spec 'scripts/**/*.test.ts' 'packaging/**/*.test.ts' 'tools/**/*.test.ts'",
     "check:tracker-refs": "node scripts/check-tracker-refs.ts",
     "prepare": "husky"
   },
@@ -26,6 +26,7 @@
     "@types/node": "^24.0.0",
     "conventional-changelog-conventionalcommits": "^9.3.1",
     "husky": "^9.1.7",
+    "js-yaml": "^4.3.2",
     "semantic-release": "^25.0.9",
     "typescript": "^5.9.3"
   }

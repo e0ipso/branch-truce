@@ -1,0 +1,12 @@
+# Native package formats. One row per release package. packaging/scripts/formats.sh
+# is the one reader of this table; the scripts, the workflow and packaging/ci/*.js
+# all go through it. Columns are tab-separated and named by the header line.
+# {version} in a template is the version in the row's style: tilde (1.2.0~rc1,
+# from native-version.sh) or plain (1.2.0rc1, tilde removed). target names the
+# CI leg, os is "ID VERSION_ID" for a fixed release or "ID" for a rolling
+# distribution in the build image's /etc/os-release, and
+# native_fidelity 1 marks the leg that runs the calibrated native replay.
+id	family	extension	version_style	filename	native_version	architecture	dockerfile	label	target	os	native_fidelity
+kubuntu-deb	deb	deb	tilde	branch-truce_{version}_amd64-ubuntu26.04.deb	{version}	amd64	ci/kubuntu.Dockerfile	branch-truce DEB for Kubuntu 26.04 (amd64)	Kubuntu 26.04	ubuntu 26.04	1
+fedora-rpm	rpm	rpm	tilde	branch-truce-{version}-1.fc44.x86_64.rpm	{version}-1.fc44	x86_64	ci/fedora.Dockerfile	branch-truce RPM for Fedora 44 (x86_64)	Fedora 44	fedora 44	0
+arch-pkg	arch	pkg.tar.zst	plain	branch-truce-{version}-1-x86_64.pkg.tar.zst	{version}-1	x86_64	ci/arch.Dockerfile	branch-truce package for Arch Linux (x86_64)	Arch Linux	arch	0

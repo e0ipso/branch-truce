@@ -1,5 +1,5 @@
-#include "app/TextChange.h"
 #include "TestHarness.h"
+#include "app/TextChange.h"
 #include <QString>
 #include <vector>
 

@@ -9,6 +9,7 @@ qt_add_qml_module(branch_truce_ui STATIC
         CodeRows.qml
         Main.qml
         PlainLabel.qml
+        PlainToolTip.qml
         Pill.qml
         PaneHeader.qml
         DiffStyle.qml
@@ -42,7 +43,6 @@ qt_add_qml_module(branch_truce_ui STATIC
         MenuAction.qml
         MenuEntry.qml
         EditActions.qml
-        StatusChip.qml
         SnapshotPane.qml
         DialogBody.qml
         PreviewBody.qml
@@ -50,7 +50,7 @@ qt_add_qml_module(branch_truce_ui STATIC
         PlainPlaceholderMessage.qml
         CenteredPlaceholder.qml
         DiscardStagedDialog.qml
-    SOURCES NamedActionMenu.h StandardKeyBindings.h OutsideAppText.h ConnectorBands.cpp ConnectorBands.h PaneMarks.cpp PaneMarks.h TextBlocks.cpp TextBlocks.h ComparisonPanes.cpp ComparisonPanes.h PassageSearch.cpp PassageSearch.h SourceContextMenuHost.cpp SourceContextMenuHost.h)
+    SOURCES NamedActionMenu.h StandardKeyBindings.h OutsideAppText.h ConnectorBands.cpp ConnectorBands.h PaneMarks.cpp PaneMarks.h TextBlocks.cpp TextBlocks.h ComparisonPanes.cpp ComparisonPanes.h PassageSearch.cpp PassageSearch.h ContextMenuHost.cpp ContextMenuHost.h)
 # Bytecode only: QML compiled to C++ calls Qt's private API
 # (QQmlPrivate::AOTCompiledContext), which pins packages to one exact Qt
 # release. docs/target-platforms.md records the measured startup cost.

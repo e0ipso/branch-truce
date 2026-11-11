@@ -1,4 +1,4 @@
-add_library(branch_truce_git STATIC GitAdapter.cpp GitAdapter.h GitAdapterState.h
+add_library(branch_truce_git STATIC GitAdapter.cpp GitAdapter.h GitTypes.h GitAdapterState.h GitOperations.h
     GitAdapterProcess.cpp GitAdapterPolicy.cpp GitAdapterPhases.cpp GitParsing.h
     RepositoryDiscovery.cpp RepositoryDiscovery.h TextConversion.cpp TextConversion.h
     ConflictClassifier.cpp ConflictClassifier.h)

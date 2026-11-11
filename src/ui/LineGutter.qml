@@ -183,15 +183,10 @@ Item {
             Accessible.description: gutter.lineDescription(modelData.number)
             ToolTip.visible: false
             HoverHandler { id: numberHover }
-            ToolTip {
+            PlainToolTip {
                 id: numberToolTip
-                text: gutter.lineDescription(lineNumber.modelData.number)
-                Binding {
-                    target: numberToolTip.contentItem
-                    property: "textFormat"
-                    value: Text.PlainText
-                }
-                visible: numberHover.hovered && text.length > 0
+                literalText: gutter.lineDescription(lineNumber.modelData.number)
+                visible: numberHover.hovered && literalText.length > 0
                 delay: Kirigami.Units.toolTipDelay
             }
         }
@@ -223,15 +218,10 @@ Item {
                 Accessible.description: gutter.lineDescription(line)
                 ToolTip.visible: false
                 HoverHandler { id: glyphHover }
-                ToolTip {
+                PlainToolTip {
                     id: glyphToolTip
-                    text: gutter.lineDescription(kindGlyph.line)
-                    Binding {
-                        target: glyphToolTip.contentItem
-                        property: "textFormat"
-                        value: Text.PlainText
-                    }
-                    visible: glyphHover.hovered && text.length > 0
+                    literalText: gutter.lineDescription(kindGlyph.line)
+                    visible: glyphHover.hovered && literalText.length > 0
                     delay: Kirigami.Units.toolTipDelay
                 }
             }

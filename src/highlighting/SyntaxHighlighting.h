@@ -24,7 +24,8 @@ public:
     // The definition comes from the file name. A name with no definition
     // leaves every attached document without syntax formats.
     void setFileName(const QString &fileName);
-    // Breeze Dark on a dark scheme background, Breeze Light otherwise.
+    // The syntax repository's default dark theme on a dark scheme
+    // background, its default light theme otherwise.
     void setBackground(const QColor &background);
 
 private:

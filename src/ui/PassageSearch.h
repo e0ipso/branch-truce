@@ -1,6 +1,7 @@
 // Passage search finds text within the selected comparison scope and highlights its matches.
 #pragma once
 #include "ComparisonPanes.h"
+#include <QColor>
 #include <QList>
 #include <QObject>
 #include <QPointer>
@@ -35,6 +36,8 @@ class PassageSearch : public QObject {
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(int matchCount READ matchCount NOTIFY matchesChanged)
     Q_PROPERTY(int matchIndex READ matchIndex NOTIFY matchesChanged)
+    // The background of every match in the searched pane, from the colour scheme.
+    Q_PROPERTY(QColor matchColor MEMBER matchColor_ NOTIFY matchColorChanged)
 public:
     // A match of [begin, end) in the text, with begin -1 without one. count is
     // the number of matches that do not overlap, counted from the start.
@@ -64,8 +67,8 @@ public:
     // starts before the selection's start; without such a selection they take
     // the first and the last match. Either wraps around to the other end of
     // the text when no match lies that way.
-    static Match search(const QString &text, const QString &query, int selectionStart, int selectionEnd,
-                        bool forward, Qt::CaseSensitivity sensitivity = Qt::CaseSensitive);
+    static Match search(const QString &text, const QString &query, int selectionStart, int selectionEnd, bool forward,
+                        Qt::CaseSensitivity sensitivity = Qt::CaseSensitive);
     // Finds query in the text of the pane named scope, going on from its
     // selection when the selection holds the query, and sets the status. The
     // result has begin and end, the match range, with begin -1 without a
@@ -76,6 +79,7 @@ public:
     Q_INVOKABLE void update(const QString &query, bool caseSensitive, bool active);
 
 Q_SIGNALS:
+    void matchColorChanged();
     void panesChanged();
     void scopesChanged();
     void scopeIndexChanged();
@@ -98,6 +102,7 @@ private:
     QString detail_;
     bool refreshing_ = false;
     bool caseSensitive_ = false;
+    QColor matchColor_;
     int matchCount_ = 0;
     int matchIndex_ = 0;
 };

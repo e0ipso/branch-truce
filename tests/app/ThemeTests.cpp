@@ -17,13 +17,17 @@
 // executable into <dir> and run it there: the executable's directory comes first on the QML import
 // path. For the icon check, run app/CollectIconNames.cmake over the QML files plus a fixture QML
 // file that names a missing icon, and pass that list.
-#include "app/ApplicationController.h"
-#include "fixtures/GitOnPath.h"
-#include "highlighting/PaneHighlighter.h"
 #include "TestHarness.h"
+#include "app/AppPaths.h"
+#include "app/Appearance.h"
+#include "app/Application.h"
+#include "app/Translations.h"
+#include "fixtures/AppSession.h"
 #include "fixtures/ChoiceFile.h"
+#include "fixtures/GitOnPath.h"
 #include "fixtures/QuickScene.h"
 #include "fixtures/performance/TypingTrace.h"
+#include "highlighting/PaneHighlighter.h"
 #include <QApplication>
 #include <QColor>
 #include <QDir>
@@ -48,8 +52,8 @@
 #include <QTimer>
 #include <QWheelEvent>
 #include <algorithm>
-#include <ctime>
 #include <cstdio>
+#include <ctime>
 #include <iostream>
 #include <map>
 #include <optional>
@@ -77,35 +81,15 @@ constexpr int kKeysPerRepeat = 6;
 constexpr int kNotchesPerRepeat = 15;
 #endif
 
-// As src/app/main.cpp: the KDE style when it is installed, with Fusion for the controls it lacks,
-// and otherwise Fusion. QT_QUICK_CONTROLS_STYLE wins.
-void selectControlsStyle(const QQmlEngine &engine)
-{
-    if (!qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) return;
-    const auto paths = engine.importPathList();
-    const bool kdeStyle = std::any_of(paths.cbegin(), paths.cend(), [](const QString &path) {
-        return QFileInfo::exists(path + QStringLiteral("/org/kde/desktop/qmldir"));
-    });
-    QQuickStyle::setStyle(kdeStyle ? QStringLiteral("org.kde.desktop") : QStringLiteral("Fusion"));
-    if (kdeStyle) QQuickStyle::setFallbackStyle(QStringLiteral("Fusion"));
-}
-
-// As src/app/main.cpp: Breeze as the fallback icon theme, and hicolor when the platform names none.
-void selectIconThemes()
-{
-    QIcon::setFallbackThemeName(QStringLiteral("breeze"));
-    if (QIcon::themeName().isEmpty()) QIcon::setThemeName(QStringLiteral("hicolor"));
-}
-
 class Scene {
 public:
     explicit Scene(FileSession file)
     {
         const auto id = file.id();
-        CHECK(controller.files()->appendFile(std::move(file)));
-        CHECK(controller.selectFile(QString::fromStdString(id)));
+        CHECK(controller.store()->appendFile(std::move(file)));
+        CHECK(controller.selection()->select(QString::fromStdString(id)));
         selectControlsStyle(engine);
-        engine.setInitialProperties({{"controller", QVariant::fromValue(&controller)}});
+        engine.setInitialProperties(controller.windowProperties());
         engine.loadFromModule("BranchTruce", "Main");
         CHECK(engine.rootObjects().size() == 1);
         window = qobject_cast<QQuickWindow *>(engine.rootObjects().front());
@@ -134,7 +118,7 @@ public:
         test_support::waitForLayout(window, QStringLiteral("earlierViewport"), 60);
     }
 
-    ApplicationController controller{gitOnPath()};
+    Application controller{test_support::windowConfig()};
     QQmlApplicationEngine engine;
     QQuickWindow *window = nullptr;
 };
@@ -152,7 +136,8 @@ QStringList breezeThemes()
 {
     QStringList found;
     for (const auto &path : QIcon::themeSearchPaths()) {
-        if (QFileInfo::exists(path + QStringLiteral("/breeze/index.theme"))) found.append(path + QStringLiteral("/breeze"));
+        if (QFileInfo::exists(path + QStringLiteral("/breeze/index.theme")))
+            found.append(path + QStringLiteral("/breeze"));
     }
     return found;
 }
@@ -186,11 +171,11 @@ int checkIcons(const QString &listPath)
     test_support::Suite suite("ThemeTests icons");
     suite.run("the icon list names icons", [&] { CHECK(!names.empty()); });
     std::cout << "icon theme " << QIcon::themeName().toStdString() << ", fallback "
-              << QIcon::fallbackThemeName().toStdString() << ", Breeze at " << themes.join(", ").toStdString()
-              << ", " << names.size() << " names\n";
+              << QIcon::fallbackThemeName().toStdString() << ", Breeze at " << themes.join(", ").toStdString() << ", "
+              << names.size() << " names\n";
     for (const auto &[name, places] : names) {
         suite.run("icon " + name.toStdString() + " resolves (" + places.join(QStringLiteral(", ")).toStdString() + ")",
-            [&] { CHECK(QIcon::hasThemeIcon(name)); });
+                  [&] { CHECK(QIcon::hasThemeIcon(name)); });
     }
     return suite.report();
 }
@@ -242,8 +227,8 @@ int checkRoles(const QString &scheme, const QString &other)
     const auto path = schemeFile(scheme);
     const auto otherPath = schemeFile(other);
     if (path.isEmpty() || otherPath.isEmpty()) {
-        std::cout << "SKIP roles: no color-schemes/" << scheme.toStdString() << ".colors or "
-                  << other.toStdString() << ".colors in the data directories; install the Breeze colour schemes\n";
+        std::cout << "SKIP roles: no color-schemes/" << scheme.toStdString() << ".colors or " << other.toStdString()
+                  << ".colors in the data directories; install the Breeze colour schemes\n";
         return kSkipped;
     }
     selectIconThemes();
@@ -264,7 +249,7 @@ int checkRoles(const QString &scheme, const QString &other)
     }
     scene.showEarlier();
     // Let the gutters and backgrounds lay out before the frame is taken.
-    QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+    test_support::waitForFrames(scene.window, "the panes are laid out");
     const auto frame = scene.window->grabWindow();
     std::cout << "scheme " << scheme.toStdString() << ": View background " << describe(*view) << ", "
               << other.toStdString() << " " << describe(*otherView) << '\n';
@@ -333,14 +318,15 @@ int checkCues()
             auto *gutter = scene.item(name + QStringLiteral("Gutter"));
             auto *slot = scene.item(gutter->objectName() + QStringLiteral("MarkerSlot"));
             test_support::settleFor(std::string("the ") + pane + " gutter rows",
-                [&] { return gutter->property("rows").toList().size() > 0; });
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+                                    [&] { return !gutter->property("rows").toList().isEmpty(); });
+            test_support::waitForFrames(scene.window, std::string("the ") + pane + " glyphs are drawn");
             const auto lines = colouredLines(backgrounds);
             const auto glyphs = glyphLines(slot);
             std::ostringstream shown;
             for (const auto line : lines) {
                 const auto glyph = glyphs.find(line);
-                shown << ' ' << line << '=' << (glyph == glyphs.end() ? std::string("(none)") : glyph->second.toStdString());
+                shown << ' ' << line << '='
+                      << (glyph == glyphs.end() ? std::string("(none)") : glyph->second.toStdString());
             }
             std::cout << pane << " coloured lines:" << shown.str() << '\n';
             // The earlier version is context: it has no coloured lines of its own.
@@ -348,7 +334,7 @@ int checkCues()
             for (const auto line : lines) {
                 if (!glyphs.contains(line))
                     throw std::runtime_error(std::string(pane) + " line " + std::to_string(line)
-                        + " is coloured but its gutter glyph is empty");
+                                             + " is coloured but its gutter glyph is empty");
             }
             total += lines.size();
         });
@@ -387,9 +373,11 @@ FileSession workloadFile()
     auto sources = *test_support::choiceFile(workloadSource("left"), workloadSource("right"), earlier).snapshots();
     const std::string path = "src/workload.cpp";
     sources.path = path;
-    sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
-        test_support::choiceText(earlier), "earlier-commit", "Common earlier version"};
-    return FileSession("workload", path, {earlier, {}, 0}, Support::Supported, {}, std::move(sources), true);
+    sources.earlier =
+        SourceSnapshot{"earlier-object",        "100644", earlier, test_support::choiceText(earlier), "earlier-commit",
+                       "Common earlier version"};
+    return FileSession("workload", path, {earlier, {}, 0},
+                       {.snapshots = std::move(sources), .initializeChoices = true});
 }
 
 PaneHighlighter *highlighterOf(QQuickItem *editor)
@@ -402,7 +390,7 @@ PaneHighlighter *highlighterOf(QQuickItem *editor)
 
 qint64 processCpuMs()
 {
-    timespec now {};
+    timespec now{};
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &now);
     return static_cast<qint64>(now.tv_sec) * 1000 + now.tv_nsec / 1000000;
 }
@@ -415,8 +403,7 @@ struct Cost {
 
 // Runs act, then waits until done() holds and a frame has been rendered after it. Returns the
 // cost from act to that frame, with wall -1 when it did not happen within ten seconds.
-template<typename Act, typename Done>
-Cost costToFrame(QQuickWindow *window, Act act, Done done)
+template <typename Act, typename Done> Cost costToFrame(QQuickWindow *window, Act act, Done done)
 {
     QEventLoop loop;
     QElapsedTimer clock;
@@ -455,8 +442,8 @@ std::string join(const std::vector<qint64> &values)
 void writeTypingDiagnostic(QJsonObject record)
 {
     record.insert("schema", 1);
-    std::cout << "HIGHLIGHTED_TYPING_DIAGNOSTIC="
-              << QJsonDocument(record).toJson(QJsonDocument::Compact).constData() << '\n';
+    std::cout << "HIGHLIGHTED_TYPING_DIAGNOSTIC=" << QJsonDocument(record).toJson(QJsonDocument::Compact).constData()
+              << '\n';
 }
 
 // Replay only after all budget samples and assertions. The same live scene now
@@ -467,33 +454,30 @@ void diagnoseTyping(Scene &scene)
     auto *result = scene.item(QStringLiteral("resultText"));
     auto *viewport = scene.item(QStringLiteral("resultViewport"));
     auto *document = result->property("textDocument").value<QQuickTextDocument *>()->textDocument();
-    const auto file = [&] { return scene.controller.files()->file("workload"); };
+    const auto file = [&] { return scene.controller.store()->file("workload"); };
     test_support::TypingTrace trace;
     const auto dispatched = trace.add(QStringLiteral("input.sendEvent.return"));
     const auto model = trace.add(QStringLiteral("session.dataChanged"));
     const auto editor = trace.add(QStringLiteral("controller.resultEditorChanged"));
     const auto selected = trace.add(QStringLiteral("controller.selectedFileChanged"));
     const auto projected = trace.add(QStringLiteral("selectedFile.statusChanged"));
-    const auto comparison = trace.add(QStringLiteral("selectedFile.comparisonChanged"));
-    const auto passages = trace.add(QStringLiteral("selectedFile.passagesChanged"));
-    const auto handEdited = trace.add(QStringLiteral("selectedFile.handEditedLinesChanged"));
-    const auto choices = trace.add(QStringLiteral("selectedFile.choicesChanged"));
-    const auto regions = trace.add(QStringLiteral("selectedFile.regionsChanged"));
-    const auto markerBlocks = trace.add(QStringLiteral("selectedFile.markerBlocksChanged"));
-    const auto markerOrphans = trace.add(QStringLiteral("selectedFile.markerOrphansChanged"));
+    const auto comparison = trace.add(QStringLiteral("comparison.changed"));
+    const auto leftRows = trace.add(QStringLiteral("comparison.leftRowsChanged"));
+    const auto rightRows = trace.add(QStringLiteral("comparison.rightRowsChanged"));
     const auto summary = trace.add(QStringLiteral("session.summaryChanged"));
     const auto frame = trace.add(QStringLiteral("input.acknowledgedFrame"));
     QObject::connect(scene.controller.files(), &QAbstractItemModel::dataChanged, &trace, [&] { trace.mark(model); });
-    QObject::connect(&scene.controller, &ApplicationController::resultEditorChanged, &trace, [&] { trace.mark(editor); });
-    QObject::connect(&scene.controller, &ApplicationController::selectedFileChanged, &trace, [&] { trace.mark(selected); });
-    QObject::connect(scene.controller.selectedFile(), &SelectedFile::statusChanged, &trace, [&] { trace.mark(projected); });
-    QObject::connect(scene.controller.selectedFile(), &SelectedFile::comparisonChanged, &trace, [&] { trace.mark(comparison); });
-    QObject::connect(scene.controller.selectedFile(), &SelectedFile::passagesChanged, &trace, [&] { trace.mark(passages); });
-    QObject::connect(scene.controller.selectedFile(), &SelectedFile::handEditedLinesChanged, &trace, [&] { trace.mark(handEdited); });
-    QObject::connect(scene.controller.selectedFile(), &SelectedFile::choicesChanged, &trace, [&] { trace.mark(choices); });
-    QObject::connect(scene.controller.selectedFile(), &SelectedFile::regionsChanged, &trace, [&] { trace.mark(regions); });
-    QObject::connect(scene.controller.selectedFile(), &SelectedFile::markerBlocksChanged, &trace, [&] { trace.mark(markerBlocks); });
-    QObject::connect(scene.controller.selectedFile(), &SelectedFile::markerOrphansChanged, &trace, [&] { trace.mark(markerOrphans); });
+    QObject::connect(scene.controller.editor(), &ResultEditorAdapter::stateChanged, &trace,
+                     [&] { trace.mark(editor); });
+    QObject::connect(scene.controller.selection(), &Selection::changed, &trace, [&] { trace.mark(selected); });
+    QObject::connect(scene.controller.selectedFile(), &SelectedFile::statusChanged, &trace,
+                     [&] { trace.mark(projected); });
+    QObject::connect(scene.controller.selectedFile()->comparison(), &ComparisonPresentation::changed, &trace,
+                     [&] { trace.mark(comparison); });
+    QObject::connect(scene.controller.selectedFile()->comparison(), &ComparisonPresentation::leftRowsChanged, &trace,
+                     [&] { trace.mark(leftRows); });
+    QObject::connect(scene.controller.selectedFile()->comparison(), &ComparisonPresentation::rightRowsChanged, &trace,
+                     [&] { trace.mark(rightRows); });
     QObject::connect(scene.controller.files(), &SessionModel::summaryChanged, &trace, [&] { trace.mark(summary); });
     QJsonArray panes;
     for (const auto *name : {"stage2Text", "resultText", "stage3Text"}) {
@@ -501,26 +485,44 @@ void diagnoseTyping(Scene &scene)
         auto *text = item->property("textDocument").value<QQuickTextDocument *>()->textDocument();
         auto *highlighter = highlighterOf(item);
         trace.watchDocument(QString::fromLatin1(name), text);
-        panes.append(QJsonObject{{"pane", name}, {"characters", text->characterCount()},
-            {"blocks", text->blockCount()}, {"definition", highlighter ? highlighter->definition().name() : QString()},
-            {"decorations", highlighter ? static_cast<int>(highlighter->decorations().size()) : 0}});
+        panes.append(
+            QJsonObject{{"pane", name},
+                        {"characters", text->characterCount()},
+                        {"blocks", text->blockCount()},
+                        {"definition", highlighter ? highlighter->definition().name() : QString()},
+                        {"decorations", highlighter ? static_cast<int>(highlighter->decorations().size()) : 0}});
     }
-    writeTypingDiagnostic({{"kind", "context"}, {"sequence", "after_budget_same_scene"},
-        {"budget_samples_instrumented", false}, {"diagnostic_times_include_observer_overhead", true},
-        {"timing_semantics", "cumulative public signal delivery offsets; overlapping, not exclusive costs"},
-        {"cpu_clock", "CLOCK_PROCESS_CPUTIME_ID"}, {"offset_unit", "us"},
-        {"offset_origin", "before_key_event_construction"},
-        {"render_observation", "frameSwapped delivered to GUI thread after revision and length acknowledgment"},
-        {"qt_runtime", qVersion()}, {"qt_build", QT_VERSION_STR}, {"os", QSysInfo::prettyProductName()},
-        {"architecture", QSysInfo::buildCpuArchitecture()}, {"platform", QGuiApplication::platformName()},
-        {"controls_style", QQuickStyle::name()},
-        {"graphics_api", static_cast<int>(scene.window->rendererInterface()->graphicsApi())},
-        {"window_width", scene.window->width()}, {"window_height", scene.window->height()},
-        {"workload_path", "src/workload.cpp"}, {"workload_source", "in_memory_workloadFile_fixture"},
-        {"source_lines", kWorkloadLines}, {"conflict_every", kRegionEvery},
-        {"repeats", kRepeats}, {"keys_per_repeat", kKeysPerRepeat}, {"diagnostic_scroll_notches", 0}, {"panes", panes},
-        {"input_path", "src/app/ResultEditorAdapter.cpp"}, {"model_path", "src/app/SessionModel.cpp"},
-        {"layout_path", "src/ui/TextBlocks.cpp"}, {"highlight_path", "src/highlighting/PaneHighlighter.cpp"}});
+    writeTypingDiagnostic(
+        {{"kind", "context"},
+         {"sequence", "after_budget_same_scene"},
+         {"budget_samples_instrumented", false},
+         {"diagnostic_times_include_observer_overhead", true},
+         {"timing_semantics", "cumulative public signal delivery offsets; overlapping, not exclusive costs"},
+         {"cpu_clock", "CLOCK_PROCESS_CPUTIME_ID"},
+         {"offset_unit", "us"},
+         {"offset_origin", "before_key_event_construction"},
+         {"render_observation", "frameSwapped delivered to GUI thread after revision and length acknowledgment"},
+         {"qt_runtime", qVersion()},
+         {"qt_build", QT_VERSION_STR},
+         {"os", QSysInfo::prettyProductName()},
+         {"architecture", QSysInfo::buildCpuArchitecture()},
+         {"platform", QGuiApplication::platformName()},
+         {"controls_style", QQuickStyle::name()},
+         {"graphics_api", static_cast<int>(scene.window->rendererInterface()->graphicsApi())},
+         {"window_width", scene.window->width()},
+         {"window_height", scene.window->height()},
+         {"workload_path", "src/workload.cpp"},
+         {"workload_source", "in_memory_workloadFile_fixture"},
+         {"source_lines", kWorkloadLines},
+         {"conflict_every", kRegionEvery},
+         {"repeats", kRepeats},
+         {"keys_per_repeat", kKeysPerRepeat},
+         {"diagnostic_scroll_notches", 0},
+         {"panes", panes},
+         {"input_path", "src/app/ResultEditorAdapter.cpp"},
+         {"model_path", "src/app/SessionModel.cpp"},
+         {"layout_path", "src/ui/TextBlocks.cpp"},
+         {"highlight_path", "src/highlighting/PaneHighlighter.cpp"}});
     for (int repeat = 0; repeat < kRepeats; ++repeat) {
         const auto position = document->findBlockByNumber(kWorkloadLines / 2 + 3 + repeat).position() + 4;
         result->forceActiveFocus();
@@ -529,22 +531,30 @@ void diagnoseTyping(Scene &scene)
         for (int key = 0; key < kKeysPerRepeat; ++key) {
             const auto before = file()->current().id;
             const auto length = document->characterCount();
-            QJsonObject record{{"kind", "key"}, {"repeat", repeat + 1}, {"key", key + 1},
-                {"revision_before", QString::number(before)}, {"characters_before", length},
-                {"document_revision_before", document->revision()},
-                {"blocks_before", document->blockCount()}, {"cursor_before", result->property("cursorPosition").toInt()},
-                {"viewport_y", viewport->property("contentY").toDouble()},
-                {"viewport_height", viewport->height()}, {"content_height", viewport->property("contentHeight").toDouble()}};
-            const auto cost = costToFrame(scene.window, [&] {
-                trace.begin();
-                QKeyEvent press(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier, QStringLiteral("a"));
-                QCoreApplication::sendEvent(result, &press);
-                trace.mark(dispatched);
-            }, [&] {
-                if (file()->current().id == before || document->characterCount() != length + 1) return false;
-                trace.mark(frame);
-                return true;
-            });
+            QJsonObject record{{"kind", "key"},
+                               {"repeat", repeat + 1},
+                               {"key", key + 1},
+                               {"revision_before", QString::number(before)},
+                               {"characters_before", length},
+                               {"document_revision_before", document->revision()},
+                               {"blocks_before", document->blockCount()},
+                               {"cursor_before", result->property("cursorPosition").toInt()},
+                               {"viewport_y", viewport->property("contentY").toDouble()},
+                               {"viewport_height", viewport->height()},
+                               {"content_height", viewport->property("contentHeight").toDouble()}};
+            const auto cost = costToFrame(
+                scene.window,
+                [&] {
+                    trace.begin();
+                    QKeyEvent press(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier, QStringLiteral("a"));
+                    QCoreApplication::sendEvent(result, &press);
+                    trace.mark(dispatched);
+                },
+                [&] {
+                    if (file()->current().id == before || document->characterCount() != length + 1) return false;
+                    trace.mark(frame);
+                    return true;
+                });
             trace.finish();
             const auto timing = trace.json();
             record.insert("trace", timing);
@@ -581,13 +591,14 @@ int checkCost()
             auto *highlighter = highlighterOf(scene.item(QString::fromLatin1(pane)));
             CHECK(highlighter);
             test_support::settleFor(std::string(pane) + " highlighting", [&] {
-                return highlighter->definition().name() == QStringLiteral("C++") && !highlighter->decorations().isEmpty();
+                return highlighter->definition().name() == QStringLiteral("C++")
+                    && !highlighter->decorations().isEmpty();
             });
         }
     });
     std::cout << "workload " << kWorkloadLines << " lines, conflict every " << kRegionEvery
               << " lines, loaded and highlighted in " << loadClock.elapsed() << " ms\n";
-    const auto file = [&] { return scene.controller.files()->file("workload"); };
+    const auto file = [&] { return scene.controller.store()->file("workload"); };
     std::vector<qint64> typingMedians;
     std::vector<qint64> scrollMedians;
     for (int repeat = 0; repeat < kRepeats; ++repeat) {
@@ -603,11 +614,15 @@ int checkCost()
             for (int key = 0; key < kKeysPerRepeat; ++key) {
                 const auto before = file()->current().id;
                 const auto length = document->characterCount();
-                const auto cost = costToFrame(scene.window, [&] {
-                    QKeyEvent press(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier, QStringLiteral("a"));
-                    QCoreApplication::sendEvent(result, &press);
-                }, [&] { return file()->current().id != before && document->characterCount() == length + 1; });
-                if (cost.wall < 0) throw std::runtime_error("key " + std::to_string(key) + " was not acknowledged and drawn");
+                const auto cost = costToFrame(
+                    scene.window,
+                    [&] {
+                        QKeyEvent press(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier, QStringLiteral("a"));
+                        QCoreApplication::sendEvent(result, &press);
+                    },
+                    [&] { return file()->current().id != before && document->characterCount() == length + 1; });
+                if (cost.wall < 0)
+                    throw std::runtime_error("key " + std::to_string(key) + " was not acknowledged and drawn");
                 keys.push_back(cost.cpu);
                 keysWall.push_back(cost.wall);
             }
@@ -616,38 +631,43 @@ int checkCost()
             // Scroll the result from the top, one wheel notch at a time.
             viewport->setProperty("contentY", 0);
             test_support::settleFor("the left pane to follow to the top",
-                [&] { return left->property("contentY").toDouble() <= 1; });
+                                    [&] { return left->property("contentY").toDouble() <= 1; });
             std::vector<qint64> notches;
             std::vector<qint64> notchesWall;
             static quint64 timestamp = 0;
             for (int notch = 0; notch < kNotchesPerRepeat; ++notch) {
                 // At the bottom, go back to the top before the next timed notch.
                 if (viewport->property("contentY").toDouble() + viewport->height()
-                        >= viewport->property("contentHeight").toDouble() - 1) {
+                    >= viewport->property("contentHeight").toDouble() - 1) {
                     viewport->setProperty("contentY", 0);
                     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
                 }
                 const auto from = viewport->property("contentY").toDouble();
-                const auto cost = costToFrame(scene.window, [&] {
-                    const auto point = viewport->mapToScene(QPointF(viewport->width() / 2, viewport->height() / 2));
-                    QWheelEvent wheel(point, scene.window->mapToGlobal(point), QPoint(), QPoint(0, -120), Qt::NoButton,
-                        Qt::NoModifier, Qt::NoScrollPhase, false);
-                    timestamp += 250;
-                    wheel.setTimestamp(timestamp);
-                    QCoreApplication::sendEvent(scene.window, &wheel);
-                }, [&] { return viewport->property("contentY").toDouble() > from; });
-                if (cost.wall < 0) throw std::runtime_error("notch " + std::to_string(notch) + " did not scroll and draw");
+                const auto cost = costToFrame(
+                    scene.window,
+                    [&] {
+                        const auto point = viewport->mapToScene(QPointF(viewport->width() / 2, viewport->height() / 2));
+                        QWheelEvent wheel(point, scene.window->mapToGlobal(point), QPoint(), QPoint(0, -120),
+                                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+                        timestamp += 250;
+                        wheel.setTimestamp(timestamp);
+                        QCoreApplication::sendEvent(scene.window, &wheel);
+                    },
+                    [&] { return viewport->property("contentY").toDouble() > from; });
+                if (cost.wall < 0)
+                    throw std::runtime_error("notch " + std::to_string(notch) + " did not scroll and draw");
                 notches.push_back(cost.cpu);
                 notchesWall.push_back(cost.wall);
                 test_support::settleFor("the scroll to end", [&] { return !viewport->property("moving").toBool(); });
             }
             test_support::settleFor("the left pane to follow",
-                [&] { return left->property("contentY").toDouble() > 0; });
+                                    [&] { return left->property("contentY").toDouble() > 0; });
             typingMedians.push_back(median(keys));
             scrollMedians.push_back(median(notches));
-            std::cout << "repeat " << repeat + 1 << " key CPU ms: " << join(keys) << "; wall ms: " << join(keysWall) << '\n';
-            std::cout << "repeat " << repeat + 1 << " notch CPU ms: " << join(notches) << "; wall ms: " << join(notchesWall)
+            std::cout << "repeat " << repeat + 1 << " key CPU ms: " << join(keys) << "; wall ms: " << join(keysWall)
                       << '\n';
+            std::cout << "repeat " << repeat + 1 << " notch CPU ms: " << join(notches)
+                      << "; wall ms: " << join(notchesWall) << '\n';
         });
     }
     const auto typing = median(typingMedians);
@@ -685,28 +705,48 @@ bool writeColourScheme(const QString &configHome, const QString &scheme)
 }
 
 int main(int argc, char **argv)
-{
+try {
     // Unbuffered, so a run that times out still shows how far it got.
     std::cout << std::unitbuf;
-    QTemporaryDir data;
-    if (!data.isValid()) return 2;
     const QString mode = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QString();
     const QString argument = argc > 2 ? QString::fromLocal8Bit(argv[2]) : QString();
-    const auto configHome = data.path() + QStringLiteral("/config");
-    qputenv("XDG_DATA_HOME", data.path().toUtf8());
+    // The colour scheme under test is a kdeglobals file in a configuration home of its own, which
+    // KColorScheme reads at startup. The CTest wrapper keeps every other XDG directory private.
+    QTemporaryDir scheme;
+    if (!scheme.isValid()) {
+        std::cerr << "cannot create a configuration home for the colour scheme\n";
+        return 2;
+    }
+    const auto configHome = scheme.path() + QStringLiteral("/config");
     qputenv("XDG_CONFIG_HOME", configHome.toUtf8());
-    qputenv("XDG_CACHE_HOME", (data.path() + "/cache").toUtf8());
-    if (mode == QStringLiteral("roles") && !writeColourScheme(configHome, argument)) return 2;
+    if (mode == QStringLiteral("roles") && !writeColourScheme(configHome, argument)) {
+        std::cerr << "cannot write the " << argument.toStdString() << " colour scheme to " << configHome.toStdString()
+                  << '\n';
+        return 2;
+    }
     QApplication application(argc, argv);
+    // The English catalog supplies the plural forms these checks read.
+    branch_truce::installTranslations(application);
     QCoreApplication::setApplicationName("BranchTruceThemeTests");
-    if (QGuiApplication::platformName() != QStringLiteral("offscreen")) return 2;
+    if (QGuiApplication::platformName() != QStringLiteral("offscreen")) {
+        std::cerr << "run with QT_QPA_PLATFORM=offscreen, not " << QGuiApplication::platformName().toStdString()
+                  << '\n';
+        return 2;
+    }
     if (mode == QStringLiteral("icons") && argc == 3) return checkIcons(argument);
     if (mode == QStringLiteral("roles") && argc == 3) {
-        const auto other = argument == QStringLiteral("BreezeDark") ? QStringLiteral("BreezeLight") : QStringLiteral("BreezeDark");
+        const auto other =
+            argument == QStringLiteral("BreezeDark") ? QStringLiteral("BreezeLight") : QStringLiteral("BreezeDark");
         return checkRoles(argument, other);
     }
     if (mode == QStringLiteral("cues") && argc == 2) return checkCues();
     if (mode == QStringLiteral("cost") && argc == 2) return checkCost();
     std::cerr << "usage: branch_truce_theme_tests icons <icon list> | roles <scheme> | cues | cost\n";
     return 2;
+} catch (const std::exception &error) {
+    std::cerr << "FAIL theme test setup: " << error.what() << '\n';
+    return 1;
+} catch (...) {
+    std::cerr << "FAIL theme test setup: unknown exception\n";
+    return 1;
 }

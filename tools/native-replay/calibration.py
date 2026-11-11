@@ -1,18 +1,62 @@
 """Read-only provenance and explicit, unmasked native/reference diagnostics."""
-import json
-import sys
-sys.dont_write_bytecode = True
+import argparse
 import configparser
+import json
 import math
 from pathlib import Path
 import shutil
-import subprocess
+import signal
+import sys
 
-from fixture import sha256
+if __name__ == '__main__':
+    # Keep the source checkout read only when run as a script, including without -B.
+    sys.dont_write_bytecode = True
+
+import capture_profile  # noqa: E402
+from fixture import sha256  # noqa: E402
+from processes import interrupt, run  # noqa: E402
+from reports import write_json  # noqa: E402
+from scene import require  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 CONTRACT = HERE / 'reference-contract.json'
-PROFILE = HERE / 'capture-profile.json'
+# The narrow regions each kind of reference exception may name.
+EXCEPTION_REGIONS = {'truthful-identity': {'source_identity', 'incoming_identity'},
+                     'truthful-metadata': {'footer_facts'}, 'renderer': {'glyph'},
+                     'background-role-fill': {'accepted_fill'}}
+
+
+def rect_argument(rect):
+    return ','.join(map(str, rect))
+
+
+class ImageTool:
+    """The native-replay-image command built from ImageCheck.cpp. Failures raise CalledProcessError."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+
+    def _json(self, *args):
+        return json.loads(run([str(self.path), *map(str, args)],
+                              timeout=30, max_output=1024 * 1024, check=True).stdout)
+
+    def decode(self, image):
+        return self._json('decode', image)
+
+    def compare(self, image, other):
+        return self._json('compare', image, other)
+
+    def crop(self, image, output, rect):
+        run([str(self.path), 'crop', '--rect=' + rect_argument(rect), str(image), str(output)],
+            timeout=30, max_output=65536, check=True)
+
+    def artifacts(self, reference, native, prefix, *, reference_rect, native_rect,
+                  reference_replication, native_replication, reference_grid):
+        return self._json('artifacts', '--reference-rect=' + rect_argument(reference_rect),
+                          '--native-rect=' + rect_argument(native_rect),
+                          f'--reference-replication={reference_replication}',
+                          f'--native-replication={native_replication}',
+                          '--reference-grid=' + rect_argument(reference_grid), reference, native, prefix)
 
 
 def load_contract(source):
@@ -44,33 +88,44 @@ def validate_contract(contract):
             raise ValueError('Exceptions must name a narrow region')
         if exception['reference_sha256'] != contract['references'].get(exception['reference']):
             raise ValueError('Exception reference hash mismatch')
-        allowed = {'truthful-identity': {'source_identity', 'incoming_identity'},
-                   'truthful-metadata': {'footer_facts'}, 'renderer': {'glyph'},
-                   'background-role-fill': {'accepted_fill'}}
-        if exception['region'] not in allowed.get(exception['kind'], set()):
+        if exception['kind'] not in EXCEPTION_REGIONS:
+            raise ValueError(f'Unrecognized exception kind: {exception["kind"]}')
+        if exception['region'] not in EXCEPTION_REGIONS[exception['kind']]:
             raise ValueError('Exception region is too broad or unrelated to its kind')
-        if exception['kind'] not in ('truthful-identity', 'truthful-metadata', 'renderer', 'background-role-fill'):
-            raise ValueError('Unrecognized exception kind')
         if 'mask' in exception or 'threshold' in exception:
             raise ValueError('Exceptions never mask pixels or set similarity thresholds')
     return contract
 
 
-def build_provenance(source, build):
-    executable = build / 'src/app/branch-truce'
+# Cache entries recorded with each capture. Keep these names in step with CMakeLists.txt options.
+CMAKE_OBSERVATIONS = ('CMAKE_BUILD_TYPE', 'CMAKE_CXX_COMPILER', 'BRANCH_TRUCE_SYNTAX_HIGHLIGHTING')
+
+
+def cmake_cache(build):
+    """Read the build's CMake cache. A missing observed key means the build options changed."""
     cache = build / 'CMakeCache.txt'
     values = {}
-    if cache.exists():
-        for line in cache.read_text().splitlines():
-            if '=' in line and not line.startswith(('#', '//')):
-                k, v = line.split('=', 1)
-                values[k.split(':')[0]] = v
+    if not cache.exists():
+        return values
+    for line in cache.read_text().splitlines():
+        if '=' in line and not line.startswith(('#', '//')):
+            k, v = line.split('=', 1)
+            values[k.split(':')[0]] = v
+    missing = [key for key in ('CMAKE_HOME_DIRECTORY', *CMAKE_OBSERVATIONS) if key not in values]
+    if missing:
+        raise KeyError(f'{cache} lacks {", ".join(missing)}')
+    return values
+
+
+def build_provenance(source, build):
+    executable = build / 'src/app/branch-truce'
+    values = cmake_cache(build)
     build_source = Path(values.get('CMAKE_HOME_DIRECTORY', '/unavailable'))
     # Record observed source identity separately from the binary's embedded build identity.
     # A source checkout's HEAD alone cannot prove which bytes produced an executable.
     def git_at(root, *args):
-        result = subprocess.run(['git', '-C', str(root), *args], capture_output=True, text=True)
-        return result.stdout.strip() if result.returncode == 0 else None
+        result = run(['git', '-C', str(root), *args], timeout=10, max_output=65536)
+        return result.stdout.decode().strip() if result.returncode == 0 else None
     source_files = [p for p in (source / 'src').rglob('*') if p.is_file()]
     equal = bool(source_files) and all((build_source / p.relative_to(source)).is_file()
         and sha256(p) == sha256(build_source / p.relative_to(source)) for p in source_files)
@@ -81,8 +136,7 @@ def build_provenance(source, build):
                 embedded_build_identity='not observed; executable SHA identifies the exact artifact',
                 manifests={name: sha256(build / name) for name in ('CMakeCache.txt', 'build.ninja', 'compile_commands.json')
                            if (build / name).is_file()},
-                cmake_observations={k: v for k, v in values.items() if k in
-                    ('CMAKE_BUILD_TYPE', 'CMAKE_CXX_COMPILER', 'BRANCH_TRUCE_WITH_SYNTAX_HIGHLIGHTING')})
+                cmake_observations={k: v for k, v in values.items() if k in CMAKE_OBSERVATIONS})
 
 
 def observations(state):
@@ -141,12 +195,12 @@ def native_regions(state):
     return result
 
 
-def compare(source, shot, state, image_tool, output):
+def compare(source, shot, state, tool, output):
     contract = load_contract(source)
     output.mkdir(exist_ok=False)
     name = shot.name
     reference = source / 'docs/ui-mockup' / name
-    decoded = json.loads(subprocess.check_output([str(image_tool), str(reference)]))
+    decoded = tool.decode(reference)
     if [decoded['width'], decoded['height']] != contract['reference_decoded_size']:
         raise ValueError('Reference decoded size differs from contract')
     # The originals are preserved alongside artifacts, without re-encoding.
@@ -165,9 +219,8 @@ def compare(source, shot, state, image_tool, output):
                     math.ceil((x+w)*scale)-math.floor(x*scale),
                     math.ceil((y+h)*scale)-math.floor(y*scale)]
         reference_grid = [3*x-2*physical[0], 3*y-2*physical[1], 3*w, 3*h]
-        command = [str(image_tool), '--artifacts', str(reference), str(shot), str(prefix),
-                   *map(str, physical), *map(str, rect), '2', '3', *map(str, reference_grid)]
-        result = json.loads(subprocess.check_output(command))
+        result = tool.artifacts(reference, shot, prefix, reference_rect=physical, native_rect=rect,
+                                reference_replication=2, native_replication=3, reference_grid=reference_grid)
         regions[region] = dict(reference_logical_rect=logical, reference_pixel_rect=physical, native_rect=rect,
                                count_unit='common-grid cells at 3 cells per logical pixel',
                                **result, status='outstanding' if result['differing_pixels'] else 'identical',
@@ -179,7 +232,7 @@ def compare(source, shot, state, image_tool, output):
                   regions=regions, observations=observations(state),
                   exceptions=[e for e in contract['exceptions'] if e['reference'] == name],
                   policy='Diagnostics only. Exceptions do not subtract pixels; unexplained differences remain outstanding.')
-    (output / 'comparison.json').write_text(json.dumps(report, indent=2)+'\n')
+    write_json(output / 'comparison.json', report)
     return report
 
 
@@ -191,7 +244,7 @@ def colour_scheme(path):
 
 
 def validate_profile(state, metadata):
-    profile = json.loads(PROFILE.read_text())
+    profile = capture_profile.load()
     actual = state['profile']
     for key, expected in profile['pinned_observations'].items():
         if actual.get(key) != expected:
@@ -214,15 +267,72 @@ def validate_profile(state, metadata):
     return True
 
 
+def callout_closeups(state, shot, tool, output):
+    output.mkdir()
+    regions = {}
+    for name in ('fileList', 'selectedPath', 'fileToolBar', 'stage2Identity', 'stage3Identity',
+                 'stage2Gutter', 'resultGutter', 'stage3Gutter', 'stage2Bands', 'stage3Bands',
+                 'stage2Viewport', 'stage3Viewport', 'selectedProblem'):
+        matches = [row for row in state['items'] if row['name'] == name]
+        if len(matches) != 1:
+            continue
+        row = matches[0]
+        x, y = max(0, math.floor(row['x'])), max(0, math.floor(row['y']))
+        right = min(state['width'], math.ceil(row['x'] + row['width']))
+        bottom = min(state['height'], math.ceil(row['y'] + row['height']))
+        if right <= x or bottom <= y:
+            continue
+        rect = [x, y, right-x, bottom-y]
+        destination = output / f'{name}.png'
+        tool.crop(shot, destination, rect)
+        regions[name] = dict(observed_scene_rect=[row[key] for key in ('x', 'y', 'width', 'height')],
+                             native_pixel_crop=rect, file=destination.name,
+                             acceptance='pending original-image inspection; native diagnostic only')
+    write_json(output / 'callout-regions.json', dict(original=str(shot), regions=regions,
+               transforms='exact native pixels, no scaling, overlays or target substitution'))
+
+
+def collect_shot(state, context, kind, *, shoot, tool, source, out):
+    """Capture a validated scene and retain its original, profile, crops and comparisons."""
+    require((state['width'], state['height']) == tuple(context['size']), 'Window geometry differs')
+    name = f'{context["theme"]}-{kind}'
+    shot = out / f'{name}.png'
+    shoot(shot)
+    image = tool.decode(shot)
+    require((image['width'], image['height']) == tuple(context['size']), 'Capture geometry differs')
+    metadata = dict(context, kind=kind, capture_sha256=sha256(shot), decoded_sha256=image['decoded_sha256'])
+    validate_profile(state, metadata)
+    write_json(out / f'{name}-state.json', dict(metadata=metadata, state=state))
+    callout_closeups(state, shot, tool, out / f'{name}-callouts')
+    compare(source, shot, state, tool, out / f'{name}-comparison')
+    return dict(file=str(shot), **metadata)
+
+
 def capture_inputs(source):
     paths = [p for folder in ('src', 'tools/native-replay') for p in (source / folder).rglob('*')
              if p.is_file() and '__pycache__' not in p.parts]
     paths.append(source / 'docs/ui-design.md')
-    paths.append(source / 'tests/acceptance/fidelity-ledger.json')
     return {str(p.relative_to(source)): sha256(p) for p in sorted(paths)}
 
 
+def cleanup_confirmed(receipts):
+    """Whether there are receipts and each shows its private root removed and its processes reaped."""
+    for path in receipts:
+        if not Path(path).is_file():
+            return False
+        receipt = json.loads(Path(path).read_text())
+        if (receipt.get('private_root_removed') is not True or receipt.get('owned_processes_reaped') is not True
+                or receipt.get('owned_readers_stopped') is not True or receipt.get('errors') != []
+                or Path(receipt['private_root']).exists()):
+            return False
+    return bool(receipts)
+
+
 def verify_capture(output, source):
+    """Check a capture directory against the current inputs. Returns its capture and comparison counts.
+
+    Raises ValueError naming the first input, artifact or receipt that no longer holds.
+    """
     report = json.loads((output / 'verification.json').read_text())
     if report['source_inputs'] != capture_inputs(source):
         raise ValueError('Capture inputs changed; new captures required')
@@ -236,18 +346,23 @@ def verify_capture(output, source):
     for row in report['captures']:
         state = json.loads(Path(row['file']).with_name(Path(row['file']).stem+'-state.json').read_text())
         validate_profile(state['state'], state['metadata'])
-        cleanup = json.loads((Path(row['file']).parent / 'cleanup.json').read_text())
-        if not cleanup['private_root_removed'] or not cleanup['owned_processes_reaped'] or Path(cleanup['private_root']).exists():
-            raise ValueError('Replay cleanup incomplete')
+    if not cleanup_confirmed({Path(row['file']).parent / 'cleanup.json' for row in report['captures']}):
+        raise ValueError('Replay cleanup incomplete')
     if any(r['differing_pixels'] for r in report['comparisons']):
         raise ValueError('Native repeat pixels differ')
-    print(f"{len(report['captures'])} captures, {len(report['comparisons'])} repeat comparisons: "
+    return dict(captures=len(report['captures']), comparisons=len(report['comparisons']))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--verify', type=Path, required=True, metavar='CAPTURE_OUTPUT',
+                        help='output directory of replay.py capture to check against this checkout')
+    args = parser.parse_args()
+    summary = verify_capture(args.verify.resolve(), HERE.parents[1])
+    print(f"{summary['captures']} captures, {summary['comparisons']} repeat comparisons: "
           'zero differing native pixels; current inputs/artifacts verified; cleanup confirmed')
 
 
 if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--verify', type=Path, required=True)
-    args = parser.parse_args()
-    verify_capture(args.verify.resolve(), HERE.parents[1])
+    signal.signal(signal.SIGTERM, interrupt)
+    main()

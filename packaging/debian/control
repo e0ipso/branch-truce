@@ -3,10 +3,8 @@ Section: kde
 Priority: optional
 Maintainer: Branch Truce contributors <contributors@example.invalid>
 # The CMake, ECM, Qt, Kirigami and SyntaxHighlighting floors are the CMake
-# API floors in CMakeLists.txt. Each OS base resolves them to its own
-# packages; docs/target-platforms.md records the versions. Stock noble has no
-# libkf6syntaxhighlighting-dev, so Tuxedo OS takes it from the vendor
-# ubuntu-plasma repository.
+# API floors in CMakeLists.txt. The build image resolves them to its own
+# packages; docs/target-platforms.md records the versions.
 Build-Depends: debhelper-compat (= 13),
                cmake (>= 3.28),
                extra-cmake-modules (>= 6.0~),
@@ -14,7 +12,9 @@ Build-Depends: debhelper-compat (= 13),
                libkf6syntaxhighlighting-dev (>= 6.0~),
                libkirigami-dev (>= 6.0~),
                qt6-base-dev (>= 6.6~),
-               qt6-declarative-dev (>= 6.6~)
+               qt6-declarative-dev (>= 6.6~),
+               qt6-l10n-tools (>= 6.6~),
+               qt6-tools-dev (>= 6.6~)
 Standards-Version: 4.6.2
 Rules-Requires-Root: no
 
@@ -59,5 +59,5 @@ Description: Standalone offline Git merge and rebase text conflict resolver for 
  drafts inside the app until you mark a file resolved, and leaves unsupported
  files visible with the reason.
  .
- Separate amd64 builds target Kubuntu 26.04 and Tuxedo OS 24.04 with their
- distribution's Qt 6 and KDE Frameworks 6 libraries.
+ The amd64 build targets Kubuntu 26.04 with its distribution's Qt 6 and KDE
+ Frameworks 6 libraries.

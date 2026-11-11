@@ -1,0 +1,215 @@
+// Sessions, drafts and recovery records the session model, recovery and selected-file suites share.
+#pragma once
+
+#include "TestHarness.h"
+#include "app/Selection.h"
+#include "app/SessionHandoff.h"
+#include "app/SessionModel.h"
+#include "fixtures/Await.h"
+#include "fixtures/ChoiceFile.h"
+#include "recovery/RecoveryRestore.h"
+#include "storage/RecoveryStore.h"
+#include <QJsonValue>
+#include <QMap>
+#include <QString>
+#include <QUuid>
+#include <QVariantMap>
+#include <stdexcept>
+#include <string>
+
+namespace session_fixtures {
+using test_support::await;
+
+using namespace branch_truce;
+
+struct NoSelectionGuard : SelectionGuard {
+    [[nodiscard]] bool holdsSelection() const override { return false; }
+};
+inline constexpr auto recoverySessionId = "42c4588c-5cc2-4fba-964f-3e98a066e671";
+
+inline Draft draft(std::string text = "result\n")
+{
+    return {std::move(text), {{"left", {DecisionValue::Accepted, 1}}}, 0};
+}
+inline QVariant role(const SessionModel &model, int value, int row = 0) { return model.data(model.index(row), value); }
+inline void resolve(SessionStore &store, const std::string &id)
+{
+    const auto revision = store.file(id)->current().id;
+    CHECK(await(store.beginMarkResolved(id, revision)) == Transition::Applied);
+    CHECK(await(store.recordCheckpoint(id, revision, Outcome::Succeeded)) == Transition::Applied);
+    CHECK(await(store.recordWrite(id, revision, Outcome::Succeeded)) == Transition::Applied);
+    CHECK(await(store.recordStage(id, revision, Outcome::Succeeded, "verified-object", "100644"))
+          == Transition::Applied);
+}
+inline FileSession recoverableFile()
+{
+    FileSnapshots captured;
+    captured.path = std::string(":literal\t") + static_cast<char>(0xff);
+    captured.resultMode = "100644";
+    captured.provenance.sessionId = recoverySessionId;
+    captured.provenance.worktreeRoot = "/disposable-worktree";
+    captured.provenance.gitDirectory = "/disposable-worktree/.git";
+    captured.provenance.stage2CommitId = "left-commit";
+    captured.provenance.stage3CommitId = "right-commit";
+    captured.conversion.attributes = {{"text", "set"}, {"eol", "crlf"}};
+    captured.stage2 = SourceSnapshot{
+        "left-object",
+        "100644",
+        "left\n",
+        {"left\n", "left\r\n", {SnapshotFormat::Encoding::Utf8, false, SnapshotFormat::Newline::CrLf, true}},
+        "left-commit",
+        "Current checkout"};
+    captured.stage3 = SourceSnapshot{
+        "right-object",
+        "100644",
+        "right\n",
+        {"right\n", "right\n", {SnapshotFormat::Encoding::Utf8, false, SnapshotFormat::Newline::Lf, true}},
+        "right-commit",
+        "Merged commit"};
+    captured.launchResult.text = {"manual launch\n",
+                                  "\xef\xbb\xbfmanual launch\r\n",
+                                  {SnapshotFormat::Encoding::Utf8, true, SnapshotFormat::Newline::CrLf, true}};
+    captured.launchResult.identity = {11, 22, 0100644, 18, 33, 44, 55, 66};
+    return FileSession("recoverable", captured.path, draft(captured.launchResult.text.utf8), {.snapshots = captured});
+}
+// A supported file of the recoverable session under another identity.
+inline FileSession sessionFile(const std::string &id, Draft value = draft())
+{
+    auto captured = *recoverableFile().snapshots();
+    captured.path = id + ".txt";
+    captured.launchResult.text = test_support::choiceText(value.text);
+    return FileSession(id, captured.path, std::move(value), {.snapshots = captured});
+}
+// fileId -> handoff entry; every file must appear in exactly one group.
+inline QMap<QString, QVariantMap> handoffEntries(const QVariantMap &summary)
+{
+    QMap<QString, QVariantMap> result;
+    for (const auto &group : summary.value("groups").toList()) {
+        const auto category = group.toMap().value("category").toString();
+        for (const auto &value : group.toMap().value("entries").toList()) {
+            const auto entry = value.toMap();
+            CHECK(entry.value("category").toString() == category);
+            CHECK(!result.contains(entry.value("fileId").toString()));
+            result.insert(entry.value("fileId").toString(), entry);
+        }
+    }
+    return result;
+}
+inline QMap<QString, QVariantMap> finishBlockers(const SessionStore &store)
+{
+    auto entries = handoffEntries(SessionHandoff::build(store, {}).toVariant());
+    erase_if(entries, [](const auto &entry) { return entry.value().value("blockers").toStringList().isEmpty(); });
+    return entries;
+}
+inline QByteArray payload(const storage::RecoveryStore &store, const QJsonValue &reference)
+{
+    Problem error;
+    const auto bytes = store.payload(reference.toString().toLatin1(), &error);
+    CHECK(error.isEmpty());
+    return bytes;
+}
+// A draft a record holds: its text and decisions. Records do not hold the marker count.
+inline void checkDraft(const Draft &recorded, const Draft &expected)
+{
+    CHECK(recorded.text == expected.text);
+    CHECK(recorded.decisions == expected.decisions);
+}
+inline Draft savedDraft()
+{
+    auto value = draft("saved combined \xc3\xa9\n");
+    value.decisions["right"] = {DecisionValue::Ignored, {}};
+    return value;
+}
+inline Draft unsavedDraft()
+{
+    auto value = savedDraft();
+    value.text += "<<<<<<< ours\nacknowledged unsaved \xf0\x9f\x98\x80\n=======\nother\n>>>>>>> theirs\n";
+    value.decisions["right"] = {DecisionValue::Accepted, 2};
+    value.unresolvedMarkers = 1;
+    return value;
+}
+inline Draft finalDecision()
+{
+    auto value = unsavedDraft();
+    value.decisions["later contribution"] = {DecisionValue::Ignored, {}};
+    return value;
+}
+inline FileSession replayedFile(const QString &directory)
+{
+    const auto replay = replayRecovery(storage::RecoveryStore(directory));
+    if (!replay.succeeded) throw std::runtime_error("recovery replay: " + replay.problem.encoded().toStdString());
+    CHECK(replay.succeeded && replay.problem.isEmpty() && replay.files.size() == 1);
+    return replay.files.front();
+}
+inline void checkRecoveredHistory(SessionStore &store, const Draft &before, const Draft &chosen)
+{
+    const auto captures = *store.file("choices")->snapshots();
+    const auto check = [&](const Draft &expected) {
+        const auto replay = replayedFile(store.recoveryDirectory());
+        CHECK(replay.current().draft == expected && replay.current().id == store.file("choices")->current().id);
+        CHECK(*replay.snapshots() == captures && replay.publication().checkpoint()
+              && replay.revision(*replay.publication().checkpoint())->draft == before);
+        CHECK(!replay.publication().reviewed() && !replay.publication().written() && !replay.publication().staged()
+              && !replay.facts().resolved);
+        CHECK(!store.hasPendingRecovery());
+    };
+    check(chosen);
+    CHECK(await(store.undo("choices", store.file("choices")->current().id)) == Transition::Applied);
+    check(before);
+    CHECK(await(store.redo("choices", store.file("choices")->current().id)) == Transition::Applied);
+    check(chosen);
+    auto reopened = replayedFile(store.recoveryDirectory());
+    CHECK(reopened.undo(reopened.current().id) == Transition::Applied && reopened.current().draft == before);
+    CHECK(reopened.redo(reopened.current().id) == Transition::Applied && reopened.current().draft == chosen);
+}
+
+inline QString recordIntent(SessionStore &store, const std::string &id, MutationKind kind)
+{
+    const auto mutation = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    CHECK(
+        await(store.commitRecord(mutationRecoveryTransaction(*store.file(id), {mutation, kind, {}}))).commit.succeeded);
+    return mutation;
+}
+
+inline void preparePublication(SessionStore &store, const std::string &id, bool staging)
+{
+    const auto revision = store.file(id)->current().id;
+    CHECK(await(store.beginMarkResolved(id, revision, true)) == Transition::Applied);
+    CHECK(await(store.recordCheckpoint(id, revision, Outcome::Succeeded)) == Transition::Applied);
+    if (staging) CHECK(await(store.recordWrite(id, revision, Outcome::Succeeded)) == Transition::Applied);
+}
+
+inline void completePublication(SessionStore &store, const std::string &id, bool staging)
+{
+    const auto revision = store.file(id)->current().id;
+    CHECK((staging ? await(store.recordStage(id, revision, Outcome::Succeeded, "verified-object", "100644"))
+                   : await(store.recordWrite(id, revision, Outcome::Succeeded)))
+          == Transition::Applied);
+}
+
+// Readable case names for the enums a table of cases runs over.
+inline std::string nameOf(ChoiceScope scope) { return scope == ChoiceScope::Line ? "line" : "section"; }
+inline std::string nameOf(ChoiceAction action)
+{
+    switch (action) {
+    case ChoiceAction::Accept: return "accept";
+    case ChoiceAction::Ignore: return "ignore";
+    case ChoiceAction::ResolveUsingSide: return "resolve using the side";
+    case ChoiceAction::CombineLeftFirst: return "combine left first";
+    case ChoiceAction::CombineRightFirst: return "combine right first";
+    }
+    return "unknown action";
+}
+inline std::string nameOf(NonConflictingScope scope)
+{
+    return scope == NonConflictingScope::Left ? "left" : scope == NonConflictingScope::Right ? "right" : "both sides";
+}
+inline std::string nameOf(SourceSide side)
+{
+    return side == SourceSide::Stage2 ? "left" : side == SourceSide::Stage3 ? "right" : "earlier";
+}
+inline std::string nameOf(Outcome outcome)
+{
+    return outcome == Outcome::Succeeded ? "succeeded" : outcome == Outcome::Failed ? "failed" : "uncertain";
+}
+}

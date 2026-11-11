@@ -1,34 +1,27 @@
 #!/usr/bin/env bash
-# Prints the identity of the CI images for a format: the SHA-256 of its
-# Dockerfile, every file it COPYs, and BRANCH_TRUCE_KDE_CI_REFRESH.
-
+# Prints the identity of the CI images of a format: the SHA-256 of its
+# Dockerfile (from packaging/formats.tsv), every file it COPYs, and
+# BRANCH_TRUCE_KDE_CI_REFRESH.
+#
+#   image-id.sh --format <id>
 set -euo pipefail
+source "$(dirname -- "${BASH_SOURCE[0]}")/../scripts/cli.sh"
+source "$(dirname -- "${BASH_SOURCE[0]}")/../scripts/formats.sh"
 
-usage() {
-    echo "usage: $0 --format kubuntu-deb|fedora-rpm|arch-pkg" >&2
-    exit 2
-}
-
-format=""
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --format) format="${2-}"; shift 2 || usage ;;
-        *) usage ;;
-    esac
-done
-case "$format" in
-    kubuntu-deb) dockerfile=ci/kubuntu.Dockerfile ;;
-    fedora-rpm) dockerfile=ci/fedora.Dockerfile ;;
-    arch-pkg) dockerfile=ci/arch.Dockerfile ;;
-    *) usage ;;
-esac
+usage() { echo "usage: $0 --format $(format_ids | paste -sd '|' -)"; }
+declare -A options=()
+cli_parse options - 'format=!' "$@" || { cli_usage $? usage; exit; }
+format=${options[format]}
+dockerfile=$(format_field "$format" dockerfile) || { usage >&2; exit 2; }
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-mapfile -t sources < <(awk '
+copied=$(awk '
     toupper($1) == "COPY" {
         for (i = 2; i < NF; i++) print $i
-    }' "$dockerfile")
+    }' "$dockerfile") || exit 1
+sources=()
+[ -z "$copied" ] || mapfile -t sources <<<"$copied"
 for source in "${sources[@]}"; do
     case "$source" in
         -*|*'*'*|*'?'*|*'['*)

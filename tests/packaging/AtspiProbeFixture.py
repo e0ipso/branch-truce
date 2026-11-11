@@ -6,11 +6,12 @@ No D-Bus, AT-SPI registry or display is used. The fake replaces the gi module
 before the probe is loaded, and a fake clock replaces its time module, so waits
 and timeouts finish at once. Modes:
 
-    selftest  checks argument handling, application lookup, the tree walk,
-              state names, dump format and the wait, wait-match, text, focus and press
-              commands, then prints the assertion count
+    selftest  checks argument handling, help, exit statuses, stdout and stderr,
+              application lookup, the tree walk, state names, dump format and
+              the wait, wait-match, text, focus and press commands, then prints
+              the assertion count
     dump      prints the probe's dump of a tree with the controls that
-              tools/validate-installed-artifact.sh checks
+              tools/installed-checks.sh checks
     text      prints the probe's text output for an editable result holding
               the text that validation types, with Qt's paragraph separator
 """
@@ -75,9 +76,10 @@ class Text:
 
 
 class Action:
-    def __init__(self, names, log):
+    def __init__(self, names, log, result):
         self.names = names
         self.log = log
+        self.result = result
 
     def get_n_actions(self):
         return len(self.names)
@@ -87,7 +89,7 @@ class Action:
 
     def do_action(self, index):
         self.log.append(index)
-        return True
+        return self.result
 
 
 class Component:
@@ -100,9 +102,15 @@ class Component:
         return self.result
 
 
+class GLibError(Exception):
+    """Stands in for gi.repository.GLib.Error, which AT-SPI calls raise for a vanished object."""
+
+
 class Node:
+    """A fake accessible. A GLibError among children is raised when that child is read."""
+
     def __init__(self, role, name, states=(), children=(), text=None, editable=False, actions=None,
-                 component=None):
+                 component=None, action_result=True):
         self.role = role
         self.name = name
         self.states = set(states)
@@ -112,6 +120,7 @@ class Node:
         self.actions = actions
         self.pressed = []
         self.component = component
+        self.action_result = action_result
 
     def get_name(self):
         return self.name
@@ -123,7 +132,10 @@ class Node:
         return len(self.children)
 
     def get_child_at_index(self, index):
-        return self.children[index]
+        child = self.children[index]
+        if isinstance(child, GLibError):
+            raise child
+        return child
 
     def get_state_set(self):
         return StateSet(self.states)
@@ -138,7 +150,8 @@ class Node:
         return self.component
 
     def get_action_iface(self):
-        return Action(self.actions or [], self.pressed)
+        # Like AT-SPI, an object without the Action interface has no action iface at all.
+        return None if self.actions is None else Action(self.actions, self.pressed, self.action_result)
 
 
 class Clock:
@@ -167,6 +180,7 @@ gi = types.ModuleType("gi")
 gi.require_version = lambda name, version: required_versions.append((name, version))
 gi.repository = types.ModuleType("gi.repository")
 gi.repository.Atspi = Atspi
+gi.repository.GLib = types.SimpleNamespace(Error=GLibError)
 sys.modules["gi"] = gi
 sys.modules["gi.repository"] = gi.repository
 
@@ -179,7 +193,7 @@ def load(path):
 
 
 def application_tree():
-    """The accessible names validate-installed-artifact.sh looks for."""
+    """The accessible names installed-checks.sh looks for."""
     common = ("enabled", "showing")
     return Node("application", "Branch Truce", children=[
         Node("frame", "Branch Truce", common, children=[
@@ -198,14 +212,25 @@ def application_tree():
 
 
 def run(probe, *argv):
-    out = io.StringIO()
-    code = 0
-    with contextlib.redirect_stdout(out):
+    """Return the probe's exit status, stdout and stderr."""
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         try:
-            probe.main(["atspi-probe.py"] + list(argv))
+            code = probe.main(["atspi-probe.py"] + list(argv))
         except SystemExit as exit_:
             code = exit_.code
-    return code, out.getvalue()
+    return code, out.getvalue(), err.getvalue()
+
+
+def usage_error(result, message, detail=""):
+    code, out, err = result
+    equal((code, out), (2, ""), message + " status and stdout")
+    check(err.startswith("usage: atspi-probe.py "), message + " prints usage on stderr: %r" % err)
+    check(detail in err, "%s names %r: %r" % (message, detail, err))
+
+
+def failure(text):
+    return (1, "", text + "\n")
 
 
 def selftest(probe, clock):
@@ -217,19 +242,29 @@ def selftest(probe, clock):
     app = application_tree()
     desktop = Node("application", "main", children=[None, Node("application", "plasmashell"), app])
 
-    # Usage errors exit 2 before any lookup.
+    # Usage errors exit 2 with usage on stderr, before any lookup.
     for argv in ((), ("Branch Truce",), ("Branch Truce", "wait")):
-        equal(run(probe, *argv), (2, ""), "usage %r" % (argv,))
-    equal(clock.sleeps, [], "usage errors do not wait")
+        usage_error(run(probe, *argv), "usage %r" % (argv,))
     # Unknown commands and commands without their name argument are usage errors too.
     for argv in (("Branch Truce", "bogus"), ("Branch Truce", "text"), ("Branch Truce", "focus"),
-                 ("Branch Truce", "press")):
-        equal(run(probe, *argv), (2, ""), "usage %r" % (argv,))
+                 ("Branch Truce", "press"), ("Branch Truce", "dump", "extra")):
+        usage_error(run(probe, *argv), "usage %r" % (argv,))
+    # A timeout must be a finite, non-negative number of seconds.
+    for timeout in ("soon", "-1", "nan", "inf"):
+        usage_error(run(probe, "Branch Truce", "wait", "Save", timeout), "timeout %r" % timeout,
+                    "%r is not a number of seconds" % timeout)
+    equal(clock.sleeps, [], "usage errors do not wait")
+    # Help goes to stdout and exits 0.
+    for argv in (("-h",), ("--help",), ("Branch Truce", "wait", "--help")):
+        code, out, err = run(probe, *argv)
+        equal((code, err), (0, ""), "help %r status and stderr" % (argv,))
+        check(out.startswith("usage: atspi-probe.py "), "help %r prints usage on stdout" % (argv,))
+    check("Exit status 0 means success." in run(probe, "--help")[1], "help documents exit statuses")
 
     # The application is a case-insensitive part of the name; empty desktop slots are skipped.
     check(probe.application("branch TRUCE", 0) is app, "case-insensitive application lookup")
     before = clock.now
-    equal(run(probe, "Kate", "dump"), ("no accessible application named 'Kate'", ""), "missing application")
+    equal(run(probe, "Kate", "dump"), failure("no accessible application named 'Kate'"), "missing application")
     equal(clock.now - before, 30.0, "missing application waits 30 s")
     check(all(seconds == 0.5 for seconds in clock.sleeps), "application polls every 0.5 s")
     # An application that registers late is found by a later poll.
@@ -240,10 +275,11 @@ def selftest(probe, clock):
     equal(len(clock.sleeps), 3, "polls until the application registers")
     del clock.hooks[:]
 
-    # The walk is depth-first with depths, and skips missing children.
+    # The walk is depth-first with depths, and skips missing children and children that vanish
+    # while it reads them.
     walked = [(depth, node.get_name()) for depth, node in probe.walk(
         Node("frame", "root", children=[Node("label", "a", children=[None, Node("label", "b")]), None,
-                                        Node("label", "c")]))]
+                                        GLibError("defunct"), Node("label", "c")]))]
     equal(walked, [(0, "root"), (1, "a"), (2, "b"), (1, "c")], "walk order")
     # States come in the probe's fixed order and only from its list.
     equal(probe.states(Node("text", "x", ("showing", "selected", "read_only", "focusable"))),
@@ -266,25 +302,27 @@ def selftest(probe, clock):
     equal(run(probe, "Branch Truce", "dump"), (0, "application 'Branch Truce'\n"
                                                   "application | Branch Truce | showing\n"
                                                   "  label | two\\nlines | enabled\n"
-                                                  "  push-button |  | focusable,enabled\n"), "dump")
+                                                  "  push-button |  | focusable,enabled\n", ""), "dump")
+    desktop.children[0].children.insert(1, GLibError("defunct"))
+    equal(run(probe, "Branch Truce", "dump")[0], 0, "dump skips a vanished child")
 
     # wait succeeds once the object shows and times out with the given seconds.
     target = Node("push-button", "Confirm resolution", ("enabled",), actions=["Press"])
     desktop = Node("application", "main", children=[Node("application", "Branch Truce", children=[target])])
     del clock.sleeps[:]
     clock.hooks.append(lambda count: count == 2 and target.states.add("showing"))
-    equal(run(probe, "Branch Truce", "wait", "Confirm resolution", "5"), (0, "showing 'Confirm resolution'\n"),
+    equal(run(probe, "Branch Truce", "wait", "Confirm resolution", "5"), (0, "showing 'Confirm resolution'\n", ""),
           "wait for a showing object")
     equal(len(clock.sleeps), 2, "wait polls until the object shows")
     del clock.hooks[:]
     target.states.discard("showing")
     before = clock.now
     equal(run(probe, "Branch Truce", "wait", "Confirm resolution", "1.5"),
-          ("no showing accessible object named 'Confirm resolution'", ""), "wait timeout")
+          failure("no showing accessible object named 'Confirm resolution'"), "wait timeout")
     equal(clock.now - before, 1.5, "wait honours its timeout")
     before = clock.now
-    equal(run(probe, "Branch Truce", "wait", "Confirm resolution")[0],
-          "no showing accessible object named 'Confirm resolution'", "default wait timeout")
+    equal(run(probe, "Branch Truce", "wait", "Confirm resolution"),
+          failure("no showing accessible object named 'Confirm resolution'"), "default wait timeout")
     equal(clock.now - before, 60.0, "wait defaults to 60 s")
 
     # wait-match finds a showing object whose name contains a match, whatever surrounds it.
@@ -296,7 +334,7 @@ def selftest(probe, clock):
     del clock.sleeps[:]
     clock.hooks.append(lambda count: count == 2 and progress.states.add("showing"))
     equal(run(probe, "Branch Truce", "wait-match", pending, "5"),
-          (0, "showing 'Merge · 1 files in this session · 1 resolved'\n"), "wait-match for a showing object")
+          (0, "showing 'Merge · 1 files in this session · 1 resolved'\n", ""), "wait-match for a showing object")
     equal(len(clock.sleeps), 2, "wait-match polls until the object shows")
     del clock.hooks[:]
     progress.name = "1 files in this session · 1 resolved"
@@ -304,36 +342,51 @@ def selftest(probe, clock):
     progress.name = "1 files in this session · 0 resolved"
     before = clock.now
     equal(run(probe, "Branch Truce", "wait-match", pending, "1.5"),
-          ("no showing accessible object with a name matching %r" % pending, ""), "wait-match timeout")
+          failure("no showing accessible object with a name matching %r" % pending), "wait-match timeout")
     equal(clock.now - before, 1.5, "wait-match honours its timeout")
-    equal(run(probe, "Branch Truce", "wait-match", "(")[0], 2, "wait-match rejects a bad pattern")
-    equal(run(probe, "Branch Truce", "wait-match"), (2, ""), "wait-match needs a pattern")
+    usage_error(run(probe, "Branch Truce", "wait-match", "("), "wait-match rejects a bad pattern",
+                "'(' is not a regular expression")
+    usage_error(run(probe, "Branch Truce", "wait-match"), "wait-match needs a pattern")
 
     # text prints the content with repr and whether it is editable.
     desktop = Node("application", "main", children=[application_tree()])
     equal(run(probe, "Branch Truce", "text", "Left source"),
-          (0, "text 'main\\n'\neditable-text interface: False\n"), "read-only text")
-    equal(run(probe, "Branch Truce", "text", "Save"), ("'Save' has no text interface", ""), "no text interface")
-    equal(run(probe, "Branch Truce", "text", "Missing"), ("no accessible object named 'Missing'", ""),
+          (0, "text 'main\\n'\neditable-text interface: False\n", ""), "read-only text")
+    equal(run(probe, "Branch Truce", "text", "Save"), failure("'Save' has no text interface"), "no text interface")
+    equal(run(probe, "Branch Truce", "text", "Missing"), failure("no accessible object named 'Missing'"),
           "text of a missing object")
 
-    # focus reports the component's answer, or False without a component.
+    # focus succeeds only when the component takes focus; otherwise it exits 1 and says why.
     result = probe.find(desktop.children[0], "Editable result")
-    equal(run(probe, "Branch Truce", "focus", "Editable result"), (0, "grab_focus True\n"), "focus")
+    equal(run(probe, "Branch Truce", "focus", "Editable result"), (0, "grab_focus True\n", ""), "focus")
     equal(result.component.calls, 1, "focus asked the component once")
-    equal(run(probe, "Branch Truce", "focus", "Wrap lines"), (0, "grab_focus False\n"), "focus without component")
+    equal(run(probe, "Branch Truce", "focus", "Wrap lines"),
+          failure("'Wrap lines' has no component interface to take focus"), "focus without component")
+    result.component = Component(False)
+    equal(run(probe, "Branch Truce", "focus", "Editable result"),
+          failure("'Editable result' refused keyboard focus"), "focus refused")
+    equal(result.component.calls, 1, "refused focus asked the component once")
+    equal(run(probe, "Branch Truce", "focus", "Missing"), failure("no accessible object named 'Missing'"),
+          "focus of a missing object")
 
-    # press runs the first action of a push button only.
+    # press runs the first action of a push button only, and exits 1 when it cannot.
     desktop = Node("application", "main", children=[dialog])
     equal(run(probe, "Branch Truce", "press", "Confirm resolution"),
-          (0, "actions ['Press']; Press: True\n"), "press")
+          (0, "actions ['Press']; Press: True\n", ""), "press")
     equal((label.pressed, hidden.pressed, shown.pressed), ([], [0], []), "press acts on the first push button")
+    hidden.action_result = False
+    equal(run(probe, "Branch Truce", "press", "Confirm resolution"),
+          failure("'Confirm resolution' did not run its action 'Press'"), "press refused")
+    equal(hidden.pressed, [0, 0], "refused press asked once")
     hidden.actions = []
     equal(run(probe, "Branch Truce", "press", "Confirm resolution"),
-          (0, "actions []; none: False\n"), "press without actions")
+          failure("'Confirm resolution' has no actions"), "press without actions")
+    hidden.actions = None
+    equal(run(probe, "Branch Truce", "press", "Confirm resolution"),
+          failure("'Confirm resolution' has no action interface"), "press without an action interface")
     desktop = Node("application", "main", children=[Node("application", "Branch Truce", children=[label])])
     equal(run(probe, "Branch Truce", "press", "Confirm resolution"),
-          ("no accessible push-button named 'Confirm resolution'", ""), "press needs a push button")
+          failure("no accessible push-button named 'Confirm resolution'"), "press needs a push button")
     print("%d atspi-probe assertions passed" % assertions)
 
 
@@ -349,8 +402,9 @@ def main(argv):
         return
     desktop = Node("application", "main", children=[application_tree()])
     command = ["dump"] if argv[2] == "dump" else ["text", "Editable result"]
-    code, out = run(probe, "Branch Truce", *command)
+    code, out, err = run(probe, "Branch Truce", *command)
     sys.stdout.write(out)
+    sys.stderr.write(err)
     if code:
         sys.exit(code)
 

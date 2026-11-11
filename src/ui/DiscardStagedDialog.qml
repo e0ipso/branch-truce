@@ -4,33 +4,50 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import BranchTruce.App
-import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 Kirigami.PromptDialog {
     id: discardDialog
-    required property ApplicationController controller
-    // The file and revision the user confirms; the controller refuses a newer revision as stale.
+    required property FileCommands commands
+    required property CommandFeedback feedback
+    required property SelectedFile selectedFile
+    // The file and revision the user confirms; a newer revision is refused as stale.
     property string fileId: ""
     property string path: ""
     property string revision: ""
     property string failure: ""
+    property bool pending: false
     // Asks the owner to set plain text on an item and each label inside it.
     signal plainTextRequested(item: Item)
-    // Both callers ask about the selected file, whose display path the controller has.
+    // Both callers ask about the selected file, which has the display path.
     function ask(id: string, current: string): void {
         fileId = id;
-        path = id === controller.selectedFileId ? (controller.selectedFile.path || "") : "";
+        path = id === selectedFile.fileId ? (selectedFile.path || "") : "";
         revision = current;
         failure = "";
         open();
     }
     function discard(): void {
-        if (controller.discardToStaged(fileId, revision))
-            close();
-        else
-            failure = controller.commandMessage;
+        if (pending)
+            return;
+        pending = true;
+        if (!commands.discardToStaged(fileId, revision)) {
+            pending = false;
+            failure = feedback.message;
+        }
+    }
+    Connections {
+        target: discardDialog.commands
+        function onStagedDiscardFinished(id: string, current: string, succeeded: bool): void {
+            if (!discardDialog.pending || id !== discardDialog.fileId || current !== discardDialog.revision)
+                return;
+            discardDialog.pending = false;
+            if (succeeded)
+                discardDialog.close();
+            else
+                discardDialog.failure = discardDialog.feedback.message;
+        }
     }
     objectName: "discardStagedDialog"
     title: qsTr("Discard draft?")

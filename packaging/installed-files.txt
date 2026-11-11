@@ -1,0 +1,13 @@
+# The files the application installs, relative to the install prefix. The
+# install rules in packaging/CMakeLists.txt read the icon rows;
+# packaging/scripts/check-package.sh and tools/verify-install-prefix.sh compare
+# installed payloads against every row. The RPM %files list repeats them and
+# packaging/facts.test.ts keeps it in step.
+bin/branch-truce
+share/applications/com.canpicasoft.branch-truce.desktop
+share/metainfo/com.canpicasoft.branch-truce.metainfo.xml
+share/icons/hicolor/scalable/apps/com.canpicasoft.branch-truce.svg
+share/icons/hicolor/16x16/apps/com.canpicasoft.branch-truce.png
+share/icons/hicolor/22x22/apps/com.canpicasoft.branch-truce.png
+share/icons/hicolor/24x24/apps/com.canpicasoft.branch-truce.png
+share/icons/hicolor/32x32/apps/com.canpicasoft.branch-truce.png

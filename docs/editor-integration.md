@@ -17,6 +17,17 @@ initialized with the launch-time working file. Showing earlier-version context,
 resizing panes and revealing choices preserve the result and selection. An absent
 earlier source is explained; a present empty earlier source remains available.
 
+Source-choice rows come from typed C++ list models. An update publishes both
+panes' joined data together and changes only affected rows when their identities
+remain stable. Unchanged controls retain focus and open menus. Precise-choice
+menu delegates are created when their menu opens, rather than on every edit.
+
+Paths and captured identities render as plain text, including in native tooltips.
+Controls with custom labels leave their native backing text empty because a
+style can retain an unused label that would otherwise interpret markup. Preview
+confirmation and staged-discard dialogs await their correlated durable command
+completion before closing; a refused or failed operation retains the draft.
+
 Every pane has a line-number gutter. The `LineGutter` component sits inside the
 pane's Flickable as a sibling of the TextArea, so the result TextArea is still
 the Flickable's content child, and the TextArea pads its text by the gutter's
@@ -158,8 +169,11 @@ drift apart wherever one side has extra lines.
 The result supports pointer selection, native copy/paste shortcuts, toolbar
 copy/paste and a context menu. Undo and redo use the shared text-and-decision
 history. The adapter observes completed native key, IME and clipboard operations
-as commands, keeping intermediate document notifications out of the journal.
-Recovery must commit before the model acknowledges each command. A failed commit
+as edits, keeping intermediate document notifications out of the journal. A
+cut, paste or drop is one command, acknowledged once its record is durable. Key
+presses and IME commits are typing: they apply at once, join a burst that one
+undo takes back, and are acknowledged once the burst's record, written behind
+the editor, is durable (docs/recovery-journal.md, Typing). A failed commit
 keeps the pending input visible and blocks further edits until recovery is retried.
 Source comparisons and view changes do not replace that pending draft.
 
@@ -185,24 +199,15 @@ TextArea still needs application-owned gutters, correspondence, navigation,
 search controls, input scheduling, pending/error presentation and history. Syntax
 highlighting does not establish merge correspondence.
 
-## Reproduce
+## The experiment fixture
 
-Run from the repository root in a desktop build configured as
-[docs/build.md](build.md) describes. The fixture lives in
-`tests/fixtures/editor/` and builds only from `tests/CMakeLists.txt`, with the
-project's shared warning flags.
-
-```sh
-cmake --build build/desktop --target branch_truce_editor_tests --parallel 2
-ctest --test-dir build/desktop -R '^editor\.' --output-on-failure -V
-/usr/lib/qt6/bin/qmllint "$PWD/tests/fixtures/editor/Editor.qml"
-```
-
-CTest registers the fixture as `editor.baseline` and `editor.regression`.
-The fixture links no product target and returns nonzero for
-failed assertions. The acceptance runner requires
-`offscreen` to avoid changing a desktop user's clipboard. Its private clipboard
-is cleared, its owner-only recovery directory is removed, and removal is checked.
+The standalone fixture behind this record, in `tests/fixtures/editor/`, was
+removed: it exercised its own copies of the adapter, recovery sink and position
+mapping rather than the product, so a passing run said nothing about the
+application. The observations below are the record of its last runs. The
+product's editor adapter, input-method handling and recovery are tested in
+`tests/app`, and `performance.workloads` measures loading and typing in the
+real window ([tests/fixtures/performance/README.md](../tests/fixtures/performance/README.md)).
 
 ## Observed contracts
 

@@ -1,7 +1,7 @@
 // Conflict marker parsing identifies unresolved marker blocks in the result text.
 #pragma once
 
-#include "Correspondence.h"
+#include "ByteRanges.h"
 #include <cstddef>
 #include <optional>
 #include <string_view>
@@ -48,17 +48,42 @@ struct RegionSources {
     std::vector<std::string_view> bases;
 };
 
-// The only marker recognizer. A marker line starts with exactly seven of the
-// same marker character, followed by whitespace or the end of the text, as
-// Git writes them by default. Text elsewhere in a line is never a marker, and
-// neither is a line inside one of the `content` ranges, which hold known
-// source text. Inside a diff3 base region, after its ||||||| line and before
-// its separator, a line inside one of the `baseContent` ranges, which hold
-// known earlier-version text, is content too. So is a separator line inside
-// one of the `baseUncertain` ranges, where earlier-version text may lie, when
-// only separator lines follow it up to the start of the right side region:
-// text inside one of the `rightContent` ranges, which hold known right-side
-// text, or the end marker. The last of those separator lines is Git's.
+// Git writes markers of seven characters unless the conflict-marker-size
+// attribute names another length.
+inline constexpr std::size_t kDefaultConflictMarkerSize = 7;
+
+// The marker length Git uses for a conflict-marker-size attribute value. Git
+// reads the value as a leading decimal integer and falls back to the default
+// for anything that is not positive, including "set" and "unset". A length
+// over kMaxConflictMarkerSize is unsupported.
+[[nodiscard]] std::optional<std::size_t> conflictMarkerSize(std::string_view attribute) noexcept;
+
+// What a scan knows about the text besides its lines. Every range list may be
+// unsorted and may overlap.
+struct MarkerContext {
+    std::size_t markerSize = kDefaultConflictMarkerSize;
+    // Known source text: a line inside one of these is never a marker.
+    std::vector<ByteRange> known = {};
+    // Known earlier-version text, which counts only inside a diff3 base region.
+    std::vector<ByteRange> earlier = {};
+    // Where earlier-version text may lie in a base region.
+    std::vector<ByteRange> uncertain = {};
+    // Known right-side text.
+    std::vector<ByteRange> right = {};
+    std::optional<RegionSources> sources = {};
+    // Shared character-comparison ceiling for ambiguous copied-region analysis.
+    std::size_t analysisBudget = 4000000;
+};
+
+// The only marker recognizer. A marker line starts with exactly markerSize of
+// the same marker character, followed by a space, a tab, a newline or the end
+// of the text. Text elsewhere in a line is never a marker, and neither is a
+// line inside one of the `known` ranges. Inside a diff3 base region, after its
+// ||||||| line and before its separator, a line inside one of the `earlier`
+// ranges is content too. So is a separator line inside one of the `uncertain`
+// ranges when only separator lines follow it up to the start of the right side
+// region: text inside one of the `right` ranges, or the end marker. The last
+// of those separator lines is Git's.
 //
 // With `sources`, Git's separator among several adjacent separator lines in a
 // base region is the only one that leaves one of the `bases` before it, or
@@ -68,10 +93,6 @@ struct RegionSources {
 // lines before it are base text and those after it right side text. Without
 // exactly one such line the rule above applies. Blocks are assembled from the
 // remaining marker lines.
-[[nodiscard]] MarkerScan scanMarkers(std::string_view text, std::vector<ByteRange> content = {},
-                                     std::vector<ByteRange> baseContent = {},
-                                     std::vector<ByteRange> baseUncertain = {},
-                                     std::vector<ByteRange> rightContent = {},
-                                     std::optional<RegionSources> sources = {});
+[[nodiscard]] MarkerScan scanMarkers(std::string_view text, MarkerContext context = {});
 
 }

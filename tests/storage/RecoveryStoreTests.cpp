@@ -1,251 +1,553 @@
-#include "storage/RecoveryStore.h"
 #include "TestHarness.h"
-#include "fixtures/RecoveryFaults.h"
+#include "core/ResourceLimits.h"
+#include "fixtures/Files.h"
+#include "fixtures/SyncFaults.h"
+#include "problems/Problem.h"
+#include "storage/RecoveryStore.h"
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QLockFile>
+#include <QProcess>
 #include <QTemporaryDir>
+#include <algorithm>
 #include <array>
+#include <atomic>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <sys/stat.h>
+#include <thread>
+#include <utility>
+#include <vector>
 
 using namespace branch_truce::storage;
+using branch_truce::Problem;
+using branch_truce::ProblemCode;
+using test_support::ArmedFault;
+using test_support::readFile;
+using test_support::SyncFaults;
+using test_support::writeFile;
 
 namespace {
+// Whether a store error is the problem with code.
+bool reports(const Problem &problem, ProblemCode code) { return problem.code == code; }
+
 RecoveryTransaction transaction(const QString &id, const QByteArray &bytes)
 {
     const auto hash = RecoveryStore::digest(bytes);
-    return {{{"schema", 1}, {"transactionId", id}, {"text", QString::fromLatin1(hash)}}, {{hash, bytes}}};
+    return {id, {{"text", QString::fromLatin1(hash)}}, {{hash, bytes}}};
 }
-QByteArray readFile(const QString &path)
+
+StoredTransaction stored(const RecoveryTransaction &transaction) { return {transaction.id, transaction.state}; }
+
+// The store's lease. Cases append through it, as the app does; the case fails when it is held.
+std::shared_ptr<RecoveryLease> leased(const QString &directory,
+                                      std::shared_ptr<const FileSystem> files = systemFileSystem())
 {
-    QFile file(path);
-    CHECK(file.open(QIODevice::ReadOnly));
-    const auto bytes = file.readAll();
-    CHECK(file.error() == QFileDevice::NoError);
-    return bytes;
-}
-void overwrite(const QString &path, const QByteArray &bytes)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
-    CHECK(file.write(bytes) == bytes.size());
+    auto lease = RecoveryLease::acquire(directory, std::move(files));
+    CHECK(lease != nullptr);
+    return lease;
 }
 void overwritePrivate(const QString &path, const QByteArray &bytes)
 {
-    overwrite(path, bytes);
+    writeFile(path, bytes);
     CHECK(QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner));
 }
+
+// Moves a rewritten journal's modification time away from the last append's. A rewrite of the
+// same size within the file system's timestamp granularity would otherwise look unchanged to the
+// next commit, which compares fstat instead of reading the journal again.
+void markRewritten(const QString &path)
+{
+    QFile rewritten(path);
+    CHECK(rewritten.open(QIODevice::ReadWrite));
+    CHECK(rewritten.setFileTime(QDateTime::currentDateTimeUtc().addSecs(-3600), QFileDevice::FileModificationTime));
 }
 
-class RecoveryStoreTests {
+// Rewrites the journal's last record with `mutate` and gives it a matching checksum, so only
+// the record's own validation can refuse it.
+void rewriteLastRecord(const QString &directory, void (*mutate)(QJsonObject &))
+{
+    const auto path = directory + "/journal";
+    auto lines = readFile(path).split('\n');
+    CHECK(lines.size() >= 3 && lines.back().isEmpty());
+    auto &line = lines[lines.size() - 2];
+    const auto frame = QJsonDocument::fromJson(line).object();
+    auto record = QJsonDocument::fromJson(QByteArray::fromBase64(frame.value("record").toString().toLatin1())).object();
+    CHECK(!record.isEmpty());
+    mutate(record);
+    const auto body = QJsonDocument(record).toJson(QJsonDocument::Compact);
+    line = QJsonDocument(QJsonObject{{"record", QString::fromLatin1(body.toBase64())},
+                                     {"sha256", QString::fromLatin1(RecoveryStore::digest(body))}})
+               .toJson(QJsonDocument::Compact);
+    writeFile(path, lines.join('\n'));
+    markRewritten(path);
+}
+
+// Records that keep a valid checksum but break the journal's schema or order.
+constexpr std::pair<const char *, void (*)(QJsonObject &)> invalidRecords[] = {
+    {"a sequence out of order", [](QJsonObject &record) { record.insert("sequence", "3"); }},
+    {"a broken chain to the previous record",
+     [](QJsonObject &record) { record.insert("previous", QString(64, QLatin1Char('0'))); }},
+    {"an older record version", [](QJsonObject &record) { record.insert("version", 1); }},
+    {"a state that is not an object", [](QJsonObject &record) { record.insert("state", "text"); }},
+    {"an empty transaction identity", [](QJsonObject &record) { record.insert("transaction", ""); }}};
+
+// A file system whose fstat repeats the answer it gave for each file before `freeze` was set, as
+// if nothing had changed it since.
+class FrozenStatus final : public FileSystem {
 public:
-    int run()
+    std::atomic_bool freeze = false;
+    int status(int fd, struct stat *result) const override
     {
-        test_support::Suite suite("RecoveryStoreTests");
-        suite.run("interrupted transaction tails preserve the acknowledged prefix and retry once", [] {
-            QTemporaryDir directory;
-            CHECK(directory.isValid());
-            RecoveryStore store(directory.path() + "/recovery");
-            const auto first = transaction("acknowledged", QByteArray("first\0exact bytes", 17));
-            const auto second = transaction("interrupted", "second complete edit and decisions");
-            CHECK(store.commit(first).succeeded);
-            const auto journalPath = store.directory() + "/journal";
-            const auto acknowledged = readFile(journalPath);
-            CHECK(store.commit(second).succeeded);
-            const auto complete = readFile(journalPath);
-            const auto frame = complete.mid(acknowledged.size());
-            CHECK(frame.endsWith('\n') && frame.size() > 6);
-            // Payloads have landed but the record may stop anywhere before its newline.
-            for (const qsizetype cut : std::array<qsizetype, 6>{0, 1, frame.size() / 3,
-                    frame.size() / 2, frame.size() - 2, frame.size() - 1}) {
-                overwrite(journalPath, acknowledged + frame.left(cut));
-                const auto recovered = RecoveryStore(store.directory()).read();
-                CHECK(recovered.succeeded && recovered.incompleteTail == (cut != 0));
-                CHECK(recovered.transactions == QList<QJsonObject>{first.state});
-                CHECK(recovered.validBytes == acknowledged.size());
-                CHECK(store.commit(second).succeeded);
-                CHECK(store.commit(second).succeeded);
-                const auto retried = RecoveryStore(store.directory()).read();
-                CHECK(retried.succeeded && !retried.incompleteTail);
-                CHECK(retried.transactions == QList<QJsonObject>{first.state, second.state});
-                CHECK(readFile(journalPath) == complete);
-            }
-            QString error;
-            CHECK(store.payload(RecoveryStore::digest(QByteArray("first\0exact bytes", 17)), &error)
-                == QByteArray("first\0exact bytes", 17));
-            CHECK(error.isEmpty());
-        });
-        for (const auto point : {recovery_faults::Point::PayloadSync, recovery_faults::Point::JournalSync}) {
-            suite.run("recovery write failure retains the prior commit and idempotent retry "
-                      + std::to_string(static_cast<int>(point)), [=] {
-                QTemporaryDir directory;
-                CHECK(directory.isValid());
-                RecoveryStore store(directory.path() + "/recovery");
-                const auto first = transaction("first", "already acknowledged");
-                const auto pending = transaction("stable-retry-identity", "new pending bytes");
-                CHECK(store.commit(first).succeeded);
-                recovery_faults::Failure fault(point);
-                const auto failed = store.commit(pending);
-                CHECK(recovery_faults::failures == 1 && !failed.succeeded && !failed.error.isEmpty());
-                const auto interrupted = store.read();
-                CHECK(interrupted.succeeded && interrupted.transactions.front() == first.state);
-                if (point == recovery_faults::Point::PayloadSync)
-                    CHECK(interrupted.transactions == QList<QJsonObject>{first.state});
-                else
-                    CHECK(interrupted.transactions == QList<QJsonObject>{first.state, pending.state});
-                CHECK(store.commit(pending).succeeded && store.commit(pending).succeeded);
-                const auto recovered = RecoveryStore(store.directory()).read();
-                CHECK(recovered.succeeded && !recovered.incompleteTail);
-                CHECK(recovered.transactions == QList<QJsonObject>{first.state, pending.state});
-                QString error;
-                CHECK(store.payload(RecoveryStore::digest("new pending bytes"), &error) == "new pending bytes");
-                CHECK(error.isEmpty());
-            });
+        if (FileSystem::status(fd, result) != 0) return -1;
+        const std::lock_guard lock(mutex_);
+        const auto key = std::pair{result->st_dev, result->st_ino};
+        if (!freeze) {
+            seen_[key] = *result;
+            return 0;
         }
-        suite.run("recovery payload envelope keeps the boundary and the acknowledged journal", [] {
-            QTemporaryDir directory;
-            CHECK(directory.isValid());
-            RecoveryStore store(directory.path() + "/recovery");
-            const auto acknowledged = transaction("acknowledged", "kept");
-            CHECK(store.commit(acknowledged).succeeded);
-            const auto below = transaction("below", QByteArray(8388607, 'b'));
-            const auto at = transaction("at", QByteArray(8388608, 'a'));
-            const auto above = transaction("above", QByteArray(8388609, 'Z'));
-            CHECK(store.commit(below).succeeded);
-            CHECK(store.commit(at).succeeded);
-            const auto journalBefore = readFile(store.directory() + "/journal");
-            const auto failed = store.commit(above);
-            CHECK(!failed.succeeded);
-            CHECK(failed.error.contains("8388609"));
-            CHECK(failed.error.contains("pending input is retained"));
-            CHECK(readFile(store.directory() + "/journal") == journalBefore);
-            const auto reloaded = RecoveryStore(store.directory()).read();
-            CHECK(reloaded.succeeded && !reloaded.incompleteTail);
-            CHECK(reloaded.transactions.size() == 3);
-            QString error;
-            CHECK(store.payload(RecoveryStore::digest(QByteArray(8388607, 'b')), &error).size() == 8388607);
-            CHECK(error.isEmpty());
-            CHECK(store.payload(RecoveryStore::digest(QByteArray(8388608, 'a')), &error).size() == 8388608);
-            CHECK(error.isEmpty());
-            const auto aboveHash = RecoveryStore::digest(QByteArray(8388609, 'Z'));
-            CHECK(!QFileInfo::exists(store.directory() + "/payloads/" + QString::fromLatin1(aboveHash)));
-            CHECK(store.payload(aboveHash, &error).isEmpty());
-            CHECK(error.contains("missing or unsafe"));
-        });
-        suite.run("a long-lived store writes the bytes of a store that rereads every commit", [] {
-            QTemporaryDir directory;
-            CHECK(directory.isValid());
-            RecoveryStore kept(directory.path() + "/kept");
-            const auto rereading = directory.path() + "/rereading";
-            for (int index = 1; index <= 12; ++index) {
-                const auto next = transaction(QString("edit-%1").arg(index), "draft " + QByteArray::number(index));
-                CHECK(kept.commit(next).succeeded);
-                CHECK(RecoveryStore(rereading).commit(next).succeeded);
-                if (index % 4 == 0) {
-                    // A retry of the flushed transaction appends nothing on either path.
-                    CHECK(kept.commit(next).succeeded);
-                    CHECK(RecoveryStore(rereading).commit(next).succeeded);
-                }
-            }
-            const auto bytes = readFile(kept.directory() + "/journal");
-            CHECK(bytes == readFile(rereading + "/journal"));
-            const auto reloaded = RecoveryStore(kept.directory()).read();
-            CHECK(reloaded.succeeded && reloaded.transactions.size() == 12 && reloaded.validBytes == bytes.size());
-        });
-        suite.run("another writer's records between two commits are read before the next append", [] {
-            QTemporaryDir directory;
-            CHECK(directory.isValid());
-            RecoveryStore store(directory.path() + "/recovery");
-            const auto mine = transaction("mine", "first");
-            const auto theirs = transaction("theirs", "appended by another store");
-            CHECK(store.commit(mine).succeeded);
-            CHECK(RecoveryStore(store.directory()).commit(theirs).succeeded);
-            // The last record is no longer this store's, so its retry appends again as before.
-            CHECK(store.commit(mine).succeeded);
-            const auto next = transaction("next", "second");
-            CHECK(store.commit(next).succeeded);
-            const auto reloaded = RecoveryStore(store.directory()).read();
-            CHECK(reloaded.succeeded && !reloaded.incompleteTail);
-            CHECK(reloaded.transactions == (QList<QJsonObject>{mine.state, theirs.state, mine.state, next.state}));
-        });
-        suite.run("a same-size change to an earlier record fails the next commit", [] {
-            QTemporaryDir directory;
-            CHECK(directory.isValid());
-            RecoveryStore store(directory.path() + "/recovery");
-            CHECK(store.commit(transaction("first", "one")).succeeded);
-            CHECK(store.commit(transaction("second", "two")).succeeded);
-            const auto journalPath = store.directory() + "/journal";
-            auto changed = readFile(journalPath);
-            const auto firstFrame = changed.indexOf('\n') + 1;
-            CHECK(firstFrame > 0 && changed.size() > firstFrame + 12);
-            // Rewritten at once, with the same size, so no timestamp or size can tell.
-            changed[firstFrame + 11] = changed.at(firstFrame + 11) == 'A' ? 'B' : 'A';
-            overwrite(journalPath, changed);
-            const auto failed = store.commit(transaction("third", "three"));
-            CHECK(!failed.succeeded && failed.error.contains("integrity"));
-            CHECK(readFile(journalPath) == changed);
-        });
-        suite.run("a foreign, truncated or unsafe journal is verified before the next append", [] {
-            QTemporaryDir directory;
-            CHECK(directory.isValid());
-            RecoveryStore store(directory.path() + "/recovery");
-            RecoveryStore other(directory.path() + "/other");
-            const auto first = transaction("first", "one");
-            const auto second = transaction("second", "two");
-            const auto foreignA = transaction("foreign-a", "elsewhere a");
-            const auto foreignB = transaction("foreign-b", "elsewhere b");
-            CHECK(store.commit(first).succeeded && store.commit(second).succeeded);
-            CHECK(other.commit(foreignA).succeeded && other.commit(foreignB).succeeded);
-            const auto journalPath = store.directory() + "/journal";
-            const auto acknowledged = readFile(journalPath);
-
-            // Another store's complete journal: the next record chains after its last one.
-            for (const auto &hash : {RecoveryStore::digest("elsewhere a"), RecoveryStore::digest("elsewhere b")}) {
-                const auto name = "/payloads/" + QString::fromLatin1(hash);
-                overwritePrivate(store.directory() + name, readFile(other.directory() + name));
-            }
-            overwrite(journalPath, readFile(other.directory() + "/journal"));
-            const auto after = transaction("after-foreign", "three");
-            CHECK(store.commit(after).succeeded);
-            auto reloaded = RecoveryStore(store.directory()).read();
-            CHECK(reloaded.succeeded
-                && reloaded.transactions == (QList<QJsonObject>{foreignA.state, foreignB.state, after.state}));
-
-            // A journal whose payloads are missing is refused.
-            overwrite(journalPath, acknowledged);
-            CHECK(QFile::remove(store.directory() + "/payloads/" + QString::fromLatin1(RecoveryStore::digest("one"))));
-            auto failed = store.commit(transaction("missing", "four"));
-            CHECK(!failed.succeeded && failed.error.contains("missing or unsafe"));
-            CHECK(readFile(journalPath) == acknowledged);
-            overwritePrivate(store.directory() + "/payloads/" + QString::fromLatin1(RecoveryStore::digest("one")), "one");
-
-            // An unknown header is refused.
-            auto unknown = acknowledged;
-            unknown.replace(0, 33, "Branch Truce recovery journal v9\n");
-            overwrite(journalPath, unknown);
-            failed = store.commit(transaction("unknown", "five"));
-            CHECK(!failed.succeeded && failed.error.contains("Unknown or corrupt"));
-
-            // A journal cut back to its first record continues from that record.
-            overwrite(journalPath, acknowledged.left(acknowledged.indexOf('\n', 33) + 1));
-            const auto resumed = transaction("resumed", "six");
-            CHECK(store.commit(resumed).succeeded);
-            reloaded = RecoveryStore(store.directory()).read();
-            CHECK(reloaded.succeeded && reloaded.transactions == (QList<QJsonObject>{first.state, resumed.state}));
-
-            // A journal other users can read is refused even when its bytes are unchanged.
-            const auto before = readFile(journalPath);
-            CHECK(QFile::setPermissions(journalPath, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadOther));
-            failed = store.commit(transaction("exposed", "seven"));
-            CHECK(!failed.succeeded && failed.error.contains("unavailable or unsafe"));
-            CHECK(readFile(journalPath) == before);
-        });
-        return suite.report();
+        if (const auto found = seen_.find(key); found != seen_.end()) *result = found->second;
+        return 0;
     }
+
+private:
+    mutable std::mutex mutex_;
+    mutable std::map<std::pair<dev_t, ino_t>, struct stat> seen_;
 };
+
+// The largest recovery payload the store accepts.
+constexpr auto limit = static_cast<qsizetype>(branch_truce::kMaxRecoveryPayloadBytes);
+}
 
 int main(int argc, char **argv)
 {
     QCoreApplication application(argc, argv);
-    return RecoveryStoreTests{}.run();
+    test_support::configure(argc, argv);
+    test_support::Suite suite("RecoveryStoreTests");
+    suite.run("recovery digests reset between inputs and remain independent on worker threads", [] {
+        const std::array vectors{
+            std::pair{QByteArray{}, QByteArray("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")},
+            std::pair{QByteArray("abc"),
+                      QByteArray("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")},
+            std::pair{QByteArray("a\0b\xff", 4),
+                      QByteArray("a37cc3026aae4d519e0b19c298fa913b4dccfdf0658cbccbb7deaa0226d5acdb")}};
+        for (const auto &[bytes, expected] : vectors) CHECK(RecoveryStore::digest(bytes) == expected);
+        std::array<bool, 4> correct{true, true, true, true};
+        {
+            std::vector<std::jthread> workers;
+            workers.reserve(correct.size());
+            for (std::size_t worker = 0; worker < correct.size(); ++worker)
+                workers.emplace_back([&, worker] {
+                    for (std::size_t sample = 0; sample < 50; ++sample) {
+                        const auto &[bytes, expected] = vectors[(worker + sample) % vectors.size()];
+                        if (RecoveryStore::digest(bytes) != expected) correct[worker] = false;
+                    }
+                });
+        }
+        CHECK(std::all_of(correct.begin(), correct.end(), [](bool value) { return value; }));
+    });
+    suite.run("interrupted transaction tails preserve the acknowledged prefix and retry once", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto store = leased(directory.path() + "/recovery");
+        const auto first = transaction("acknowledged", QByteArray("first\0exact bytes", 17));
+        const auto second = transaction("interrupted", "second complete edit and decisions");
+        CHECK(store->commit(first).succeeded);
+        const auto journalPath = store->directory() + "/journal";
+        const auto acknowledged = readFile(journalPath);
+        CHECK(store->commit(second).succeeded);
+        const auto complete = readFile(journalPath);
+        const auto frame = complete.mid(acknowledged.size());
+        CHECK(frame.endsWith('\n') && frame.size() > 6);
+        // Payloads have landed but the record may stop anywhere before its newline.
+        for (const qsizetype cut :
+             std::array<qsizetype, 6>{0, 1, frame.size() / 3, frame.size() / 2, frame.size() - 2, frame.size() - 1}) {
+            writeFile(journalPath, acknowledged + frame.left(cut));
+            const auto recovered = RecoveryStore(store->directory()).read();
+            CHECK(recovered.succeeded && recovered.incompleteTail == (cut != 0));
+            CHECK(recovered.transactions == QList<StoredTransaction>{stored(first)});
+            CHECK(recovered.validBytes == acknowledged.size());
+            CHECK(store->commit(second).succeeded);
+            CHECK(store->commit(second).succeeded);
+            const auto retried = RecoveryStore(store->directory()).read();
+            CHECK(retried.succeeded && !retried.incompleteTail);
+            CHECK(retried.transactions == (QList<StoredTransaction>{stored(first), stored(second)}));
+            CHECK(readFile(journalPath) == complete);
+        }
+        Problem error;
+        CHECK(store->store().payload(RecoveryStore::digest(QByteArray("first\0exact bytes", 17)), &error)
+              == QByteArray("first\0exact bytes", 17));
+        CHECK(error.isEmpty());
+    });
+    for (const auto &[point, name] : {std::pair{SyncFaults::Point::PayloadSync, "payload sync"},
+                                      std::pair{SyncFaults::Point::DirectorySync, "directory sync"},
+                                      std::pair{SyncFaults::Point::JournalSync, "journal sync"}}) {
+        suite.run(std::string("recovery write failure retains the prior commit and idempotent retry: ") + name,
+                  [point] {
+                      QTemporaryDir directory;
+                      CHECK(directory.isValid());
+                      const auto files = std::make_shared<SyncFaults>();
+                      const auto store = leased(directory.path() + "/recovery", files);
+                      const auto first = transaction("first", "already acknowledged");
+                      const auto pending = transaction("stable-retry-identity", "new pending bytes");
+                      CHECK(store->commit(first).succeeded);
+                      {
+                          ArmedFault fault(*files, point);
+                          const auto failed = store->commit(pending);
+                          CHECK(files->failures == 1 && !failed.succeeded && !failed.problem.isEmpty());
+                      }
+                      const auto interrupted = store->store().read();
+                      CHECK(interrupted.succeeded && interrupted.transactions.front() == stored(first));
+                      if (point == SyncFaults::Point::JournalSync)
+                          CHECK(interrupted.transactions == (QList<StoredTransaction>{stored(first), stored(pending)}));
+                      else
+                          CHECK(interrupted.transactions == QList<StoredTransaction>{stored(first)});
+                      CHECK(store->commit(pending).succeeded && store->commit(pending).succeeded);
+                      const auto recovered = RecoveryStore(store->directory()).read();
+                      CHECK(recovered.succeeded && !recovered.incompleteTail);
+                      CHECK(recovered.transactions == (QList<StoredTransaction>{stored(first), stored(pending)}));
+                      Problem error;
+                      CHECK(store->store().payload(RecoveryStore::digest("new pending bytes"), &error)
+                            == "new pending bytes");
+                      CHECK(error.isEmpty());
+                  });
+    }
+    suite.run("a record is appended only after the directories of its new entries are synced", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto files = std::make_shared<SyncFaults>();
+        const auto inventory = QFileInfo(directory.path()).canonicalFilePath() + "/inventory";
+        const auto store = leased(inventory + "/store", files);
+        CHECK(store->commit(transaction("first", "one")).succeeded);
+        const auto synced = files->syncedDirectories();
+        for (const auto &expected : {inventory, inventory + "/store", inventory + "/store/payloads"}) {
+            SCOPE(expected.toStdString());
+            CHECK(std::find(synced.begin(), synced.end(), expected.toStdString()) != synced.end());
+        }
+        // A payload that already exists adds no directory entry, so nothing needs a sync.
+        const auto before = files->syncedDirectories().size();
+        CHECK(store->commit(transaction("second", "one")).succeeded);
+        CHECK_EQ(files->syncedDirectories().size(), before);
+    });
+    suite.run("recovery payload envelope keeps the boundary and the acknowledged journal", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto store = leased(directory.path() + "/recovery");
+        CHECK(store->commit(transaction("acknowledged", "kept")).succeeded);
+        CHECK(store->commit(transaction("below", QByteArray(limit - 1, 'b'))).succeeded);
+        CHECK(store->commit(transaction("at", QByteArray(limit, 'a'))).succeeded);
+        const auto journalBefore = readFile(store->directory() + "/journal");
+        const auto failed = store->commit(transaction("above", QByteArray(limit + 1, 'Z')));
+        CHECK(!failed.succeeded);
+        CHECK(failed.problem
+              == Problem(ProblemCode::RecoveryPayloadTooLarge, {QString::number(limit + 1), QString::number(limit)}));
+        CHECK(readFile(store->directory() + "/journal") == journalBefore);
+        const auto reloaded = RecoveryStore(store->directory()).read();
+        CHECK(reloaded.succeeded && !reloaded.incompleteTail);
+        CHECK(reloaded.transactions.size() == 3);
+        Problem error;
+        const auto &reader = store->store();
+        CHECK_EQ(reader.payload(RecoveryStore::digest(QByteArray(limit - 1, 'b')), &error).size(), limit - 1);
+        CHECK(error.isEmpty());
+        CHECK_EQ(reader.payload(RecoveryStore::digest(QByteArray(limit, 'a')), &error).size(), limit);
+        CHECK(error.isEmpty());
+        const auto aboveHash = RecoveryStore::digest(QByteArray(limit + 1, 'Z'));
+        CHECK(!QFileInfo::exists(store->directory() + "/payloads/" + QString::fromLatin1(aboveHash)));
+        CHECK(reader.payload(aboveHash, &error).isEmpty());
+        CHECK(reports(error, ProblemCode::RecoveryPayloadUnsafe));
+    });
+    suite.run("a long-lived lease writes the bytes of leases taken for each commit", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto kept = leased(directory.path() + "/kept");
+        const auto rereading = directory.path() + "/rereading";
+        for (int index = 1; index <= 12; ++index) {
+            const auto next = transaction(QString("edit-%1").arg(index), "draft " + QByteArray::number(index));
+            CHECK(kept->commit(next).succeeded);
+            CHECK(leased(rereading)->commit(next).succeeded);
+            if (index % 4 == 0) {
+                // A retry of the flushed transaction appends nothing on either path.
+                CHECK(kept->commit(next).succeeded);
+                CHECK(leased(rereading)->commit(next).succeeded);
+            }
+        }
+        const auto bytes = readFile(kept->directory() + "/journal");
+        CHECK(bytes == readFile(rereading + "/journal"));
+        const auto reloaded = RecoveryStore(kept->directory()).read();
+        CHECK(reloaded.succeeded && reloaded.transactions.size() == 12 && reloaded.validBytes == bytes.size());
+    });
+    suite.run("a retry under a later lease appends nothing after other records", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto path = directory.path() + "/recovery";
+        const auto mine = transaction("mine", "first");
+        const auto theirs = transaction("theirs", "appended under another lease");
+        CHECK(leased(path)->commit(mine).succeeded);
+        CHECK(leased(path)->commit(theirs).succeeded);
+        // The retried transaction is no longer the last record; it is still in the journal, so the
+        // retry appends nothing.
+        const auto store = leased(path);
+        CHECK(store->commit(mine).succeeded);
+        const auto next = transaction("next", "second");
+        CHECK(store->commit(next).succeeded);
+        const auto reloaded = RecoveryStore(path).read();
+        CHECK(reloaded.succeeded && !reloaded.incompleteTail);
+        CHECK(reloaded.transactions == (QList<StoredTransaction>{stored(mine), stored(theirs), stored(next)}));
+    });
+    suite.run("a retry after a failed journal sync appends nothing even when other records followed", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto files = std::make_shared<SyncFaults>();
+        const auto store = leased(directory.path() + "/recovery", files);
+        const auto first = transaction("first", "open of a");
+        const auto other = transaction("other", "open of b");
+        {
+            ArmedFault fault(*files, SyncFaults::Point::JournalSync);
+            CHECK(!store->commit(first).succeeded);
+            CHECK_EQ(files->failures.load(), 1);
+        }
+        CHECK(store->commit(other).succeeded);
+        CHECK(store->commit(first).succeeded);
+        const auto reloaded = RecoveryStore(store->directory()).read();
+        CHECK(reloaded.succeeded);
+        CHECK(reloaded.transactions == (QList<StoredTransaction>{stored(first), stored(other)}));
+        CHECK(reports(store->commit(transaction("first", "different work")).problem,
+                      ProblemCode::RecoveryTransactionReused));
+    });
+    suite.run("a journal that repeats a transaction identity is refused", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto store = leased(directory.path() + "/recovery");
+        CHECK(store->commit(transaction("first", "one")).succeeded);
+        CHECK(store->commit(transaction("second", "two")).succeeded);
+        rewriteLastRecord(store->directory(), [](QJsonObject &record) { record.insert("transaction", "first"); });
+        const auto reread = RecoveryStore(store->directory()).read();
+        CHECK(!reread.succeeded);
+        CHECK(reports(reread.problem, ProblemCode::RecoveryTransactionRepeated));
+    });
+    suite.run("a same-size change to an earlier record fails the next commit", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto store = leased(directory.path() + "/recovery");
+        CHECK(store->commit(transaction("first", "one")).succeeded);
+        CHECK(store->commit(transaction("second", "two")).succeeded);
+        const auto journalPath = store->directory() + "/journal";
+        auto changed = readFile(journalPath);
+        const auto firstFrame = changed.indexOf('\n') + 1;
+        CHECK(firstFrame > 0 && changed.size() > firstFrame + 12);
+        changed[firstFrame + 11] = changed.at(firstFrame + 11) == 'A' ? 'B' : 'A';
+        writeFile(journalPath, changed);
+        markRewritten(journalPath);
+        const auto failed = store->commit(transaction("third", "three"));
+        CHECK(!failed.succeeded
+              && (reports(failed.problem, ProblemCode::RecoveryRecordIntegrity)
+                  || reports(failed.problem, ProblemCode::RecoveryPayloadIntegrity)));
+        CHECK(readFile(journalPath) == changed);
+    });
+    suite.run("a commit does not read the journal again while fstat still describes it", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto files = std::make_shared<FrozenStatus>();
+        const auto store = leased(directory.path() + "/recovery", files);
+        CHECK(store->commit(transaction("first", "one")).succeeded);
+        CHECK(store->commit(transaction("second", "two")).succeeded);
+        const auto journalPath = store->directory() + "/journal";
+        auto changed = readFile(journalPath);
+        const auto firstFrame = changed.indexOf('\n') + 1;
+        CHECK(firstFrame > 0 && changed.size() > firstFrame + 12);
+        changed[firstFrame + 11] = changed.at(firstFrame + 11) == 'A' ? 'B' : 'A';
+        // The rewrite keeps the size, and fstat keeps reporting the times of the last append, so
+        // only a reread could see it. The append goes ahead, and a reader still refuses the
+        // changed record.
+        files->freeze = true;
+        writeFile(journalPath, changed);
+        CHECK(store->commit(transaction("third", "three")).succeeded);
+        const auto reread = RecoveryStore(store->directory()).read();
+        CHECK(!reread.succeeded && reports(reread.problem, ProblemCode::RecoveryRecordIntegrity));
+    });
+    suite.run("a foreign, truncated, newer or unsafe journal is verified before the next append", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto store = leased(directory.path() + "/recovery");
+        const auto other = leased(directory.path() + "/other");
+        const auto first = transaction("first", "one");
+        const auto second = transaction("second", "two");
+        const auto foreignA = transaction("foreign-a", "elsewhere a");
+        const auto foreignB = transaction("foreign-b", "elsewhere b");
+        CHECK(store->commit(first).succeeded && store->commit(second).succeeded);
+        CHECK(other->commit(foreignA).succeeded && other->commit(foreignB).succeeded);
+        const auto journalPath = store->directory() + "/journal";
+        const auto acknowledged = readFile(journalPath);
+
+        // Another store's complete journal: the next record chains after its last one.
+        for (const auto &hash : {RecoveryStore::digest("elsewhere a"), RecoveryStore::digest("elsewhere b")}) {
+            const auto name = "/payloads/" + QString::fromLatin1(hash);
+            overwritePrivate(store->directory() + name, readFile(other->directory() + name));
+        }
+        writeFile(journalPath, readFile(other->directory() + "/journal"));
+        const auto after = transaction("after-foreign", "three");
+        CHECK(store->commit(after).succeeded);
+        auto reloaded = RecoveryStore(store->directory()).read();
+        CHECK(reloaded.succeeded
+              && reloaded.transactions
+                  == (QList<StoredTransaction>{stored(foreignA), stored(foreignB), stored(after)}));
+
+        // A journal whose payloads are missing is refused.
+        writeFile(journalPath, acknowledged);
+        CHECK(QFile::remove(store->directory() + "/payloads/" + QString::fromLatin1(RecoveryStore::digest("one"))));
+        auto failed = store->commit(transaction("missing", "four"));
+        CHECK(!failed.succeeded && reports(failed.problem, ProblemCode::RecoveryPayloadUnsafe));
+        CHECK(readFile(journalPath) == acknowledged);
+        overwritePrivate(store->directory() + "/payloads/" + QString::fromLatin1(RecoveryStore::digest("one")), "one");
+
+        // A later format is told apart from damage.
+        auto newer = acknowledged;
+        newer.replace(0, 33, "Branch Truce recovery journal v9\n");
+        writeFile(journalPath, newer);
+        failed = store->commit(transaction("newer", "five"));
+        CHECK(!failed.succeeded && reports(failed.problem, ProblemCode::RecoveryJournalNewer));
+        CHECK(RecoveryStore(store->directory()).read().newerFormat);
+        auto unknown = acknowledged;
+        unknown.replace(0, 33, "Branch Truce recovery journal vX\n");
+        writeFile(journalPath, unknown);
+        const auto corrupt = RecoveryStore(store->directory()).read();
+        CHECK(!corrupt.succeeded && !corrupt.newerFormat
+              && reports(corrupt.problem, ProblemCode::RecoveryJournalVersion));
+
+        // A journal cut back to its first record continues from that record.
+        writeFile(journalPath, acknowledged.left(acknowledged.indexOf('\n', 33) + 1));
+        const auto resumed = transaction("resumed", "six");
+        CHECK(store->commit(resumed).succeeded);
+        reloaded = RecoveryStore(store->directory()).read();
+        CHECK(reloaded.succeeded
+              && reloaded.transactions == (QList<StoredTransaction>{stored(first), stored(resumed)}));
+
+        // A journal other users can read is refused even when its bytes are unchanged.
+        const auto before = readFile(journalPath);
+        CHECK(QFile::setPermissions(journalPath,
+                                    QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadOther));
+        failed = store->commit(transaction("exposed", "seven"));
+        CHECK(!failed.succeeded && reports(failed.problem, ProblemCode::RecoveryJournalUnsafe));
+        CHECK(readFile(journalPath) == before);
+    });
+    suite.run("a store has one lease holder at a time", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto path = directory.path() + "/recovery";
+        auto holder = leased(path);
+        CHECK(holder->commit(transaction("first", "one")).succeeded);
+        const auto journalBefore = readFile(path + "/journal");
+        auto failure = RecoveryLease::Failure::None;
+        CHECK(RecoveryLease::acquire(path, systemFileSystem(), &failure) == nullptr);
+        CHECK_EQ(failure, RecoveryLease::Failure::Held);
+        CHECK_EQ(readFile(path + "/journal"), journalBefore);
+        holder.reset();
+        CHECK(leased(path)->commit(transaction("second", "two")).succeeded);
+        CHECK_EQ(RecoveryStore(path).read().transactions.size(), 2);
+    });
+    suite.run("a lease left by a process that has exited does not block the next one", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto path = directory.path() + "/recovery";
+        CHECK(leased(path)->commit(transaction("first", "one")).succeeded);
+        // A lock in Qt's own format, naming this host and a process that is gone.
+        const auto lockPath = path + "/session.lock";
+        QByteArray content;
+        {
+            QLockFile probe(lockPath);
+            CHECK(probe.tryLock(0));
+            content = readFile(lockPath);
+            probe.unlock();
+        }
+        QProcess exited;
+        exited.start(QStringLiteral("/bin/true"), QStringList{});
+        CHECK(exited.waitForStarted(5000));
+        const auto deadPid = QByteArray::number(exited.processId());
+        CHECK(exited.waitForFinished(5000));
+        content = deadPid + content.mid(content.indexOf('\n'));
+        overwritePrivate(lockPath, content);
+        CHECK(leased(path)->commit(transaction("second", "two")).succeeded);
+        CHECK_EQ(RecoveryStore(path).read().transactions.size(), 2);
+    });
+    suite.run("removing a store deletes it and gives up its lease", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto path = directory.path() + "/recovery";
+        auto lease = leased(path);
+        CHECK(lease->commit(transaction("first", "one")).succeeded);
+        CHECK(lease->remove());
+        CHECK(!QFileInfo::exists(path));
+        CHECK(!lease->remove());
+        CHECK(leased(path)->commit(transaction("again", "two")).succeeded);
+    });
+    suite.run("a retried transaction identity that carries different work is refused", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto store = leased(directory.path() + "/recovery");
+        const auto original = transaction("stable-identity", "the acknowledged draft");
+        CHECK(store->commit(original).succeeded);
+        const auto journalBefore = readFile(store->directory() + "/journal");
+        const auto reused = store->commit(transaction("stable-identity", "a newer draft"));
+        CHECK(!reused.succeeded);
+        CHECK(reports(reused.problem, ProblemCode::RecoveryTransactionReused));
+        CHECK_EQ(readFile(store->directory() + "/journal"), journalBefore);
+        const auto reloaded = RecoveryStore(store->directory()).read();
+        CHECK(reloaded.succeeded && reloaded.transactions == QList<StoredTransaction>{stored(original)});
+    });
+    suite.run("a payload whose bytes changed after the commit fails its integrity check", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto store = leased(directory.path() + "/recovery");
+        CHECK(store->commit(transaction("first", "exact payload bytes")).succeeded);
+        const auto hash = RecoveryStore::digest("exact payload bytes");
+        overwritePrivate(store->directory() + "/payloads/" + QString::fromLatin1(hash), "exact payload bytez");
+        Problem error;
+        CHECK(store->store().payload(hash, &error).isEmpty());
+        CHECK(reports(error, ProblemCode::RecoveryPayloadIntegrity));
+        const auto reread = RecoveryStore(store->directory()).read();
+        CHECK(!reread.succeeded && reports(reread.problem, ProblemCode::RecoveryPayloadIntegrity));
+    });
+    for (const auto &[name, mutate] : invalidRecords) {
+        suite.run(std::string("a checksummed record with ") + name + " is refused by reads and commits", [mutate] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            const auto store = leased(directory.path() + "/recovery");
+            CHECK(store->commit(transaction("first", "one")).succeeded);
+            CHECK(store->commit(transaction("second", "two")).succeeded);
+            rewriteLastRecord(store->directory(), mutate);
+            const auto journal = readFile(store->directory() + "/journal");
+            const auto reread = RecoveryStore(store->directory()).read();
+            CHECK(!reread.succeeded);
+            CHECK(reports(reread.problem, ProblemCode::RecoveryRecordSchema));
+            const auto failed = store->commit(transaction("third", "three"));
+            CHECK(!failed.succeeded && reports(failed.problem, ProblemCode::RecoveryRecordSchema));
+            CHECK_EQ(readFile(store->directory() + "/journal"), journal);
+        });
+    }
+    suite.run("leases and commits refuse a relative location, an empty identity and a misnamed payload", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const QString relative = QStringLiteral("branch-truce-relative-recovery");
+        CHECK(!QFileInfo::exists(relative));
+        auto failure = RecoveryLease::Failure::None;
+        CHECK(RecoveryLease::acquire(relative, systemFileSystem(), &failure) == nullptr);
+        CHECK_EQ(failure, RecoveryLease::Failure::Unsafe);
+        CHECK(!QFileInfo::exists(relative));
+        const auto store = leased(directory.path() + "/recovery");
+        const auto refused = store->commit(transaction("", "three"));
+        CHECK(!refused.succeeded && reports(refused.problem, ProblemCode::RecoveryTransactionInvalid));
+        CHECK(!QFileInfo::exists(store->directory() + "/journal"));
+        auto misnamed = transaction("misnamed", "four");
+        misnamed.payloads = {{RecoveryStore::digest("not these bytes"), "four"}};
+        const auto wrong = store->commit(misnamed);
+        CHECK(!wrong.succeeded && reports(wrong.problem, ProblemCode::RecoveryPayloadIdentity));
+        CHECK(RecoveryStore(store->directory()).read().transactions.isEmpty());
+    });
+    return suite.report();
 }

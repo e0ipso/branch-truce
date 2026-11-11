@@ -18,6 +18,6 @@ namespace branch_truce {
 // its sources, launch result, provenance and conversion policy. Empty unless
 // the conflict is editable, has a result and both sides, and every stage
 // agrees with its source on path, object ID, mode, worktree and policy.
-[[nodiscard]] std::optional<FileSnapshots> captureFile(const git::Conflict &file,
-    const git::RepositoryContext &repository, const std::string &sessionId);
+[[nodiscard]] std::optional<FileSnapshots>
+captureFile(const git::Conflict &file, const git::RepositoryContext &repository, const std::string &sessionId);
 }

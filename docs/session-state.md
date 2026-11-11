@@ -1,11 +1,12 @@
 # Revisioned session state
 
 `core/SessionState.h` is C++20 value state with no Qt, filesystem or Git
-dependency. `app/SessionModel.h` adapts it to a Qt list model exposed as
-`applicationController.files`. `applicationController.coordinator` owns session
-replacement and background execution. Repository loading, storage and editor
-integration still need their adapters. This change
-does not make the startup window a working conflict resolver.
+dependency. `session/SessionStore.h` holds each file's session and its recovery
+journal and runs every command on them; `app/SessionModel.h` lists the store's
+files as a Qt list model for the window. `session/SessionCoordinator.h` owns
+session replacement and background execution. `Application` composes repository
+loading, recovery, guarded publication, comparison and editor adapters for the
+working desktop window.
 
 ## Revisions and history
 
@@ -36,9 +37,12 @@ manually saved while still requiring Mark resolved again. Save keeps history.
 Editing after undo cuts only the redo branch; old snapshots remain available
 for completed or pending operation outcomes.
 
-All snapshots are retained for the lifetime of this in-memory file session.
-History persistence and a bounded storage policy are separate work. Do not use
-a returned model file pointer across row insertion, which can move the values.
+History keeps up to 1024 undo entries within a 256 MiB retained-byte budget,
+pruning the oldest undo prefix while protecting launch, current and
+publication-held revisions. Complete recovery checkpoints preserve the retained
+history and cursor across continuation. See [recovery-journal.md](recovery-journal.md)
+for durable acknowledgment and admission. Do not use a returned model file pointer
+across row insertion, which can move the values.
 
 ## Recording outcomes
 
@@ -59,7 +63,7 @@ by storage and Git adapters, always for the captured transaction ID:
    written. Staging success requires the adapter's opaque canonical object ID
    and mode. A child process exit alone is insufficient verification.
 
-`ApplicationController::markResolved` runs that sequence for the selected
+`FileCommands::markResolved` runs that sequence for the selected
 revision. It does not require a prior Save. Repository mode stages only that
 literal path. A path assigned to parent staging is written and then left
 unresolved until `verifyParentAcknowledgment` sees the canonical index entry.
@@ -67,6 +71,12 @@ The app does not stage a parent-owned path. While a mergetool parent session
 is active, an unlaunched path waits instead of being staged here. The blocking
 launcher and its local socket are recorded in
 [the mergetool launcher note](mergetool-launcher.md).
+
+Command return values acknowledge request admission. Review confirmation,
+marker refusal and persistence failures can arrive later. Preview and staged
+discard dialogs wait for their correlated durable completion before closing;
+a failed apply remains visible with its error. A completion for an older
+preview cannot close a newer preview.
 
 `Outcome::Uncertain` represents timeouts or other uninspected mutation results.
 It blocks finish until an adapter inspects the outcome. Successful snapshots
@@ -136,8 +146,13 @@ effect and stops when that returns false. Cancellation before admission retains
 or the worker throws. The queue stays occupied through inspection. Observed
 changes, observed unchanged state and uncertainty are distinct, and none imply
 a rollback. An inspection exception or missing observation retains uncertainty.
-`mutationOutcomes` keeps the original task's evidence across session replacement.
+The recovery journal keeps the original task's evidence across session
+replacement, and `taskFinished` reports every outcome, including fenced ones.
 An uncertain outcome remains outstanding and needs further adapter inspection.
+Shutdown cancels work that has not entered mutation admission and drains owned
+admitted mutation workers through inspection and durable observation. It has no
+artificial deadline that could abandon a write. An interrupted Git intent stays
+available to the next start's reconciler.
 
 `submitGit` keeps Git on asynchronous QProcess signals. Stage requests use the
 same mutation queue through the adapter's final index inspection. The controller
@@ -148,16 +163,17 @@ writer. Git's locks and mutation-time baseline checks remain required.
 
 Different worktrees can proceed independently. This queue coordinates one
 application controller, not other processes. Workers cooperate with cancellation;
-the coordinator never waits on them on the GUI thread. Destruction cancels
-controls and disconnects delivery. In-flight mutations may still finish, so a
-normal close must settle them and retain outcomes before destroying the controller.
+normal dispatch and completion keep the GUI thread free. Destruction cancels
+controls, disconnects delivery and waits only for its owned admitted workers.
+A blocked filesystem can therefore delay shutdown. A normal close settles mutations
+and retains their outcomes before destroying the controller.
 Mark resolved publishes and verifies one reviewed revision.
 
 `canFinish` requires at least one loaded file and current verified resolution
 of every file. `finishBlockers` includes each file ID and display path for
 navigation. Empty sessions are blocked.
 
-`SessionModel::handoff` places each file in exactly one category: undecided,
+`SessionHandoff::build` places each file in exactly one category: undecided,
 saved-draft, review-needed, newer-draft, written-unresolved, published, failed
 (including uncertain outcomes, unreadable files and recovery problems) or
 outside-app. Each entry keeps its blockers and the next action. The controller

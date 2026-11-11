@@ -2,8 +2,13 @@
 # Read shared prerequisites, then configure only this checkout. No provisioning.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+usage="Usage: $0 [desktop|core|sanitize] [absolute-build-directory]"
 mode=${1:-desktop}
-case "$mode" in desktop|core|sanitize) ;; *) echo "Usage: $0 [desktop|core|sanitize] [absolute-build-directory]" >&2; exit 2 ;; esac
+case "$mode" in
+    desktop|core|sanitize) ;;
+    -h|--help) echo "$usage"; exit 0 ;;
+    *) echo "$usage" >&2; exit 2 ;;
+esac
 build=${2:-"$root/build/$mode"}
 [[ "$build" == /* ]] || { echo 'Build directory must be absolute.' >&2; exit 2; }
 for tool in cmake c++ make git; do
@@ -13,8 +18,10 @@ cmake --version
 c++ --version
 git --version
 version=$(git version | awk '{print $3}')
-[[ "$(printf '%s\n' 2.43.0 "$version" | sort -V | head -1)" == 2.43.0 ]] || {
-    echo 'Git >= 2.43 is required.' >&2; exit 1;
+source "$root/packaging/scripts/tsv.sh"
+minimum=$(tsv_field "$root/packaging/minimum-versions.tsv" git minimum) || minimum=
+[[ -n "$minimum" && "$(printf '%s\n' "$minimum" "$version" | sort -V | head -1)" == "$minimum" ]] || {
+    echo "Git >= ${minimum:-?} is required (packaging/minimum-versions.tsv); found $version." >&2; exit 1;
 }
 options=(-S "$root" -B "$build" -G 'Unix Makefiles' -DCMAKE_BUILD_TYPE=Debug
     -DBUILD_TESTING=ON -DBRANCH_TRUCE_WARNINGS_AS_ERRORS=ON)

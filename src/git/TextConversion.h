@@ -35,7 +35,7 @@ struct TextConversionResult {
     TextConversionRequest request;
     Outcome outcome = Outcome::Rejected;
     TextConversionFailure failure = TextConversionFailure::None;
-    QString diagnostic;
+    Problem problem;
     std::optional<ConvertedText> text;
 };
 
@@ -44,13 +44,16 @@ struct TextConversionResult {
 class TextConversion final : public QObject {
     Q_OBJECT
 public:
-    explicit TextConversion(const QString &executable, QObject *parent = nullptr);
+    // Runs its Git requests one at a time on one runner from runners.
+    explicit TextConversion(const GitRunners &runners, QObject *parent = nullptr);
+    explicit TextConversion(GitProgram program, QObject *parent = nullptr);
     ~TextConversion() override;
     bool start(const TextConversionRequest &request);
     void cancel();
     [[nodiscard]] bool busy() const;
 Q_SIGNALS:
     void finished(const branch_truce::git::TextConversionResult &result);
+
 private:
     class State;
     std::unique_ptr<State> d;

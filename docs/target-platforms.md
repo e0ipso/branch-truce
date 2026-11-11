@@ -53,11 +53,12 @@ bytes and do not prove the current Kubuntu DEB works on Tuxedo.
 
 ## Historical and developer per-base Debian tooling
 
-The remaining sections retain the dated 2026-10-25 measurements and the separate
-`tools/build-artifact.sh` / `tools/inspect-artifact.sh` developer path. That path
-still builds a DEB per Kubuntu/Tuxedo base with a base-specific version suffix.
-It does not produce the three current release assets or their release manifests.
-The archived measurements are not current release or desktop compatibility claims.
+The remaining sections retain the dated 2026-10-25 measurements. They were made
+with per-base DEBs that a since-removed builder made with a `+kubuntu26.04` or
+`+tuxedo24.04` version suffix. Every DEB now comes from
+`packaging/scripts/package-release.sh`, and the developer inspection below takes
+that release DEB. The archived measurements are not current release or desktop
+compatibility claims.
 
 ### Developer OS bases
 
@@ -67,7 +68,7 @@ The archived measurements are not current release or desktop compatibility claim
 | Base image | `ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7` | `ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55` |
 | Container OS | Ubuntu 26.04.1 LTS, resolute | Ubuntu 24.04.5 LTS, noble |
 | Package sources | Ubuntu resolute archive in the image | Only Tuxedo OS sources: [packaging/tuxedo/tuxedo-os.sources](../packaging/tuxedo/tuxedo-os.sources) |
-| Definition | [packaging/kubuntu/Dockerfile](../packaging/kubuntu/Dockerfile) | [packaging/tuxedo/Dockerfile](../packaging/tuxedo/Dockerfile) |
+| Definition | `packaging/kubuntu/Dockerfile`, retired | [packaging/tuxedo/Dockerfile](../packaging/tuxedo/Dockerfile) |
 | Package version | `0.1.0+kubuntu26.04` | `0.1.0+tuxedo24.04` |
 | Artifact | `branch-truce_0.1.0+kubuntu26.04_amd64.deb` | `branch-truce_0.1.0+tuxedo24.04_amd64.deb` |
 
@@ -153,8 +154,8 @@ installed after a Qt update and could then fail to start.
 
 With bytecode only, neither binary has a `Qt_6_PRIVATE_API` symbol, neither
 package depends on a private ABI, and Kubuntu's `libqt6qml6` floor drops from
-6.10.2 to 6.6.0. `tools/inspect-artifact.sh` fails a binary that has private
-Qt symbols but no exact private ABI pin in `Depends`.
+6.10.2 to 6.6.0. `packaging/scripts/check-package.sh` fails any binary that
+uses private Qt symbols.
 
 Startup cost was measured on the Tuxedo OS 24.04 development host, Qt
 6.10.2, with both binaries built with the package's `dpkg-buildflags`.
@@ -194,7 +195,7 @@ highlight syntax through the KF6 SyntaxHighlighting C++ library, which
 `plasma-integration` is the only `Recommends`. The package starts on Wayland
 without it, and Plasma desktops have it through `plasma-workspace`. This list
 is the one the CI release packages use; `packaging/scripts/check-package.sh`
-checks it.
+checks that the built package declares it.
 
 ## Packaging choice
 
@@ -202,98 +203,71 @@ A native `.deb` built by debhelper's CMake build system, as the technical
 spec's initial candidate. Flatpak would need its own design for Git access.
 
 - [packaging/debian/](../packaging/debian/) holds `control`, `rules`,
-  `copyright`, `compat` and `source/format`, shared by both bases and by the CI
-  release packages of `packaging/scripts/package-release.sh`. `rules` stops
+  `copyright` and `source/format`, which the release package of
+  `packaging/scripts/package-release.sh` builds from. `rules` stops
   unless `BRANCH_TRUCE_VERSION` is set, and configures with that version,
   `BUILD_TESTING=OFF` and `BRANCH_TRUCE_WARNINGS_AS_ERRORS=ON`; tests run
   from development builds and in CI. `control` declares `debhelper-compat`,
-  so both build scripts drop `compat` from the copied `debian/` directory.
-- [tools/build-artifact.sh](../tools/build-artifact.sh) takes the release
-  version from `package.json`, converts it with
-  `packaging/scripts/native-version.sh`, and passes it to `rules` as
-  `BRANCH_TRUCE_VERSION`. It writes `debian/changelog` with the base's suite
-  (`resolute` or `noble`) and the `+kubuntu26.04` or `+tuxedo24.04` version
-  suffix, so the two packages have different versions as well as different
-  file names. The CI release packages use the same `debian/` directory but
-  their own version form and file names.
+  so there is no `compat` file.
+- `packaging/scripts/build-deb.sh` passes the release version to `rules`
+  as `BRANCH_TRUCE_VERSION` and writes `debian/changelog` with the native
+  version of `packaging/scripts/native-version.sh` and the build image's
+  release codename as the distribution.
 - The build uses each base's default `dpkg-buildflags`, including LTO,
   `_FORTIFY_SOURCE=3` and `hardening=+all`. No debug-symbol package is built.
 - `debian/copyright` declares `GPL-3.0+` in the machine-readable format and
   points at `/usr/share/common-licenses/GPL-3`. The AppStream metainfo
   declares `GPL-3.0-or-later` as its `project_license` and CC0-1.0 for the
-  metadata. The packages built here are local validation artifacts.
-- Current release packaging uses the three native targets above, with one
+  metadata.
+- Release packaging uses the three native targets above, with one
   validation/package pipeline per target. The dated container validation in
-  [platform-validation.md](platform-validation.md) used packages from
-  `tools/build-artifact.sh`, not those release packages.
+  [platform-validation.md](platform-validation.md) used the earlier per-base
+  packages, not the release packages.
 - The binary keeps the `RUNPATH` `$ORIGIN:$ORIGIN/../lib/x86_64-linux-gnu`
   that the CMake build sets. Under `/usr/bin` it points at system directories
   only.
 
-## Build and inspect developer artifacts
+## Build and inspect a release DEB
 
 Docker or another engine named by `CONTAINER_ENGINE` is required. Nothing is
-installed on the host.
+installed on the host. Build the Kubuntu release DEB with the CI pipeline,
+which also runs the desktop suite and the package checks:
 
 ```sh
-tools/build-artifact.sh --target kubuntu --output "$out"
-tools/inspect-artifact.sh --target kubuntu --package "$out/branch-truce_0.1.0+kubuntu26.04_amd64.deb" --output "$out"
-tools/build-artifact.sh --target tuxedo --output "$out"
-tools/inspect-artifact.sh --target tuxedo --package "$out/branch-truce_0.1.0+tuxedo24.04_amd64.deb" --output "$out"
+packaging/scripts/container-check.sh --format kubuntu-deb --version 1.2.3 --output "$out"
+deb="$out/branch-truce_1.2.3_amd64-ubuntu26.04.deb"
+tools/validate-installed-artifact.sh --target kubuntu --package "$deb" --output "$out/kubuntu"
+tools/validate-installed-artifact.sh --target tuxedo --package "$deb" --output "$out/tuxedo"
 ```
 
-`build-artifact.sh` builds two images per base from its Dockerfile, with
-`packaging/` as the build context:
+`--target` names a row of
+[packaging/validation-targets.tsv](../packaging/validation-targets.tsv). Each
+row names the release format the target installs and a Dockerfile under
+`packaging/` whose `target` stage is the clean OS base: the Kubuntu 26.04 stage
+of [ci/kubuntu.Dockerfile](../packaging/ci/kubuntu.Dockerfile), and Tuxedo OS
+24.04 with only its vendor sources in
+[tuxedo/Dockerfile](../packaging/tuxedo/Dockerfile). The script builds the
+image `branch-truce-validate:<target>`, or reuses it from the engine's layer
+cache. Set `BRANCH_TRUCE_KDE_CI_REFRESH` to a new value to fetch the archives
+again instead of reusing cached layers. Remove the images with
+`docker image rm`.
 
-- `branch-truce-artifact:kubuntu-26.04-target` and
-  `branch-truce-artifact:tuxedo-24.04-target`: the clean OS base.
-- `branch-truce-artifact:kubuntu-26.04-build` and
-  `branch-truce-artifact:tuxedo-24.04-build`: the base plus the toolchain
-  and `Build-Depends`.
+`validate-installed-artifact.sh` starts a throwaway container from that image,
+which needs network access for the package lists, and makes the checks
+`packaging/scripts/check-package.sh` does not. Among them:
 
-The images stay for reuse. Image builds fetch from the archives; set
-`BRANCH_TRUCE_REFRESH` to a new value to fetch again instead of reusing
-cached layers. Remove the images with `docker image rm`.
-
-The script copies the checkout's `CMakeLists.txt`, `cmake/`, `src/`,
-`packaging/`, `assets/branding/platform/linux/` and `assets/branding/svg/`
-(tracked and untracked, not ignored) into a temporary directory and
-runs `dpkg-buildpackage -b` there with `--network none` and `parallel=2`. The
-build path is always `/work/branch-truce-<version>`, and `SOURCE_DATE_EPOCH`
-is the author time of the last commit that changed those paths. The output directory gets the `.deb`, its
-`.buildinfo` and a `.manifest`. The manifest records the artifact's SHA-256,
-the base image, the build image ID and a SHA-256 of its layer list, a
-SHA-256 of the source snapshot, `HEAD`,
-the number of changed source paths and the toolchain list above.
-
-`inspect-artifact.sh` starts a throwaway container from the `-target` image,
-which needs network access for the package lists, and checks:
-
-1. Metadata and contents: the version suffix, `amd64`, exactly the eight
-   installed files from [build.md](build.md#install) plus the Debian
-   `copyright` and `changelog.gz`, and no maintainer scripts.
-2. `apt-get install --no-install-recommends` of the `.deb`. The packages it
+1. `apt-get install --no-install-recommends` of the `.deb`. The packages it
    adds are the runtime closure and are printed with their versions.
-3. Every linked library resolves. Each `NEEDED` library's package is named in
-   `Depends`. The `RUNPATH` and the highest required symbol versions are
-   printed. A `Qt_6_PRIVATE_API` symbol fails the check unless `Depends`
-   pins a Qt private ABI to an exact version.
-4. Each QML module imported by `src/ui` has a `qmldir` from a package named in
+2. Each `NEEDED` library's package is named in `Depends` itself. The
+   `RUNPATH` and the highest required symbol versions are printed.
+3. Each QML module imported by `src/ui` has a `qmldir` from a package named in
    `Depends`.
-5. `desktop-file-validate` and `appstreamcli validate --no-net`. Each
-   installed application icon equals the branding pack's file byte for byte,
-   each PNG has its directory's pixel size, and the `hicolor` theme's
-   `index.theme` declares every icon directory at that size, so a theme lookup
-   finds the icon in the installed files alone.
-6. The installed `branch-truce --version` and `--smoke-test` on a disposable
-   merge conflict, offscreen with software rendering. This loads the compiled
-   QML, Qt Quick Controls and Kirigami from the installed closure only.
-7. The installed application resolves the Breeze icon `document-save`. The
-   inspection builds `tests/fixtures/AppearanceProbe.cpp` in the `-build` image
-   of the base, preloads it into `branch-truce --smoke-test` with no desktop
-   named and reads the `documentSave` field of its record. A null icon fails,
-   which is what a closure without `qt6-svg-plugins` gives.
-8. `apt-get remove` leaves none of the program files.
+
+[platform-validation.md](platform-validation.md) describes the other steps and
+the `--wayland` run. `check-package.sh` checks the payload, metadata, desktop
+files, icons, hardening, the private Qt ABI, the runtime QML modules and Qt
+plugins, the launch and the removal on every release format; the CI `kde` job
+runs it.
 
 ## Results on 2026-10-25
 
@@ -318,7 +292,7 @@ On both bases the install pulled the four declared QML modules and, through
 their own dependencies, `qml6-module-qtqml`, `-qtqml-models`,
 `-qtqml-workerscript`, `-qt-labs-qmlmodels`, `-qtquick-shapes`,
 `-qtquick-templates` and `-qtquick-window`, all at the base's Qt 6.10.2.
-Kirigami came in at 6.24.0 with its private libraries. The `.inspection`
+Kirigami came in at 6.24.0 with its private libraries. The inspection
 report kept beside each artifact lists the full closure with versions.
 `appstreamcli` reported three infos, `cid-maybe-not-rdns`,
 `url-homepage-missing` and `developer-info-missing`, which stay open until the

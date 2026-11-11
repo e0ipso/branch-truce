@@ -62,21 +62,46 @@ run_wrapper status output TMPDIR="$scratch/tmp-existing" XDG_DATA_HOME="$scratch
 [[ "$status" == 0 ]] || fail "an update to an existing journal failed the run (status $status): $output"
 assertions=$((assertions + 1))
 
+# A new path in an app entry of the config or cache home fails the run.
+for kind in CONFIG CACHE; do
+    mkdir -p "$scratch/tmp-$kind" "$scratch/home-$kind/existing"
+    run_wrapper status output TMPDIR="$scratch/tmp-$kind" "XDG_${kind}_HOME=$scratch/home-$kind" \
+        LEAK_TO="$scratch/home-$kind" -- bash -c 'mkdir -p "$LEAK_TO/branch-truce" && : >"$LEAK_TO/branch-truce/state"'
+    [[ "$status" == 1 && "$output" == *"$scratch/home-$kind/branch-truce/state"* ]] \
+        || fail "XDG_${kind}_HOME leak not reported (status $status): $output"
+    assertions=$((assertions + 1))
+done
+
+# Another tool's entry in the config home is not the app's.
+mkdir -p "$scratch/tmp-other" "$scratch/config-other"
+run_wrapper status output TMPDIR="$scratch/tmp-other" XDG_CONFIG_HOME="$scratch/config-other" \
+    LEAK_TO="$scratch/config-other" -- bash -c 'mkdir -p "$LEAK_TO/other-tool"'
+[[ "$status" == 0 ]] || fail "another tool's config entry failed the run (status $status): $output"
+assertions=$((assertions + 1))
+
+# A change to the caller's global Git configuration fails the run, even when the command succeeds.
+mkdir -p "$scratch/tmp-git" "$scratch/git-home"
+printf '[user]\n\tname = Someone\n' >"$scratch/git-home/.gitconfig"
+run_wrapper status output TMPDIR="$scratch/tmp-git" HOME="$scratch/git-home" XDG_CONFIG_HOME= \
+    LEAK_TO="$scratch/git-home" -- bash -c 'printf "[core]\n\tautocrlf = true\n" >>"$LEAK_TO/.gitconfig"'
+[[ "$status" == 1 && "$output" == *'changed the real global Git configuration'* \
+    && "$output" == *"$scratch/git-home/.gitconfig"* ]] || fail "Git configuration change not reported (status $status): $output"
+assertions=$((assertions + 1))
+
 # A terminated run still removes its private directories and stops the command.
 mkdir "$scratch/tmp-term" "$scratch/data-term"
 # CTest signals the process group, so the test does too.
+# Directory creation precedes the wrapper's traps and child launch. The child reports its PID
+# through a FIFO, so TERM cannot land before that child joins the group. Opening the FIFO read
+# and write never blocks, and the read waits for the PID without polling.
 ready="$scratch/term-ready"
+mkfifo "$ready"
+exec 3<>"$ready"
 TMPDIR="$scratch/tmp-term" XDG_DATA_HOME="$scratch/data-term" setsid "$wrapper" \
     bash -c 'printf "%s\n" "$$" >"$1"; exec sleep 60' bash "$ready" 2>/dev/null &
 pid=$!
-for _ in $(seq 1 100); do
-    # Directory creation precedes the wrapper's traps and child launch. Wait for
-    # the actual child so TERM cannot land before that child joins the group.
-    [[ -s "$ready" ]] && break
-    sleep 0.05
-done
-[[ -s "$ready" ]] || fail 'the wrapper never started its command'
-child=$(cat "$ready")
+read -r -t 10 child <&3 || fail 'the wrapper never started its command'
+exec 3<&-
 [[ -n $(ls -A "$scratch/tmp-term") ]] || fail 'the wrapper never created its private directory'
 kill -TERM -- "-$pid"
 if wait "$pid"; then status=0; else status=$?; fi

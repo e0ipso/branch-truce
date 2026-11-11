@@ -1,19 +1,16 @@
 // Word comparisons locate changed tokens within corresponding source and result passages.
 #pragma once
 
-#include "Correspondence.h"
+#include "ByteRanges.h"
 #include <cstddef>
-#include <map>
 #include <string_view>
 #include <vector>
 
 namespace branch_truce {
 
-class FileSession;
-
 // Word-level differences inside changed lines. They only decorate the panes:
-// nothing here changes text, decisions or revisions. docs/resource-limits.md
-// records the limits below.
+// nothing here changes text, decisions or revisions. Input, token and retained
+// allocations have independent admission below.
 //
 // A line longer than this many bytes, newline excluded, is compared as one
 // token and never gets word ranges, so it keeps its line colouring only.
@@ -25,38 +22,33 @@ inline constexpr std::size_t kMaxWordDifferencePairCells = 1000000;
 // compared in text order; once this is spent the rest get no word ranges.
 inline constexpr std::size_t kMaxWordDifferenceCells = 4000000;
 
+enum class WordDifferenceState { Computed, ResourceLimit };
+struct WordDifferenceLimits {
+    std::size_t inputBytes = 2097152;
+    std::size_t tokens = 65536;
+    std::size_t retainedBytes = 8388608;
+};
 struct WordDifferences {
     std::vector<ByteRange> left;
     std::vector<ByteRange> right;
+    WordDifferenceState state = WordDifferenceState::Computed;
     bool operator==(const WordDifferences &) const = default;
 };
 
 // The tokens of left and right outside their longest common token sequence,
 // as ordered, disjoint byte ranges into each text. A token is a run of word
-// bytes (ASCII letters, digits, underscore and every non-ASCII byte, so UTF-8
-// sequences stay whole), a run of spaces and tabs, one newline, or one other
-// byte. Adjacent differing tokens form one range, trimmed of spaces and tabs
-// at either edge unless it holds nothing else. Newlines are never part of a
-// range. When the pair needs more comparisons than budget or
-// kMaxWordDifferencePairCells allow, both lists are empty and budget is
-// unchanged; otherwise the comparisons used are taken from budget.
-[[nodiscard]] WordDifferences wordDifferences(std::string_view left, std::string_view right,
-                                              std::size_t &budget);
-
-// Word ranges for the current revision of a file, as byte ranges into each
-// source's worktree text and into the correspondence result text.
-//
-// A changed passage pairs a source range with its result range. While either
-// side of a choice section is undecided, its two competing source sections
-// pair with each other instead, and so do their mapped result ranges when
-// both are mapped. Ranges a competing pair covers come from that pair only.
-// Earlier-version passages decorate the earlier pane, never the result.
-struct FileWordDifferences {
-    std::map<SourceSide, std::vector<ByteRange>> sources;
-    std::vector<ByteRange> result;
-    bool operator==(const FileWordDifferences &) const = default;
-};
-
-[[nodiscard]] FileWordDifferences fileWordDifferences(const FileSession &file);
+// characters (ASCII letters, digits, underscore and the letters of other
+// scripts), a run of blanks (Unicode white space other than line breaks), one
+// newline, or one other character: ASCII punctuation, Unicode punctuation and
+// symbols, and each character of scripts written without spaces, such as CJK
+// ideographs and kana. Bytes that are not UTF-8 count one at a time. Adjacent
+// differing tokens form one range, without blanks at either edge unless it
+// holds nothing else. Newlines are never part of a range. When the pair needs
+// more comparisons than budget or kMaxWordDifferencePairCells allow, both
+// lists are empty, state is ResourceLimit and budget is unchanged. Input or
+// tokenizer admission failure has the same result. Otherwise the comparisons used are
+// taken from budget.
+[[nodiscard]] WordDifferences wordDifferences(std::string_view left, std::string_view right, std::size_t &budget,
+                                              WordDifferenceLimits limits = {});
 
 }

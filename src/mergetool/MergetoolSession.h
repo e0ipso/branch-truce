@@ -1,55 +1,79 @@
 // The mergetool session connects waiting Git launchers to the window and tracks their published results.
 #pragma once
 
+#include "git/GitAdapter.h"
+#include "mergetool/MergetoolIntake.h"
+#include "mergetool/MergetoolServer.h"
+#include "mergetool/MergetoolSocket.h"
 #include "publication/ResolutionPublisher.h"
 #include "session/SessionCoordinator.h"
-#include "git/GitAdapter.h"
 #include <QByteArray>
-#include <QHash>
+#include <QList>
 #include <QObject>
 #include <QString>
-#include <QStringList>
+#include <QThreadPool>
+#include <atomic>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 
-class QLocalServer;
-class QLocalSocket;
 class QTimer;
 
 namespace branch_truce {
-class SessionModel;
 
-// Listens for blocking mergetool launchers and keeps their temporary inputs.
-// Exit success is sent only after Mark resolved has written the launched path.
-// It also revalidates restored files that only a waiting launcher can clear;
-// see RecoveryRestore.
+// Queues the launchers Git started for this operation and hands each one its
+// decision. Exit success is sent only after Mark resolved has written the
+// launched path. It also revalidates restored files that only a waiting
+// launcher can clear; see RecoveryRestore.
 class MergetoolSession final : public QObject {
     Q_OBJECT
 public:
-    // Elsewhere: another live session already owns this operation's socket.
-    // Unavailable: no launcher can attach to this session; error says why.
-    enum class Listen { Listening, Elsewhere, Unavailable };
-    // loadedRepository is the loaded operation that copied-launch checks
-    // inspect, and gitExecutable the Git they run.
-    MergetoolSession(ResolutionPublisher &publisher, SessionModel &files, SessionCoordinator &coordinator,
-                     std::function<git::RepositoryContext()> loadedRepository, QString gitExecutable,
+    using Listen = MergetoolServer::Listen;
+    struct Config {
+        // The private directory of the session sockets and launcher intakes;
+        // see mergetoolSocketDirectory().
+        QString socketDirectory;
+        // The configuration files this window's Git reads. A launcher whose
+        // Git reads others is refused, since the parent stages with them.
+        git::GitEnvironment gitEnvironment;
+        // Builds the runners copied-launch checks run Git on, on a worker thread.
+        git::GitRunners git;
+        // Also caps queued plus running intake jobs, including jobs whose peer left.
+        MergetoolServer::Limits limits = {};
+        // Runs on the intake worker for both manifest and source reads.
+        MergetoolRead readIntakeFile = readMergetoolFile;
+    };
+    // loadedRepository is the loaded operation that copied-launch checks inspect.
+    MergetoolSession(ResolutionPublisher &publisher, SessionStore &files, SessionCoordinator &coordinator,
+                     std::function<git::RepositoryContext()> loadedRepository, Config config,
                      QObject *parent = nullptr);
+    ~MergetoolSession() override;
+    [[nodiscard]] int pendingIntakes() const { return static_cast<int>(intakes_.size()); }
+    // error gets why the session cannot listen, translated.
     Listen listen(const git::RepositoryContext &repository, QString *error);
-    [[nodiscard]] bool listening() const { return listening_; }
+    [[nodiscard]] bool listening() const { return server_.listening(); }
     [[nodiscard]] bool parentSessionActive() const { return parentSession_; }
     [[nodiscard]] bool blocks(const QByteArray &path) const;
     [[nodiscard]] bool waitingOn(const QByteArray &path) const;
     [[nodiscard]] QByteArray waitingPath() const;
     [[nodiscard]] bool hasWaiter(const QByteArray &path) const;
     // SHA-256 hex of the MERGED copy the waiting launcher for path kept at
-    // launch. Empty when no unreleased launcher waits on path.
+    // launch. Empty when no launcher waits on path.
     [[nodiscard]] QByteArray waitingMergedSha256(const QByteArray &path) const;
+    // The intake of the launcher waiting on path. Its launcher removes it on exit.
+    [[nodiscard]] QString intake(const QByteArray &path) const;
     [[nodiscard]] bool canEndParentSession() const;
-    [[nodiscard]] QStringList intakes() const { return intakes_; }
+    // Git was released to stage an offered revision, but the index has not
+    // shown it after the polls ran out. The outcome stays unknown until a
+    // recheck finds it.
+    [[nodiscard]] bool acknowledgmentUnknown() const { return acknowledgmentUnknown_; }
+    // Checks the index again for the offer of fileId, and polls again for
+    // one the session still holds. False when there is no offer to check.
+    bool recheckAcknowledgment(const std::string &fileId);
     bool leave(const QByteArray &path);
     // Launched paths whose launcher has not received a decision yet.
-    [[nodiscard]] int unreleasedLaunches() const;
+    [[nodiscard]] int unreleasedLaunches() const { return static_cast<int>(waiters_.size()); }
     // Deliberate session leave: every waiting launcher gets an explicit leave,
     // restores its original file and exits unresolved. Returns how many were told.
     int leaveAll();
@@ -74,43 +98,53 @@ Q_SIGNALS:
     void changed();
 
 private:
+    // A launcher that is attached and has no decision yet. It leaves the
+    // list when it gets one or its connection closes.
     struct Waiter {
         QString invocation;
         QByteArray path;
         QString intake;
         QByteArray mergedSha256;
-        QLocalSocket *socket = nullptr;
+        quint64 connection = 0;
         bool assigned = false;
-        bool released = false;
     };
-    void acceptConnection();
-    void readSocket(QLocalSocket *socket);
-    void dropped(QLocalSocket *socket);
-    void reject(QLocalSocket *socket, const QString &invocation, const QString &reason);
-    bool send(QLocalSocket *socket, const QJsonObject &object);
+    struct IntakeCheck {
+        std::optional<MergetoolIntake> intake;
+        Problem error;
+    };
+    void attachReceived(quint64 connection, const AttachMessage &message);
+    void intakeChecked(quint64 connection, const AttachMessage &message, const IntakeCheck &check);
+    void closed(quint64 connection);
+    void reject(quint64 connection, const QString &invocation, const QString &reason);
+    // Removes the waiter and gives its staging assignment to the next one.
+    void release(qsizetype index);
     void tryAssign();
+    void clearAssignment();
     void pollAcknowledgment();
-    [[nodiscard]] int indexOfSocket(const QLocalSocket *socket) const;
-    [[nodiscard]] int indexOfPath(const QByteArray &path, bool unreleasedOnly) const;
+    void startAcknowledgmentPolls();
+    // The offer is gone: stop polling and hand the assignment on.
+    void endAcknowledgment();
+    [[nodiscard]] qsizetype indexOfConnection(quint64 connection) const;
+    [[nodiscard]] qsizetype indexOfPath(const QByteArray &path) const;
     [[nodiscard]] bool launchedWithCapturedBytes(const FileSession &file) const;
-    void settleCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity, const QString &failure);
+    // live is the repository file the check captured with the problem.
+    void settleCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity, const Problem &failure,
+                            const storage::DestinationCapture &live);
 
     ResolutionPublisher &publisher_;
-    SessionModel &files_;
+    SessionStore &files_;
     SessionCoordinator &coordinator_;
     std::function<git::RepositoryContext()> loadedRepository_;
-    const QString gitExecutable_;
-    QLocalServer *server_ = nullptr;
+    const Config config_;
+    MergetoolServer server_;
     QTimer *acknowledgment_ = nullptr;
-    git::RepositoryContext repository_;
     QByteArray sessionKey_;
     QList<Waiter> waiters_;
-    QHash<QLocalSocket *, QByteArray> buffers_;
-    QStringList intakes_;
     std::string acknowledgmentFile_;
     RevisionId acknowledgmentRevision_ = 0;
-    int acknowledgmentAttempts_ = 0;
-    bool listening_ = false;
+    int acknowledgmentInterval_ = 0;
+    int acknowledgmentPolls_ = 0;
+    bool acknowledgmentUnknown_ = false;
     bool parentSession_ = false;
     bool offerHeld_ = false;
     bool assigning_ = false;
@@ -118,5 +152,10 @@ private:
     std::map<std::string, SnapshotFileIdentity> copiedLaunches_;
     // The revalidation task in flight for a copiedLaunches_ entry.
     std::map<std::string, TaskId> copiedLaunchChecks_;
+    // A dead peer invalidates its result but retains admission until the work settles.
+    std::map<quint64, std::shared_ptr<std::atomic_bool>> intakes_;
+    // One worker for pruning and intake. Value-only work drains off the GUI
+    // thread on destruction; a blocked filesystem call cannot be interrupted.
+    std::unique_ptr<QThreadPool> workers_ = std::make_unique<QThreadPool>();
 };
 }

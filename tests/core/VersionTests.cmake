@@ -1,6 +1,9 @@
 # Usage: cmake -DBRANCH_TRUCE_SOURCE_DIR=<root> -DWORK_DIR=<dir> -P VersionTests.cmake
 cmake_minimum_required(VERSION 3.28)
 
+if(NOT BRANCH_TRUCE_SOURCE_DIR OR NOT WORK_DIR)
+    message(FATAL_ERROR "BRANCH_TRUCE_SOURCE_DIR and WORK_DIR must both be set")
+endif()
 include("${BRANCH_TRUCE_SOURCE_DIR}/cmake/BranchTruceVersion.cmake")
 
 file(REMOVE_RECURSE "${WORK_DIR}")

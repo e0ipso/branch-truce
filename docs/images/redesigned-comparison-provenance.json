@@ -1,69 +1,122 @@
 {
-  "schema": 1,
-  "ci_run": "https://github.com/e0ipso/branch-truce/actions/runs/42222287914",
-  "artifact_name": "kde-evidence-kubuntu-deb",
-  "artifact_id": 13505383511,
-  "pr_source": "63c9b89d4348a9650e17bb603ff4164de7f84efa",
-  "producing_merge": "1cc64d1371887b5c475b8cdf7a6fbff23d8a86c2",
-  "captured_at_utc": "2026-11-06T13:20:41Z",
-  "command": [
-    "tools/preview-app.sh",
-    "/var/tmp/bt-ci.8HmZlL/build/src/app/branch-truce"
-  ],
-  "environment": {
-    "PREVIEW_FILE": "notes.md",
-    "PREVIEW_SIZE": "1440x900"
-  },
-  "executable_sha256": "5655f837b144ea7b6af7a5c751b786363383a2b070e7cf6e971ad3e8bde78fec",
+  "schema": 2,
+  "source": "18d528e7350285bc9d73bf2ab5d3580e319b578d",
+  "captured_at_utc": "2026-11-11T06:24:55.257807+00:00",
+  "executable_sha256": "42ce9013157342276397af9665daa752d26a2bd4903b359616414a043d325f4a",
   "physical_desktop": false,
-  "scope": "Inspected originals copied without transformation from build-tree application under private headless sway. No installed-desktop, Plasma/KWin scaling or AT-SPI claim.",
-  "images": {
-    "redesigned-comparison-light.png": {
-      "original": "tests/kubuntu-deb/native/720/documentation-readme/branch-truce-BreezeLight-1440x900.png",
-      "sha256": "a126a46f8795b71a881ce545146fc50dafde6d6416e850acacc201549ec5b758"
-    },
-    "redesigned-comparison-dark.png": {
-      "original": "tests/kubuntu-deb/native/720/documentation-readme/branch-truce-BreezeDark-1440x900.png",
-      "sha256": "6679a8e5aeda36e54183df66c6c30018b1e036a9a12336b4024974b721842b14"
-    },
-    "redesigned-choice-preview.png": {
-      "original": "tests/kubuntu-deb/ui-scenes/ordered-choice-preview-800.png",
-      "sha256": "8a2adc9d13d37224b619688fce5586c0652c8360e414c6c4da5f98e571d8cace",
-      "controls_style": "Fusion",
-      "platform": "offscreen",
-      "logical_width": 1280,
-      "logical_height": 800,
-      "source_revision": "1cc64d1371887b5c475b8cdf7a6fbff23d8a86c2",
-      "scope": "Inspected actual offscreen acceptance-journey frame, copied without transformation; not physical Plasma or AT-SPI evidence."
-    },
-    "redesigned-earlier-version.png": {
-      "original": "tests/kubuntu-deb/ui-scenes/earlier-context-800.png",
-      "sha256": "18eba65ef1fef524ac9c5edbad2b3de07c07693496fab99bdd2aeac0e0d5b866",
-      "controls_style": "Fusion",
-      "platform": "offscreen",
-      "logical_width": 1280,
-      "logical_height": 800,
-      "source_revision": "1cc64d1371887b5c475b8cdf7a6fbff23d8a86c2",
-      "scope": "Inspected actual offscreen acceptance-journey frame, copied without transformation; not physical Plasma or AT-SPI evidence."
-    }
+  "scope": "Native comparison and binary scenes use Breeze on private headless Wayland; preview scenes use the actual offscreen acceptance controls style. Development build; no installed-package, physical Plasma/KWin or AT-SPI claim.",
+  "capture_origin": "local automated development captures",
+  "command_path_aliases": {
+    "$SOURCE_ROOT": "source checkout at the recorded revision",
+    "$BUILD_DIR": "built desktop CMake tree",
+    "$CAPTURE_DIR": "owned capture output directory"
   },
-  "original_provenance": {
-    "command": [
-      "tools/preview-app.sh",
-      "/var/tmp/bt-ci.8HmZlL/build/src/app/branch-truce"
+  "commands_note": "Machine-specific paths use the documented aliases; arguments and relative artifact paths are unchanged.",
+  "commands": [
+    [
+      "/usr/bin/python3",
+      "$SOURCE_ROOT/tools/native-replay/replay.py",
+      "capture",
+      "--source",
+      "$SOURCE_ROOT",
+      "--build",
+      "$BUILD_DIR",
+      "--height",
+      "720",
+      "--repeat",
+      "2",
+      "--output",
+      "$CAPTURE_DIR/native/720",
+      "--documentation"
     ],
-    "environment": {
-      "PREVIEW_FILE": "notes.md",
-      "PREVIEW_SIZE": "1440x900"
+    [
+      "/usr/bin/python3",
+      "$SOURCE_ROOT/tools/native-replay/calibration.py",
+      "--verify",
+      "$CAPTURE_DIR/native/720"
+    ],
+    [
+      "/usr/bin/python3",
+      "$SOURCE_ROOT/tools/native-replay/replay.py",
+      "capture",
+      "--source",
+      "$SOURCE_ROOT",
+      "--build",
+      "$BUILD_DIR",
+      "--height",
+      "800",
+      "--repeat",
+      "2",
+      "--output",
+      "$CAPTURE_DIR/native/800"
+    ],
+    [
+      "/usr/bin/python3",
+      "$SOURCE_ROOT/tools/native-replay/calibration.py",
+      "--verify",
+      "$CAPTURE_DIR/native/800"
+    ]
+  ],
+  "screenshots": [
+    {
+      "published": "docs/images/redesigned-comparison-light.png",
+      "original": "native/720/documentation-readme/branch-truce-BreezeLight-1440x900.png",
+      "sha256": "67fce1912dd76897c3b94bb1e8db670498a6d9655ea2d6613ede8d1fe1cab246"
     },
-    "captured_at_utc": "2026-11-06T13:20:41Z",
-    "executable_sha256": "5655f837b144ea7b6af7a5c751b786363383a2b070e7cf6e971ad3e8bde78fec",
-    "build_provenance": "../build-provenance.json",
-    "physical_desktop": false,
-    "images": {
-      "branch-truce-BreezeDark-1440x900.png": "6679a8e5aeda36e54183df66c6c30018b1e036a9a12336b4024974b721842b14",
-      "branch-truce-BreezeLight-1440x900.png": "a126a46f8795b71a881ce545146fc50dafde6d6416e850acacc201549ec5b758"
+    {
+      "published": "docs/images/redesigned-comparison-dark.png",
+      "original": "native/720/documentation-readme/branch-truce-BreezeDark-1440x900.png",
+      "sha256": "89e8f17aa4a7dc463756e2ebe177ad560261abeefd097e9b762e8d0482ea8389"
     },
-    "acceptance": "pending original-image inspection; development build, not installed validation"
-  }
+    {
+      "published": "docs/images/redesigned-choice-preview.png",
+      "original": "ui-scenes/ordered-choice-preview-800.png",
+      "sha256": "24cc67180b2613e91d530ab1856685eaa10ff5b4edde24c0ea7c8f31aef44fa1",
+      "observation": {
+        "controls_style": "Fusion",
+        "focused_selection": "right",
+        "font_family": "monospace",
+        "font_point_size": 9,
+        "header": "Proposed text \u00b7 Right then Left",
+        "image_height": 800,
+        "image_width": 1280,
+        "logical_height": 800,
+        "logical_width": 1280,
+        "observation": "actual offscreen Qt scene with runtime controls style; not a physical Plasma or AT-SPI capture",
+        "platform": "offscreen",
+        "read_only": true,
+        "reference_image": null,
+        "row_advance": 20,
+        "schema": 1,
+        "source_revision": "18d528e7350285bc9d73bf2ab5d3580e319b578d",
+        "stage": "replacementAfterText",
+        "synthetic_stress": false
+      }
+    },
+    {
+      "published": "docs/images/redesigned-earlier-version.png",
+      "original": "ui-scenes/earlier-context-800.png",
+      "sha256": "4418f57ea376fc02fe64b3746e9ac62c4a2b5cf8c7cf495cfa6524ee077d8089",
+      "observation": {
+        "controls_style": "Fusion",
+        "focused_selection": "notes",
+        "font_family": "monospace",
+        "font_point_size": 9,
+        "header": "Common earlier version",
+        "image_height": 800,
+        "image_width": 1280,
+        "logical_height": 800,
+        "logical_width": 1280,
+        "observation": "actual offscreen Qt scene with runtime controls style; not a physical Plasma or AT-SPI capture",
+        "platform": "offscreen",
+        "read_only": true,
+        "reference_image": null,
+        "row_advance": 20,
+        "schema": 1,
+        "source_revision": "18d528e7350285bc9d73bf2ab5d3580e319b578d",
+        "stage": "earlierText",
+        "synthetic_stress": false
+      }
+    }
+  ]
 }

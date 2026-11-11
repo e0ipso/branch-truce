@@ -1,8 +1,9 @@
 // Resolution publishing writes a reviewed result and verifies its Git staging or parent handoff.
 #pragma once
 
-#include "session/SessionCoordinator.h"
 #include "git/TextConversion.h"
+#include "publication/ParentStaging.h"
+#include "session/SessionCoordinator.h"
 #include "storage/DestinationWriter.h"
 #include <QByteArray>
 #include <QObject>
@@ -20,15 +21,14 @@ namespace branch_truce {
 class ResolutionPublisher final : public QObject {
     Q_OBJECT
 public:
-    struct Offer {
-        std::string fileId;
-        QByteArray path;
-        RevisionId revision = 0;
-        QByteArray mode;
-        QByteArray canonicalObjectId;
-        QString worktreeRoot;
-        git::ConvertedText prepared;
+    using Offer = ParentOffer;
+    // The repository file a supported file publishes over, as captured before
+    // any edit, or why it cannot be used, as a translated sentence.
+    struct Baseline {
+        std::optional<storage::DestinationSnapshot> destination;
+        QString diagnostic;
     };
+    using Baselines = std::map<std::string, Baseline>;
     struct StartResult {
         Transition transition = Transition::Blocked;
         QString detail;
@@ -36,14 +36,24 @@ public:
         std::optional<MarkerScan> markers;
     };
 
-    ResolutionPublisher(SessionModel &files, SessionCoordinator &coordinator,
-                        QString gitExecutable, QObject *parent = nullptr);
+    // git builds the runner that converts results. destinations is the file
+    // system repository files are captured and written through.
+    ResolutionPublisher(SessionStore &files, SessionCoordinator &coordinator, const git::GitRunners &git,
+                        std::shared_ptr<const storage::FileSystem> destinations = storage::systemFileSystem(),
+                        QObject *parent = nullptr);
 
-    void captureBaselines(const git::RepositoryContext &repository);
-    // Uses the current repository file as the launch destination of a
-    // recovered file that git mergetool replaced by a copy. The file must
-    // still have the identity recovery validated and the launch bytes.
-    bool adoptCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity);
+    // Blocking: reads supported and deferred large-file destinations, so a load worker
+    // calls it. A destination must still be the captured launch result.
+    [[nodiscard]] static Baselines readBaselines(const QString &worktreeRoot, const std::vector<FileSession> &files,
+                                                 const std::shared_ptr<const storage::FileSystem> &destinations);
+    // Uses baselines a load read for repository's files.
+    void adoptBaselines(const git::RepositoryContext &repository, Baselines baselines);
+    [[nodiscard]] const std::shared_ptr<const storage::FileSystem> &destinations() const { return destinations_; }
+    // Uses live, the repository file a worker just captured, as the launch
+    // destination of a recovered file that git mergetool replaced by a copy.
+    // It must still have the identity recovery validated and the launch bytes.
+    bool adoptCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity,
+                           const storage::DestinationCapture &live);
     // Empty path clears the assignment. The assigned path is never passed to git add.
     bool assignParentStaging(const QByteArray &path);
     [[nodiscard]] bool busy() const;
@@ -58,13 +68,18 @@ public:
 
 Q_SIGNALS:
     void changed(const QString &message);
+    void markersBlocked(const QString &fileId, quint64 revision, quint64 count, quint64 line, const QString &message);
 
 private:
-    enum class Step { Prepare, Discover, Index, Publish, Stage, ParentPreflight, Verify };
-    struct Baseline {
-        std::optional<storage::DestinationSnapshot> destination;
-        QString diagnostic;
+    enum class Step { Prepare, Discover, Index, Publish, Stage, ParentPreflight, Verify, Inspect };
+    // What finishes each step, and whether the step runs after the write, so
+    // that a failure there is a staging failure.
+    struct StepHandling {
+        void (ResolutionPublisher::*task)(const TaskCompletion &) = nullptr;
+        void (ResolutionPublisher::*conversion)(const git::TextConversionResult &) = nullptr;
+        bool afterWrite = false;
     };
+    [[nodiscard]] static const StepHandling &handling(Step step);
     struct Attempt {
         quint64 generation = 0;
         std::string fileId;
@@ -77,40 +92,44 @@ private:
         Step step = Step::Prepare;
         TaskId task = 0;
         std::optional<git::ConvertedText> prepared;
+        // What the publish step's writer saw, once it ran.
+        std::shared_ptr<const storage::PublicationResult> published;
     };
 
     [[nodiscard]] const FileSession *file(const std::string &id) const;
     [[nodiscard]] bool parentOwns(const QByteArray &path) const;
     [[nodiscard]] bool previouslyWritten(const FileSession &session, RevisionId revision) const;
+    [[nodiscard]] bool matchesWrittenBaseline(const FileSession &session, const Attempt &attempt) const;
     [[nodiscard]] bool preserveWrite() const;
-    StartResult refuse(Transition transition, const QString &detail);
-    StartResult recordWrite(const std::string &fileId, RevisionId revision, Outcome outcome, const QString &detail);
+    [[nodiscard]] static StartResult result(Transition transition, const QString &detail);
     void fail(Outcome outcome, const QString &detail, bool stage);
     void finishResolved();
     void clearAttempt();
     bool launch(Step step, git::Request request);
+    StartResult reviewed(Transition review);
+    void preparePublication();
+    void inspectDestination(std::function<void(storage::DestinationCapture)> inspected);
+    void inspectedIndex(storage::DestinationCapture current);
     bool startPrepare();
     bool startVerify();
     void prepared(const git::TextConversionResult &result);
     void verified(const git::TextConversionResult &result);
     void discovered(const TaskCompletion &completion);
     void indexed(const TaskCompletion &completion);
-    void published(const TaskCompletion &completion);
+    void published(const TaskCompletion &completion, const storage::PublicationResult &published);
     void staged(const TaskCompletion &completion);
     void parentPreflight(const TaskCompletion &completion);
     void noteStale(const TaskCompletion &completion);
     [[nodiscard]] bool accept(const TaskCompletion &completion) const;
 
-    SessionModel &files_;
+    SessionStore &files_;
     SessionCoordinator &coordinator_;
-    const QString executable_;
+    const std::shared_ptr<const storage::FileSystem> destinations_;
     git::RepositoryContext repository_;
     git::TextConversion conversion_;
-    std::map<std::string, Baseline> baselines_;
-    std::optional<Attempt> attempt_;
-    std::optional<Offer> offer_;
-    QByteArray parentPath_;
+    Baselines baselines_;
+    std::shared_ptr<Attempt> attempt_;
+    ParentStaging parent_;
     std::optional<std::pair<std::string, RevisionId>> confirmation_;
-    std::shared_ptr<storage::PublicationResult> publication_;
 };
 }

@@ -1,0 +1,301 @@
+// The sandbox, the scene and the typed readers every journey shares.
+#include "acceptance/JourneyScene.h"
+#include "fixtures/FileToolbar.h"
+#include "fixtures/QmlWarnings.h"
+
+#include "fixtures/EventLoop.h"
+#include "fixtures/QuickScene.h"
+#include "mergetool/MergetoolSocket.h"
+
+#include <QCoreApplication>
+#include <QFile>
+#include <QFileInfo>
+#include <QSignalSpy>
+#include <QUuid>
+#include <QVariantMap>
+
+#include <algorithm>
+#include <stdexcept>
+#include <tuple>
+
+using namespace branch_truce;
+
+namespace journey {
+namespace {
+
+// The value of `key`, which must be present: a missing key is a contract change, not a false.
+QVariant required(const QVariantMap &map, const char *key, const char *what)
+{
+    const auto found = map.constFind(QLatin1String(key));
+    if (found == map.constEnd())
+        throw std::runtime_error(std::string(what) + " has no \"" + key
+                                 + "\" field: " + QStringList(map.keys()).join(QLatin1Char(',')).toStdString());
+    return *found;
+}
+
+} // namespace
+
+QString fileId(const char *path) { return QString::fromLatin1(QByteArray(path).toHex()); }
+
+void waitFor(const std::string &what, const std::function<bool()> &ready, const std::function<std::string()> &state)
+{
+    if (heldWithin(ready, test_support::kWaitDeadlineMs)) return;
+    throw std::runtime_error("timed out waiting for " + what + (state ? ": " + state() : std::string()));
+}
+
+bool heldWithin(const std::function<bool()> &ready, int deadlineMs)
+{
+    // waitUntil fails with this detail only when the deadline passed; any other failure, such as
+    // one an EXPECT recorded during the wait, is the journey's and is raised.
+    static const std::string expired = "journey wait deadline";
+    try {
+        test_support::waitUntil(ready, expired, deadlineMs);
+        return true;
+    } catch (const test_support::Failure &failure) {
+        if (failure.what() != expired) throw;
+        return false;
+    }
+}
+
+Repository::Repository(const std::vector<PathSpec> &paths, Stop stop)
+{
+    git({"config", "remote.origin.url", "https://offline.invalid/never-contact"});
+    git({"config", "branch.main.remote", "origin"});
+    QMap<QString, QByteArray> base{{"README", "acceptance fixture\n"}};
+    QMap<QString, QByteArray> left;
+    QMap<QString, QByteArray> right;
+    QStringList leftRemoved;
+    QStringList rightRemoved;
+    for (const auto &spec : paths) {
+        if (spec.base) base.insert(spec.path, *spec.base);
+        if (spec.left)
+            left.insert(spec.path, *spec.left);
+        else if (spec.base)
+            leftRemoved << spec.path;
+        if (spec.right)
+            right.insert(spec.path, *spec.right);
+        else if (spec.base)
+            rightRemoved << spec.path;
+    }
+    commit(base, "base");
+    std::tie(rightCommit_, leftCommit_) = conflict(left, right, stop, leftRemoved, rightRemoved);
+    for (const auto &spec : paths)
+        if (spec.manual) test_support::writeFile(path(spec.path), *spec.manual);
+}
+
+QByteArray Repository::stageObject(int stage, const QString &relative) const
+{
+    return git({"rev-parse", QStringLiteral(":%1:%2").arg(stage).arg(relative)}).trimmed();
+}
+
+QByteArray Repository::stageText(int stage, const QString &relative) const
+{
+    return git({"cat-file", "blob", QString::fromLatin1(stageObject(stage, relative))});
+}
+
+Sandbox::Sandbox() { CHECK(recovery_.isValid()); }
+
+Application::Config Sandbox::config(const Repository &repository) const
+{
+    Application::Config config;
+    config.git = {git_.executable(), git::GitEnvironment::from(repository.environment)};
+    config.recoveryDirectory = recovery_.path() + QLatin1Char('/') + QUuid::createUuid().toString(QUuid::WithoutBraces);
+    config.mergetoolDirectory = socketDirectory();
+    return config;
+}
+
+QString Sandbox::socketDirectory() const { return mergetoolSocketDirectory(QFile::encodeName(runtime_.path())); }
+
+QProcessEnvironment Sandbox::mergetoolEnvironment(const Repository &repository) const
+{
+    auto environment = repository.environment;
+    environment.insert("PATH", git_.directory() + QStringLiteral(":/usr/bin:/bin"));
+    environment.insert("XDG_RUNTIME_DIR", runtime_.path());
+    return environment;
+}
+
+Scene::Scene(Sandbox &sandbox, const Repository &repository, std::shared_ptr<const storage::FileSystem> files)
+    : sandbox_(sandbox), gitCallsBefore_(sandbox.git().calls().size())
+{
+    auto config = sandbox.config(repository);
+    config.files = std::move(files);
+    controller_ = std::make_unique<Application>(std::move(config));
+    engine_ = std::make_unique<QQmlApplicationEngine>();
+    test_support::failOnQmlWarnings(*engine_);
+    engine_->setInitialProperties(controller_->windowProperties());
+    engine_->loadFromModule("BranchTruce", "Main");
+    CHECK(engine_->rootObjects().size() == 1);
+    window_ = qobject_cast<QQuickWindow *>(engine_->rootObjects().front());
+    CHECK(window_);
+    window_->resize(1600, 1200);
+    window_->show();
+    const auto before = repository.snapshot();
+    auto *loader = controller_->loader();
+    CHECK(loader->openRepository(repository.root));
+    // The load runs Git and the recovery restore off the GUI thread, so it gets the deadline of a
+    // process, not the layout deadline of settleFor.
+    waitFor(
+        "the repository to open", [&] { return !loader->opening(); },
+        [&] { return QVariant::fromValue(loader->startupState()).toString().toStdString(); });
+    if (loader->startupState() != SessionLoader::StartupState::Ready)
+        throw std::runtime_error("startup " + QVariant::fromValue(loader->startupState()).toString().toStdString()
+                                 + ": " + loader->detail().toStdString());
+    // Opening a session inspects Git and never mutates the repository.
+    CHECK(repository.snapshot() == before);
+    // The session listens in the journey's private runtime directory, not a fallback.
+    const auto socket = sandbox.socketDirectory();
+    if (socket != sandbox.runtimeDirectory() + QStringLiteral("/branch-truce"))
+        throw std::runtime_error("socket directory outside the private runtime directory: " + socket.toStdString());
+    CHECK(controller_->mergetoolSession()->listening() && QFileInfo(socket).isDir());
+}
+
+Scene::~Scene()
+{
+    engine_.reset();
+    controller_.reset();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+}
+
+QQuickItem *Scene::item(const char *name) const
+{
+    const auto objectName = QString::fromLatin1(name);
+    auto *found = test_support::visualItem(window_->contentItem(), objectName, true);
+    if (!found) found = window_->findChild<QQuickItem *>(objectName);
+    // A toolbar creates its buttons outside the QObject tree, so look in the item tree too.
+    if (!found) found = test_support::visualItem(window_->contentItem(), objectName);
+    if (!found) throw std::runtime_error(std::string("missing scene item: ") + name);
+    return found;
+}
+
+QObject *Scene::object(const char *name) const
+{
+    auto *found = window_->findChild<QObject *>(QString::fromLatin1(name));
+    if (!found) throw std::runtime_error(std::string("missing scene object: ") + name);
+    return found;
+}
+
+QString Scene::text(const char *name) const
+{
+    const auto value = item(name)->property("text");
+    return value.isValid() ? value.toString() : test_support::shownText(item(name));
+}
+
+void Scene::click(const char *name)
+{
+    auto *target = test_support::fileOverflowControl(name)
+        ? test_support::fileToolbarControl(window_, name, settleMs)
+        : test_support::waitForLayout(window_, QString::fromLatin1(name), settleMs);
+    if (reveal(target)) target = test_support::waitForLayout(window_, QString::fromLatin1(name), settleMs);
+    test_support::clickItem(window_, target);
+}
+
+bool Scene::reveal(QQuickItem *target)
+{
+    bool moved = false;
+    for (auto *view = target->parentItem(); view; view = view->parentItem()) {
+        if (!view->inherits("QQuickFlickable")) continue;
+        auto *content = view->property("contentItem").value<QQuickItem *>();
+        const auto top = target->mapToItem(content, QPointF(0, 0)).y();
+        const auto offset = view->property("contentY").toReal();
+        if (top >= offset && top + target->height() <= offset + view->height()) continue;
+        view->setProperty("contentY", std::max<qreal>(0, top + target->height() - view->height()));
+        moved = true;
+    }
+    return moved;
+}
+
+const FileSession &Scene::file(const char *path) const
+{
+    const auto *found = controller_->store()->file(fileId(path).toStdString());
+    if (!found) throw std::runtime_error(std::string("missing session file: ") + path);
+    return *found;
+}
+
+Progress Scene::progress() const
+{
+    const auto map = controller_->selectedFile()->progress();
+    const auto field = [&](const char *key) { return required(map, key, "progress"); };
+    return {field("undecided").toULongLong(),  field("conflicts").toULongLong(),
+            field("saved").toBool(),           field("reviewed").toBool(),
+            field("resolved").toBool(),        field("earlierResolved").toBool(),
+            field("settled").toBool(),         field("currentRevision").toString(),
+            field("savedRevision").toString(), field("reviewedRevision").toString(),
+            field("stagedRevision").toString()};
+}
+
+std::vector<Region> Scene::regions() const
+{
+    std::vector<Region> regions;
+    for (const auto &c : controller_->selectedFile()->comparison()->contributions())
+        regions.push_back({c.id,
+                           c.side,
+                           c.scope,
+                           c.section,
+                           c.state,
+                           c.decisionIds,
+                           c.handEdited,
+                           c.markersRemain,
+                           c.mapped,
+                           {c.sourceLineBegin, c.sourceLineEnd, c.sourceUtf16Begin, c.sourceUtf16End},
+                           {c.resultLineBegin, c.resultLineEnd, c.resultUtf16Begin, c.resultUtf16End}});
+    return regions;
+}
+
+std::vector<ChoiceRow> Scene::choiceRows() const
+{
+    std::vector<ChoiceRow> rows;
+    for (const auto &c : controller_->selectedFile()->comparison()->contributions())
+        rows.push_back({c.id, c.label, c.decisionState, c.detail, c.available});
+    return rows;
+}
+
+ChoiceRow Scene::choiceRow(const QString &label) const
+{
+    for (const auto &row : choiceRows())
+        if (row.label == label) return row;
+    throw std::runtime_error("missing choice row " + label.toStdString());
+}
+
+Region Scene::regionFor(const QString &label) const
+{
+    const auto id = choiceRow(label).id;
+    for (const auto &region : regions())
+        if (region.id == id) return region;
+    throw std::runtime_error("missing region for " + label.toStdString());
+}
+
+std::vector<MarkerBlock> Scene::markerBlocks() const
+{
+    std::vector<MarkerBlock> blocks;
+    for (const auto &value : controller_->selectedFile()->comparison()->markerBlocks()) {
+        const auto map = value.toMap();
+        const auto field = [&](const char *key) { return required(map, key, "marker block"); };
+        blocks.push_back({field("resultLineBegin").toInt(), field("resultLineEnd").toInt(), field("folded").toBool()});
+    }
+    return blocks;
+}
+
+QMap<QString, HandoffEntry> Scene::handoffEntries() const
+{
+    QMap<QString, HandoffEntry> entries;
+    const auto data = controller_->completion()->handoffData();
+    for (const auto &group : required(data, "groups", "handoff").toList()) {
+        for (const auto &value : required(group.toMap(), "entries", "handoff group").toList()) {
+            const auto map = value.toMap();
+            const auto field = [&](const char *key) { return required(map, key, "handoff entry"); };
+            entries.insert(field("fileId").toString(),
+                           {field("category").toString(), field("actionLabel").toString(),
+                            field("outstanding").toBool(), field("blockers").toStringList()});
+        }
+    }
+    return entries;
+}
+
+bool Scene::handoffClean() const
+{
+    return required(controller_->completion()->handoffData(), "clean", "handoff").toBool();
+}
+
+QByteArray Scene::gitCalls() const { return sandbox_.git().calls().mid(gitCallsBefore_); }
+
+} // namespace journey

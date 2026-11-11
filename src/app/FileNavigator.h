@@ -1,51 +1,44 @@
 // File and conflict navigation keeps the selected file and result cursor on the requested work.
 #pragma once
-#include <QtQml/qqmlregistration.h>
 #include "core/RevisionId.h"
 #include <QObject>
 #include <QString>
 #include <QVariantMap>
+#include <QtQml/qqmlregistration.h>
 #include <cstddef>
-#include <functional>
 #include <optional>
 #include <string>
 
 namespace branch_truce {
 class ResultEditorAdapter;
+class Selection;
 class SessionModel;
+class SessionStore;
 
 // Walks the selected file's differences, conflicts or undecided choices in the result
 // editor, or the session's unfinished or saved-or-reviewed files. A repeated
 // step in the same mode continues from the last stop while the file, its
 // revision and the editor selection are unchanged; otherwise the walk starts
-// again from the cursor.
+// again from the cursor. A selection the navigator did not make ends the walk.
 class FileNavigator : public QObject {
     Q_OBJECT
     QML_ELEMENT
-    QML_UNCREATABLE("Owned by ApplicationController")
+    QML_UNCREATABLE("Owned by the application")
+    Q_PROPERTY(QVariantMap target READ target NOTIFY changed)
 public:
     // Undecided retains contribution navigation; Conflict visits real result regions.
     enum class Mode { Difference, Undecided, Unfinished, SavedOrReviewed, Conflict };
     Q_ENUM(Mode)
-    // What the navigator needs from the window.
-    struct Owners {
-        std::function<QString()> selectedFileId;
-        // The selected file's row in the session inventory, or -1.
-        std::function<int()> selectedRow;
-        // Selects a file stop; false when the window refuses the selection.
-        std::function<bool(const QString &fileId)> selectFile;
-        // Escaped display text for a file's exact path bytes.
-        std::function<QString(const QString &fileId)> displayPath;
-    };
-    FileNavigator(SessionModel &files, ResultEditorAdapter &editor, Owners owners, QObject *parent = nullptr);
+    FileNavigator(const SessionStore &store, const SessionModel &files, ResultEditorAdapter &editor,
+                  Selection &selection, QObject *parent = nullptr);
 
     // The last stop or failed step: mode, label and count, with the stop's
     // file, scope and range keys when there is one.
     [[nodiscard]] QVariantMap target() const { return target_; }
-    // direction is -1 or 1. Refused while an input method is composing.
-    bool navigate(Mode mode, int direction);
-    // A file selection the navigator did not make ends the walk.
-    void selectionChanged();
+    // direction is -1 or 1. Difference, undecided and conflict stay inside the
+    // selected file; the file modes walk the session inventory. Refused while
+    // an input method is composing.
+    Q_INVOKABLE bool navigate(branch_truce::FileNavigator::Mode mode, int direction);
     void clear();
 
 Q_SIGNALS:
@@ -55,9 +48,10 @@ private:
     bool navigateWithinFile(Mode mode, int direction);
     bool navigateAcrossFiles(Mode mode, int direction);
 
-    SessionModel &files_;
+    const SessionStore &store_;
+    const SessionModel &files_;
     ResultEditorAdapter &editor_;
-    Owners owners_;
+    Selection &selection_;
     bool selecting_ = false;
     QVariantMap target_;
     std::optional<Mode> mode_;

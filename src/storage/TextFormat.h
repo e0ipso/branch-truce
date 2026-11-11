@@ -1,34 +1,35 @@
 // Text formatting decodes captured files and serializes results with their retained encoding and line endings.
 #pragma once
 
+#include "core/FileSnapshot.h"
+#include "problems/Problem.h"
 #include <QByteArray>
 #include <QString>
 #include <optional>
 
 namespace branch_truce::storage {
-enum class TextEncoding { Utf8, Utf16LittleEndian, Utf16BigEndian };
-enum class Newline { Lf, CrLf };
+// The engine's format value; storage reads and writes it directly. These are
+// names for it, not another type.
+using TextFormat = SnapshotFormat;
+using TextEncoding = SnapshotFormat::Encoding;
+using Newline = SnapshotFormat::Newline;
 
-struct TextFormat {
-    TextEncoding encoding = TextEncoding::Utf8;
-    bool bom = false;
-    Newline newline = Newline::Lf;
-    bool finalNewline = false;
-    bool operator==(const TextFormat &) const = default;
-};
 struct TextDocument {
     QByteArray utf8; // Editable UTF-8, LF line separators, no encoding BOM.
     QByteArray originalBytes;
     TextFormat format;
 };
+// The document, or why text could not be decoded or serialized.
 struct TextResult {
     std::optional<TextDocument> document;
-    QString diagnostic;
+    Problem problem;
 };
 
+// The working-tree-encoding name decodeText takes for an encoding.
+[[nodiscard]] QByteArray encodingName(SnapshotFormat::Encoding encoding);
 // Unattributed text must be UTF-8. UTF-16 requires an explicit Git encoding.
 [[nodiscard]] TextResult decodeText(const QByteArray &bytes, const QByteArray &workingTreeEncoding = {});
 [[nodiscard]] TextResult serializeText(const QByteArray &utf8, const TextFormat &format);
-[[nodiscard]] std::optional<TextFormat> resultFormat(const TextFormat &launch,
-    const QByteArray &workingTreeEncoding, const QByteArray &eol, QString &diagnostic);
+[[nodiscard]] std::optional<TextFormat> resultFormat(const TextFormat &launch, const QByteArray &workingTreeEncoding,
+                                                     const QByteArray &eol, Problem &problem);
 } // namespace branch_truce::storage

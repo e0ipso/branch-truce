@@ -1,0 +1,99 @@
+// Revision history stores a file's result revisions and the undo cursor over them.
+#pragma once
+
+#include "ConflictMarkers.h"
+#include "Correspondence.h"
+#include "Draft.h"
+#include "RevisionId.h"
+#include <map>
+#include <memory>
+#include <vector>
+
+namespace branch_truce {
+
+struct Revision {
+    RevisionId id;
+    // The revisions whose result text and whose decisions this one repeats.
+    RevisionId result;
+    RevisionId decisions;
+    Draft draft;
+    std::shared_ptr<const CorrespondenceMap> correspondence = {};
+    // The marker scan of draft.text, computed once when the revision is made.
+    std::shared_ptr<const MarkerScan> markers = {};
+};
+
+// Undo history over immutable, shared revisions. Undo and redo do not move
+// back to an entry: they publish a fresh copy of it, so every revision a
+// caller has seen keeps its identity. A copy of the history shares every
+// revision with the original.
+//
+// Only reachable revisions are kept: the history entries, the current
+// revision, the launch revision and the held ones. Others are dropped as soon
+// as they become unreachable, and the oldest entries leave the history once
+// their retained text/metadata passes kMaxHistoryBytes or the entry cap.
+class RevisionHistory {
+public:
+    struct Checkpoint {
+        std::vector<std::shared_ptr<const Revision>> revisions;
+        std::vector<RevisionId> entries;
+        std::size_t cursor = 0;
+        RevisionId current = 0, launch = 0, next = 0;
+    };
+    [[nodiscard]] Checkpoint checkpoint() const;
+    [[nodiscard]] static std::size_t retainedBytes(const Revision &revision) noexcept;
+    [[nodiscard]] static RevisionHistory restore(Checkpoint checkpoint, std::vector<RevisionId> held);
+
+    RevisionHistory() = default;
+    explicit RevisionHistory(Revision launch);
+
+    [[nodiscard]] const Revision &current() const noexcept { return *current_; }
+    [[nodiscard]] RevisionId launchId() const noexcept { return launch_; }
+    [[nodiscard]] RevisionId nextId() const noexcept { return next_; }
+    // The stored revision with this id, or nullptr once it is unreachable.
+    [[nodiscard]] const Revision *find(RevisionId id) const noexcept;
+    [[nodiscard]] std::size_t depth() const noexcept { return entries_.size(); }
+    [[nodiscard]] bool canUndo() const noexcept { return cursor_ > 0; }
+    [[nodiscard]] bool canRedo() const noexcept { return cursor_ + 1 < entries_.size(); }
+    // The entries undo and redo restore copies of. Only valid when allowed.
+    [[nodiscard]] const Revision &previous() const { return *revisions_.at(entries_.at(cursor_ - 1)).revision; }
+    [[nodiscard]] const Revision &following() const { return *revisions_.at(entries_.at(cursor_ + 1)).revision; }
+
+    // How a published revision moves the undo cursor: an edit becomes the
+    // newest entry and replaces every entry after the cursor. A joined edit
+    // does the same and also takes the place of the entry at the cursor,
+    // unless that is the first one. Undo and redo move to the entry their
+    // revision copies.
+    enum class Step { Edit, Join, Undo, Redo };
+    // Makes `revision` current. Its id must be nextId() or later; ids in
+    // between are never used. If it throws,
+    // std::bad_alloc included, the history is unchanged.
+    void publish(Revision revision, Step step);
+    // Makes an earlier revision current again as a new entry, storing it
+    // again if it was dropped. If it throws, the history is unchanged.
+    void reopen(const Revision &revision);
+    // Stores `revision` in place of the current revision, which has the same
+    // id. If it throws, the history is unchanged.
+    void replaceCurrent(Revision revision);
+    // Keeps these revisions, if still stored, until the next call names
+    // others. Publication outcomes name revisions this way.
+    void hold(std::vector<RevisionId> ids) noexcept;
+
+private:
+    void append(RevisionId id) noexcept;
+    void prune() noexcept;
+    struct Stored {
+        explicit Stored(std::shared_ptr<const Revision> value) noexcept;
+        std::shared_ptr<const Revision> revision;
+        std::size_t bytes;
+        std::size_t references = 0;
+    };
+    std::map<RevisionId, Stored> revisions_;
+    std::shared_ptr<const Revision> current_;
+    std::vector<RevisionId> entries_;
+    std::vector<RevisionId> held_;
+    std::size_t cursor_ = 0;
+    RevisionId launch_ = 0;
+    RevisionId next_ = 1;
+};
+
+}

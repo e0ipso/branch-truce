@@ -2,6 +2,9 @@
 #pragma once
 
 #include "core/FileSnapshot.h"
+#include "core/ResourceLimits.h"
+#include "problems/Problem.h"
+#include "storage/FileSystem.h"
 #include <QByteArray>
 #include <QString>
 #include <functional>
@@ -9,17 +12,36 @@
 #include <optional>
 
 namespace branch_truce::storage {
+// Worst supported original representation: UTF-16, CRLF and a BOM. This
+// bounds raw reads independently of the live file size; normalized drafts
+// still obey their existing byte, line and index limits.
+inline constexpr std::size_t kMaxDestinationBytes = 2 * (kMaxRecoveryPayloadBytes + kMaxIndexedLines) + 3;
 enum class DestinationFailure {
-    None, InvalidPath, Symlink, NotRegularFile, PermissionDenied, PathChanged,
-    ContentChanged, UnsupportedMetadata, UnsupportedFilesystem, IoError,
-    Cancelled, CleanupFailure
+    None,
+    // The caller gave no admission callback or a mode that is not the file's.
+    InvalidRequest,
+    InvalidPath,
+    ReadLimit,
+    Symlink,
+    NotRegularFile,
+    PermissionDenied,
+    PathChanged,
+    ContentChanged,
+    UnsupportedMetadata,
+    UnsupportedFilesystem,
+    IoError,
+    Cancelled,
+    CleanupFailure
 };
 enum class PublicationState { Unchanged, Published, Uncertain };
 struct DestinationCapture;
 struct PublicationResult;
 
-// Capture at launch or after a verified write, before the user edits. Copies pin
-// the same inodes. A fresh capture must not silently accept an external edit.
+// Capture at launch or after a verified write, before the user edits. It keeps
+// the identity of the file and of every directory above it, not open
+// descriptors, so a session may hold one per file. Publication reopens the path
+// and refuses any component whose identity changed. A fresh capture must not
+// silently accept an external edit.
 class DestinationSnapshot {
 public:
     struct State;
@@ -27,22 +49,24 @@ public:
     [[nodiscard]] const QByteArray &path() const;
     [[nodiscard]] const QByteArray &bytes() const;
     [[nodiscard]] SnapshotFileIdentity identity() const;
+
 private:
     explicit DestinationSnapshot(std::shared_ptr<const State> state);
     std::shared_ptr<const State> d;
-    friend DestinationCapture captureDestination(const QString &, const QByteArray &);
-    friend PublicationResult publishDestination(const DestinationSnapshot &, const QByteArray &,
-        const QByteArray &, const std::function<bool()> &);
+    friend DestinationCapture captureDestination(const QString &, const QByteArray &, std::shared_ptr<const FileSystem>,
+                                                 const SnapshotFileIdentity *);
+    friend PublicationResult publishDestination(const DestinationSnapshot &, const QByteArray &, const QByteArray &,
+                                                const std::function<bool()> &);
 };
 struct DestinationCapture {
     std::optional<DestinationSnapshot> destination;
     DestinationFailure failure = DestinationFailure::None;
-    QString diagnostic;
+    Problem problem;
 };
 struct PublicationResult {
     PublicationState state = PublicationState::Unchanged;
     DestinationFailure failure = DestinationFailure::None;
-    QString diagnostic;
+    Problem problem;
     // Present only after verified publication. Use this baseline for a later write.
     std::optional<DestinationSnapshot> destination;
     // Exact native bytes, never a display path. On uncertainty the exchange slot
@@ -54,14 +78,19 @@ struct PublicationResult {
 };
 
 // Requires an absolute canonical worktree root and exact relative filename bytes.
-// Rejects symlinks in every component, including the root's ancestry.
-[[nodiscard]] DestinationCapture captureDestination(const QString &worktreeRoot, const QByteArray &path);
+// Rejects symlinks in every component, including the root's ancestry. The
+// snapshot publishes through files. When expected is supplied, reject a changed
+// launch identity/metadata before allocating or reading file contents.
+[[nodiscard]] DestinationCapture captureDestination(const QString &worktreeRoot, const QByteArray &path,
+                                                    std::shared_ptr<const FileSystem> files = systemFileSystem(),
+                                                    const SnapshotFileIdentity *expected = nullptr);
 
-// Synchronous worker operation. Caller owns draft persistence, review/revision,
-// operation/index/conversion guards, the worktree mutation queue and Git staging.
-// beginMutation is mandatory and runs before creating any temporary entry.
+// Blocking: reads and writes the destination, so run it on a worker thread.
+// Caller owns draft persistence, review/revision, operation/index/conversion
+// guards, the worktree mutation queue and Git staging. beginMutation is
+// mandatory and runs before creating any temporary entry.
 // No draft buffer is consumed or changed. Failures never authorize staging.
 [[nodiscard]] PublicationResult publishDestination(const DestinationSnapshot &expected,
-    const QByteArray &serializedBytes, const QByteArray &agreedGitMode,
-    const std::function<bool()> &beginMutation);
+                                                   const QByteArray &serializedBytes, const QByteArray &agreedGitMode,
+                                                   const std::function<bool()> &beginMutation);
 } // namespace branch_truce::storage

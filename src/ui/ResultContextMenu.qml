@@ -9,7 +9,7 @@ import QtQuick.Controls
 Menu {
     id: resultMenu
     objectName: "resultContextMenu"
-    required property ApplicationController controller
+    required property ResultEditorAdapter editorAdapter
     required property TextArea editor
     required property EditActions edits
     MenuItem {
@@ -25,9 +25,9 @@ Menu {
         objectName: "resultMenuCut"
         text: qsTr("Cut")
         icon.name: "edit-cut"
-        enabled: !!resultMenu.controller.resultEditable && !!resultMenu.controller.resultHasSelection
+        enabled: !!resultMenu.editorAdapter.editable && !!resultMenu.editorAdapter.hasSelection
             && !resultMenu.editor.inputMethodComposing
-        onTriggered: resultMenu.controller.resultClipboard(ResultEditorAdapter.Cut)
+        onTriggered: resultMenu.editorAdapter.clipboard(ResultEditorAdapter.Cut)
     }
     MenuItem {
         objectName: "resultMenuCopy"
@@ -41,6 +41,6 @@ Menu {
         objectName: "resultMenuSelectAll"
         text: qsTr("Select all")
         icon.name: "edit-select-all"
-        onTriggered: resultMenu.controller.resultClipboard(ResultEditorAdapter.SelectAll)
+        onTriggered: resultMenu.editorAdapter.clipboard(ResultEditorAdapter.SelectAll)
     }
 }

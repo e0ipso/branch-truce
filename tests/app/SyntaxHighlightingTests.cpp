@@ -1,10 +1,13 @@
-#include "app/ApplicationController.h"
+#include "TestHarness.h"
+#include "app/AppPaths.h"
+#include "app/Application.h"
+#include "app/Translations.h"
+#include "fixtures/AppSession.h"
+#include "fixtures/ChoiceFile.h"
 #include "fixtures/GitOnPath.h"
+#include "fixtures/QuickScene.h"
 #include "highlighting/PaneHighlighter.h"
 #include "storage/RecoveryStore.h"
-#include "TestHarness.h"
-#include "fixtures/ChoiceFile.h"
-#include "fixtures/QuickScene.h"
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
 #include <QColor>
@@ -17,7 +20,6 @@
 #include <QQuickItem>
 #include <QQuickTextDocument>
 #include <QQuickWindow>
-#include <QTemporaryDir>
 #include <QTextBlock>
 #include <QTextCharFormat>
 #include <QTextCursor>
@@ -38,22 +40,26 @@ FileSession pythonFile(const std::string &id, const std::string &path)
 {
     const std::string earlier = "# Greeting\ndef greet(name):\n    return 'hello ' + name\n";
     auto sources = *test_support::choiceFile("# Left greeting\ndef greet(name):\n    return 'hi ' + name\n",
-        "# Right greeting\ndef greet(name):\n    return 'hey ' + name\n", earlier).snapshots();
+                                             "# Right greeting\ndef greet(name):\n    return 'hey ' + name\n", earlier)
+                        .snapshots();
     sources.path = path;
-    sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
-        test_support::choiceText(earlier), "earlier-commit", "Common earlier version"};
-    return FileSession(id, path, {earlier, {}, 0}, Support::Supported, {}, std::move(sources), true);
+    sources.earlier =
+        SourceSnapshot{"earlier-object",        "100644", earlier, test_support::choiceText(earlier), "earlier-commit",
+                       "Common earlier version"};
+    return FileSession(id, path, {earlier, {}, 0}, {.snapshots = std::move(sources), .initializeChoices = true});
 }
 
 class Fixture {
 public:
     Fixture()
     {
-        CHECK(controller.files()->appendFile(pythonFile("app", "src/app.py")));
-        CHECK(controller.files()->appendFile(pythonFile("unknown", "src/app.unknownext")));
-        CHECK(controller.files()->appendFile(pythonFile("notes", "docs/notes.txt")));
-        CHECK(controller.selectFile("app"));
-        engine.setInitialProperties({{"controller", QVariant::fromValue(&controller)}});
+        CHECK(controller.store()->appendFile(pythonFile("app", "src/app.py")));
+        CHECK(controller.store()->appendFile(pythonFile("unknown", "src/app.unknownext")));
+        CHECK(controller.store()->appendFile(pythonFile("notes", "docs/notes.txt")));
+        test_support::awaitRecovery(*controller.store());
+        CHECK(!controller.store()->hasPendingRecovery());
+        CHECK(controller.selection()->select("app"));
+        engine.setInitialProperties(controller.windowProperties());
         engine.loadFromModule("BranchTruce", "Main");
         CHECK(engine.rootObjects().size() == 1);
         window = qobject_cast<QQuickWindow *>(engine.rootObjects().front());
@@ -85,11 +91,11 @@ public:
     }
     qsizetype transactions()
     {
-        return storage::RecoveryStore(controller.files()->recoveryDirectory()).read().transactions.size();
+        return storage::RecoveryStore(controller.store()->recoveryDirectory()).read().transactions.size();
     }
-    const FileSession &file(const std::string &id = "app") { return *controller.files()->file(id); }
+    const FileSession &file(const std::string &id = "app") { return *controller.store()->file(id); }
 
-    ApplicationController controller{gitOnPath()};
+    Application controller{test_support::windowConfig()};
     QQmlApplicationEngine engine;
     QQuickWindow *window = nullptr;
 };
@@ -195,6 +201,15 @@ public:
     int run()
     {
         test_support::Suite suite("SyntaxHighlightingTests");
+        addSyntaxAndDecorationCases(suite);
+        addEditedBlockCase(suite);
+        addOverlayPrecedenceCase(suite);
+        return suite.report();
+    }
+
+private:
+    static void addSyntaxAndDecorationCases(test_support::Suite &suite)
+    {
 #ifdef BRANCH_TRUCE_SYNTAX_HIGHLIGHTING
         suite.run("app.py gets the Python definition in every pane and an unknown extension gets none", [] {
             Fixture fixture;
@@ -206,9 +221,9 @@ public:
                 CHECK(highlighter->theme().name() == QStringLiteral("Breeze Light"));
                 checkPythonColours(fixture.document(pane));
             }
-            CHECK(fixture.controller.selectFile("unknown"));
+            CHECK(fixture.controller.selection()->select("unknown"));
             settlePlain(fixture);
-            CHECK(fixture.controller.selectFile("app"));
+            CHECK(fixture.controller.selection()->select("app"));
             settleHighlighted(fixture);
             for (const auto *pane : panes)
                 CHECK(fixture.highlighter(pane)->definition().name() == QStringLiteral("Python"));
@@ -240,18 +255,20 @@ public:
             auto *comparison = fixture.item("comparisonPanes")->parentItem()->parentItem();
             CHECK(comparison && comparison->property("schemeBackground").isValid());
             QQmlExpression dark(qmlContext(comparison), comparison,
-                QStringLiteral("Kirigami.Theme.backgroundColor = \"#202326\""));
+                                QStringLiteral("Kirigami.Theme.backgroundColor = \"#202326\""));
             dark.evaluate();
             if (dark.hasError()) throw std::runtime_error(dark.error().toString().toStdString());
             CHECK(comparison->property("schemeBackground").value<QColor>() == QColor(QStringLiteral("#202326")));
-            settleFor("dark syntax theme", [&] { return fixture.highlighter("resultText")->theme().name() == QStringLiteral("Breeze Dark"); });
+            settleFor("dark syntax theme", [&] {
+                return fixture.highlighter("resultText")->theme().name() == QStringLiteral("Breeze Dark");
+            });
             for (const auto *pane : panes) {
                 CHECK(fixture.highlighter(pane)->theme().name() == QStringLiteral("Breeze Dark"));
                 checkPythonColours(fixture.document(pane));
             }
             CHECK(foreground(result, QStringLiteral("def")) != lightKeyword);
             unchanged();
-            fixture.controller.setSyntaxBackground(QColor(QStringLiteral("#eff0f1")));
+            fixture.controller.editor()->setSyntaxBackground(QColor(QStringLiteral("#eff0f1")));
             CHECK(foreground(result, QStringLiteral("def")) == lightKeyword);
             unchanged();
             // A real edit is still one revision and one transaction, and stays highlighted.
@@ -263,10 +280,17 @@ public:
             QCoreApplication::sendEvent(editor, &key);
             settle([&] { return fixture.file().current().id != before.id; });
             CHECK(fixture.file().current().draft.text == "x" + before.draft.text);
+            // Typing is recorded once its burst ends.
+            settle([&] { return !fixture.controller.store()->recording(); });
             CHECK(fixture.transactions() == transactions + 1);
             CHECK(result->toPlainText() == QStringLiteral("x") + text);
             checkPythonColours(result);
         });
+#else
+        // Built without KSyntaxHighlighting: the run still names these cases, as skipped.
+        for (const auto *name : {"app.py gets the Python definition in every pane and an unknown extension gets none",
+                                 "a format-only highlight pass creates no revision and no recovery transaction"})
+            suite.run(name, [] { test_support::skip("this build has BRANCH_TRUCE_SYNTAX_HIGHLIGHTING off"); });
 #endif
         suite.run("changed words are tinted and underlined in every pane, and a format pass makes no revision", [] {
             Fixture fixture;
@@ -301,7 +325,8 @@ public:
             const auto transactions = fixture.transactions();
             CHECK(transactions > 0);
             const auto unchanged = [&] {
-                QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+                // An edit capture the pass queued would have run before the next frame.
+                test_support::waitForFrames(fixture.window, "the format pass has run");
                 CHECK(fixture.file().current().id == before.id);
                 CHECK(fixture.file().current().draft == before.draft);
                 CHECK(fixture.file().canUndo() == canUndo);
@@ -312,9 +337,9 @@ public:
             };
             for (const auto *pane : panes) fixture.highlighter(pane)->rehighlight();
             unchanged();
-            fixture.controller.setSyntaxBackground(QColor(QStringLiteral("#202326")));
+            fixture.controller.editor()->setSyntaxBackground(QColor(QStringLiteral("#202326")));
             unchanged();
-            fixture.controller.setSyntaxBackground(QColor(QStringLiteral("#eff0f1")));
+            fixture.controller.editor()->setSyntaxBackground(QColor(QStringLiteral("#eff0f1")));
             unchanged();
             // An edit moves the ranges with the text of its revision.
             auto *editor = fixture.item("resultText");
@@ -323,6 +348,8 @@ public:
             QKeyEvent key(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
             QCoreApplication::sendEvent(editor, &key);
             settle([&] { return fixture.file().current().id != before.id; });
+            // Typing is recorded once its burst ends.
+            settle([&] { return !fixture.controller.store()->recording(); });
             CHECK(fixture.transactions() == transactions + 1);
             settle([&] { return decorated(QStringLiteral("return ")); });
             CHECK(formatAt(result, static_cast<int>(hello)).underlineStyle() == QTextCharFormat::NoUnderline);
@@ -330,7 +357,7 @@ public:
         });
         suite.run("a .txt file keeps one highlighter attached to every pane", [] {
             Fixture fixture;
-            CHECK(fixture.controller.selectFile("notes"));
+            CHECK(fixture.controller.selection()->select("notes"));
             settlePlain(fixture);
         });
         suite.run("scattered decorations publish one document change without changing text or history", [] {
@@ -338,7 +365,8 @@ public:
             document.setPlainText(QStringLiteral("plain text line\n").repeated(32));
             PaneHighlighter highlighter(&document);
             highlighter.attach();
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            // Runs the highlighter's queued first pass.
+            QCoreApplication::sendPostedEvents();
             document.setModified(false);
             const auto text = document.toPlainText();
             const auto undo = document.isUndoAvailable();
@@ -347,8 +375,8 @@ public:
             selection.setPosition(3);
             selection.setPosition(8, QTextCursor::KeepAnchor);
             int notifications = 0;
-            const auto connection = QObject::connect(&document, &QTextDocument::contentsChanged,
-                &document, [&] { ++notifications; });
+            const auto connection =
+                QObject::connect(&document, &QTextDocument::contentsChanged, &document, [&] { ++notifications; });
             QList<QTextLayout::FormatRange> ranges;
             for (const int line : {2, 7, 12}) {
                 QTextLayout::FormatRange range;
@@ -368,8 +396,7 @@ public:
             notifications = 0;
             highlighter.setDecorations({});
             CHECK(notifications == 1);
-            for (const auto &range : ranges)
-                CHECK(document.findBlock(range.start).layout()->formats().isEmpty());
+            for (const auto &range : ranges) CHECK(document.findBlock(range.start).layout()->formats().isEmpty());
             CHECK(document.toPlainText() == text);
             CHECK(!document.isModified());
             CHECK(document.isUndoAvailable() == undo && document.isRedoAvailable() == redo);
@@ -378,7 +405,7 @@ public:
         });
         suite.run("a decoration pass creates no revision and no recovery transaction", [] {
             Fixture fixture;
-            CHECK(fixture.controller.selectFile("notes"));
+            CHECK(fixture.controller.selection()->select("notes"));
             settlePlain(fixture);
             auto *result = fixture.document("resultText");
             const auto before = fixture.file("notes").current();
@@ -396,7 +423,7 @@ public:
             highlighter->setDecorations({});
             CHECK(highlighter->decorations().isEmpty());
             // Let a queued edit capture run, if the pass started one.
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            test_support::waitForFrames(fixture.window, "the decoration pass has run");
             CHECK(fixture.file("notes").current().id == before.id);
             CHECK(fixture.file("notes").current().draft == before.draft);
             CHECK(fixture.file("notes").canUndo() == canUndo);
@@ -405,6 +432,10 @@ public:
             CHECK(result->toPlainText() == text);
             CHECK(highlighter->document() == result);
         });
+    }
+
+    static void addEditedBlockCase(test_support::Suite &suite)
+    {
         suite.run("edits before decorated blocks keep their local formats without another layout pass", [] {
             QTextDocument document;
             // Match a Quick editor: initialize its layout before highlighting.
@@ -414,9 +445,10 @@ public:
             document.setPlainText(QStringLiteral("plain text line\n").repeated(32));
             PaneHighlighter highlighter(&document);
             highlighter.attach();
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            // Runs the highlighter's queued first pass.
+            QCoreApplication::sendPostedEvents();
             const QList<QTextBlock> decorated{document.findBlockByNumber(4), document.findBlockByNumber(9),
-                                             document.findBlockByNumber(14)};
+                                              document.findBlockByNumber(14)};
             const auto ranges = [&] {
                 QList<QTextLayout::FormatRange> found;
                 for (const auto &block : decorated) {
@@ -434,20 +466,23 @@ public:
             selection.setPosition(selection.position() + 3, QTextCursor::KeepAnchor);
             int notifications = 0;
             int updates = 0;
-            const auto changed = QObject::connect(&document, &QTextDocument::contentsChanged,
-                &document, [&] { ++notifications; });
+            const auto changed =
+                QObject::connect(&document, &QTextDocument::contentsChanged, &document, [&] { ++notifications; });
             const auto laidOut = QObject::connect(document.documentLayout(), &QAbstractTextDocumentLayout::update,
-                &document, [&](const QRectF &) { ++updates; });
+                                                  &document, [&](const QRectF &) { ++updates; });
             const auto formatState = [](const QList<QTextLayout::FormatRange> &formats) {
                 QJsonArray state;
                 for (const auto &range : formats) {
                     QJsonArray properties;
                     const auto values = range.format.properties();
                     for (auto it = values.cbegin(); it != values.cend(); ++it)
-                        properties.append(QJsonObject{{"property", it.key()}, {"value", QJsonValue::fromVariant(it.value())}});
-                    state.append(QJsonObject{{"start", range.start}, {"length", range.length},
-                        {"underline", range.format.fontUnderline()}, {"underlineStyle", static_cast<int>(range.format.underlineStyle())},
-                        {"properties", properties}});
+                        properties.append(
+                            QJsonObject{{"property", it.key()}, {"value", QJsonValue::fromVariant(it.value())}});
+                    state.append(QJsonObject{{"start", range.start},
+                                             {"length", range.length},
+                                             {"underline", range.format.fontUnderline()},
+                                             {"underlineStyle", static_cast<int>(range.format.underlineStyle())},
+                                             {"properties", properties}});
                 }
                 return state;
             };
@@ -458,10 +493,14 @@ public:
                         state.append(QJsonObject{{"valid", false}});
                         continue;
                     }
-                    state.append(QJsonObject{{"valid", block.isValid()}, {"number", block.blockNumber()},
-                        {"position", block.position()}, {"revision", block.revision()}, {"text", block.text()},
-                        {"currentIdentity", document.findBlockByNumber(block.blockNumber()) == block},
-                        {"formats", formatState(block.layout()->formats())}});
+                    state.append(
+                        QJsonObject{{"valid", block.isValid()},
+                                    {"number", block.blockNumber()},
+                                    {"position", block.position()},
+                                    {"revision", block.revision()},
+                                    {"text", block.text()},
+                                    {"currentIdentity", document.findBlockByNumber(block.blockNumber()) == block},
+                                    {"formats", formatState(block.layout()->formats())}});
                 }
                 return state;
             };
@@ -481,12 +520,19 @@ public:
                 notifications = updates = 0;
                 highlighter.setDecorations(wanted);
                 if (notifications != 0 || updates != 0) {
-                    const QJsonObject diagnostic{{"qt", qVersion()}, {"prefix", prefix},
-                        {"notifications", notifications}, {"layoutUpdates", updates},
-                        {"notificationsBeforeRangeUpdate", nativeNotifications}, {"layoutUpdatesBeforeRangeUpdate", nativeUpdates},
-                        {"documentRevisionBeforeRangeUpdate", revision}, {"documentRevisionAfterRangeUpdate", document.revision()},
-                        {"beforeEdit", beforeEdit}, {"afterEdit", afterEdit}, {"afterRangeUpdate", blockState()},
-                        {"previousRanges", previousRanges}, {"wantedRanges", formatState(wanted)}};
+                    const QJsonObject diagnostic{{"qt", qVersion()},
+                                                 {"prefix", prefix},
+                                                 {"notifications", notifications},
+                                                 {"layoutUpdates", updates},
+                                                 {"notificationsBeforeRangeUpdate", nativeNotifications},
+                                                 {"layoutUpdatesBeforeRangeUpdate", nativeUpdates},
+                                                 {"documentRevisionBeforeRangeUpdate", revision},
+                                                 {"documentRevisionAfterRangeUpdate", document.revision()},
+                                                 {"beforeEdit", beforeEdit},
+                                                 {"afterEdit", afterEdit},
+                                                 {"afterRangeUpdate", blockState()},
+                                                 {"previousRanges", previousRanges},
+                                                 {"wantedRanges", formatState(wanted)}};
                     std::cerr << "DECORATION_SHIFT_DIAGNOSTIC="
                               << QJsonDocument(diagnostic).toJson(QJsonDocument::Compact).constData() << '\n';
                 }
@@ -507,12 +553,17 @@ public:
             QObject::disconnect(changed);
             QObject::disconnect(laidOut);
         });
+    }
+
+    static void addOverlayPrecedenceCase(test_support::Suite &suite)
+    {
         suite.run("local overlays follow replacement splitting deletion and search precedence", [] {
             QTextDocument document;
             document.setPlainText(QStringLiteral("plain text line\n").repeated(32));
             PaneHighlighter highlighter(&document);
             highlighter.attach();
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            // Runs the highlighter's queued first pass.
+            QCoreApplication::sendPostedEvents();
             auto block = document.findBlockByNumber(4);
             QTextLayout::FormatRange word;
             word.start = block.position() + 2;
@@ -567,19 +618,19 @@ public:
             for (auto current = document.begin(); current.isValid(); current = current.next())
                 CHECK(current.layout()->formats().isEmpty());
         });
-        return suite.report();
     }
 };
 
 int main(int argc, char **argv)
 {
-    QTemporaryDir data;
-    if (!data.isValid()) return 2;
-    qputenv("XDG_DATA_HOME", data.path().toUtf8());
-    qputenv("XDG_CONFIG_HOME", (data.path() + "/config").toUtf8());
-    qputenv("XDG_CACHE_HOME", (data.path() + "/cache").toUtf8());
     QApplication application(argc, argv);
+    // The English catalog supplies the plural forms these checks read.
+    branch_truce::installTranslations(application);
     QCoreApplication::setApplicationName("BranchTruceSyntaxHighlightingTests");
-    if (QGuiApplication::platformName() != QStringLiteral("offscreen")) return 2;
+    if (QGuiApplication::platformName() != QStringLiteral("offscreen")) {
+        std::cerr << "run with QT_QPA_PLATFORM=offscreen, not " << QGuiApplication::platformName().toStdString()
+                  << '\n';
+        return 2;
+    }
     return SyntaxHighlightingTests{}.run();
 }

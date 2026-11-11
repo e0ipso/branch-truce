@@ -1,25 +1,30 @@
 #pragma once
 
 #include "core/EditingCommands.h"
-#include <cstdio>
+#include "core/SessionState.h"
+#include "fixtures/FixtureGit.h"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <optional>
 #include <stdexcept>
+#include <string>
 #include <sys/wait.h>
+#include <utility>
+#include <vector>
 
 namespace test_support {
 inline branch_truce::TextSnapshot choiceText(const std::string &value)
 {
     using namespace branch_truce;
-    return {value, value,
-        {SnapshotFormat::Encoding::Utf8, false, SnapshotFormat::Newline::Lf, value.ends_with('\n')}};
+    return {value, value, {SnapshotFormat::Encoding::Utf8, false, SnapshotFormat::Newline::Lf, value.ends_with('\n')}};
 }
 
-inline branch_truce::FileSession choiceFile(
-    std::string left = "header\nleft first\nleft second\nbridge\nleft later\ntail\n",
-    std::string right = "header\nright first\nright second\nbridge\nright later\ntail\n",
-    std::optional<std::string> result = {})
+inline branch_truce::FileSession
+choiceFile(const std::string &left = "header\nleft first\nleft second\nbridge\nleft later\ntail\n",
+           const std::string &right = "header\nright first\nright second\nbridge\nright later\ntail\n",
+           const std::optional<std::string> &result = {})
 {
     using namespace branch_truce;
     FileSnapshots captured;
@@ -30,19 +35,19 @@ inline branch_truce::FileSession choiceFile(
     captured.provenance.gitDirectory = "/disposable-worktree/.git";
     captured.provenance.stage2CommitId = "left-commit";
     captured.provenance.stage3CommitId = "right-commit";
-    captured.stage2 = SourceSnapshot{"left-object", "100644", left,
-        choiceText(left), "left-commit", "Current checkout"};
-    captured.stage3 = SourceSnapshot{"right-object", "100644", right,
-        choiceText(right), "right-commit", "Merged commit"};
+    captured.stage2 =
+        SourceSnapshot{"left-object", "100644", left, choiceText(left), "left-commit", "Current checkout"};
+    captured.stage3 =
+        SourceSnapshot{"right-object", "100644", right, choiceText(right), "right-commit", "Merged commit"};
     const auto text = result.value_or(left);
     captured.launchResult.text = choiceText(text);
     const auto path = captured.path;
-    return FileSession("choices", path, {text, {}, 0},
-        Support::Supported, {}, std::move(captured), true);
+    return FileSession("choices", path, {text, {}, 0}, {.snapshots = std::move(captured), .initializeChoices = true});
 }
 
 inline const branch_truce::ChoiceTarget &choiceTarget(const branch_truce::FileSession &file,
-    branch_truce::SourceSide side, branch_truce::ChoiceScope scope, std::size_t occurrence = 0)
+                                                      branch_truce::SourceSide side, branch_truce::ChoiceScope scope,
+                                                      std::size_t occurrence = 0)
 {
     for (const auto &target : file.choices()) {
         if (target.source.side == side && target.scope == scope) {
@@ -67,7 +72,7 @@ inline std::string markedText(bool base = false)
 inline branch_truce::FileSession markedFile(bool base = false)
 {
     return choiceFile("header\nleft first\nleft second\nbridge\nleft later\ntail\n",
-        "header\nright first\nright second\nbridge\nright later\ntail\n", markedText(base));
+                      "header\nright first\nright second\nbridge\nright later\ntail\n", markedText(base));
 }
 
 // The left side has no line where the right side has one, so Git writes an
@@ -75,7 +80,7 @@ inline branch_truce::FileSession markedFile(bool base = false)
 inline branch_truce::FileSession deletionFile()
 {
     return choiceFile("header\nbridge\ntail\n", "header\nright first\nbridge\ntail\n",
-        "header\n<<<<<<< ours\n=======\nright first\n>>>>>>> theirs\nbridge\ntail\n");
+                      "header\n<<<<<<< ours\n=======\nright first\n>>>>>>> theirs\nbridge\ntail\n");
 }
 
 // Both sides change the lines on either side of a line they share, so Git
@@ -83,63 +88,71 @@ inline branch_truce::FileSession deletionFile()
 inline std::string splitText()
 {
     return "header\n<<<<<<< ours\nleft one\nshared\nleft two\n=======\nright one\nshared\nright two\n"
-        ">>>>>>> theirs\ntail\n";
+           ">>>>>>> theirs\ntail\n";
 }
 
 inline branch_truce::FileSession splitFile()
 {
-    return choiceFile("header\nleft one\nshared\nleft two\ntail\n",
-        "header\nright one\nshared\nright two\ntail\n", splitText());
+    return choiceFile("header\nleft one\nshared\nleft two\ntail\n", "header\nright one\nshared\nright two\ntail\n",
+                      splitText());
 }
 
 // Both sides keep a Markdown heading underlined with exactly seven '=', and
 // the file conflicts two lines below it.
 inline branch_truce::FileSession headingFile()
 {
-    return choiceFile("Changes\n=======\nintro\nleft line\ntail\n",
-        "Changes\n=======\nintro\nright line\ntail\n",
-        "Changes\n=======\nintro\n<<<<<<< ours\nleft line\n=======\nright line\n>>>>>>> theirs\ntail\n");
+    return choiceFile("Changes\n=======\nintro\nleft line\ntail\n", "Changes\n=======\nintro\nright line\ntail\n",
+                      "Changes\n=======\nintro\n<<<<<<< ours\nleft line\n=======\nright line\n>>>>>>> theirs\ntail\n");
 }
 
 // A result Git wrote with merge.conflictStyle=diff3, with the common earlier
 // version captured unless `captured` is false.
-inline branch_truce::FileSession diff3File(std::string left, std::string right,
-    const std::string &earlier, std::string result, bool captured = true)
+inline branch_truce::FileSession diff3File(const std::string &left, const std::string &right,
+                                           const std::string &earlier, std::string result, bool captured = true)
 {
     using namespace branch_truce;
-    auto sources = *choiceFile(std::move(left), std::move(right), result).snapshots();
+    auto sources = *choiceFile(left, right, result).snapshots();
     if (captured)
-        sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
-            choiceText(earlier), "earlier-commit", "Common earlier version"};
+        sources.earlier = SourceSnapshot{"earlier-object",    "100644",         earlier,
+                                         choiceText(earlier), "earlier-commit", "Common earlier version"};
     return FileSession("choices", sources.path, {std::move(result), {}, 0},
-        Support::Supported, {}, sources, true);
+                       {.snapshots = sources, .initializeChoices = true});
 }
 
-// What `git merge-file --diff3` on the PATH writes for three versions, with
-// the labels a merge gives them. Its exit status counts the conflicts, so one
-// above 127 or a signal is a failure.
+// What `git merge-file --diff3` writes for three versions, with the labels a merge gives them.
+// It runs the fixture Git without the user's or the system's configuration. Its exit status
+// counts the conflicts, so one above 127 or a signal is a failure.
 inline std::string gitDiff3(const std::string &left, const std::string &earlier, const std::string &right)
 {
     auto pattern = (std::filesystem::temp_directory_path() / "branch-truce-diff3.XXXXXX").string();
     if (!mkdtemp(pattern.data())) throw std::runtime_error("cannot create a directory for git merge-file");
     const std::filesystem::path directory(pattern);
-    std::string command = "git merge-file --diff3 -p -L ours -L base -L theirs";
-    const std::pair<const char *, const std::string *> versions[] = {{"left", &left}, {"base", &earlier}, {"right", &right}};
+    std::vector<std::string> arguments{fixtureGit(), "merge-file", "--diff3", "-p", "-L",
+                                       "ours",       "-L",         "base",    "-L", "theirs"};
+    const std::pair<const char *, const std::string *> versions[] = {
+        {"left", &left}, {"base", &earlier}, {"right", &right}};
+    arguments.reserve(arguments.size() + std::size(versions));
+    bool written = true;
     for (const auto &[name, text] : versions) {
-        std::ofstream(directory / name, std::ios::binary) << *text;
-        command += " '" + (directory / name).string() + "'";
+        std::ofstream file(directory / name, std::ios::binary);
+        file << *text;
+        file.close();
+        written = written && !file.fail();
+        arguments.push_back((directory / name).string());
     }
-    std::string merged;
-    int status = -1;
-    if (auto *pipe = popen(command.c_str(), "r")) {
-        char buffer[4096];
-        for (std::size_t read; (read = std::fread(buffer, 1, sizeof buffer, pipe)) > 0;) merged.append(buffer, read);
-        status = pclose(pipe);
+    std::vector<std::string> environment;
+    for (const auto &[name, value] : isolatedGitVariables(directory.string(), "/dev/null")) {
+        auto &variable = environment.emplace_back(name);
+        variable += '=';
+        variable += value;
     }
+    const auto merged = written ? readProcess(std::move(arguments), environment) : ProcessOutput{};
     std::filesystem::remove_all(directory);
-    if (status == -1 || !WIFEXITED(status) || WEXITSTATUS(status) > 127)
+    if (!merged.diagnostic.empty()) throw std::runtime_error(merged.diagnostic);
+    if (!written) throw std::runtime_error("cannot write the versions for git merge-file");
+    if (merged.status == -1 || !WIFEXITED(merged.status) || WEXITSTATUS(merged.status) > 127)
         throw std::runtime_error("git merge-file failed");
-    return merged;
+    return merged.text;
 }
 
 // The common earlier version underlines a heading with exactly seven '='
@@ -148,10 +161,10 @@ inline std::string gitDiff3(const std::string &left, const std::string &earlier,
 inline branch_truce::FileSession underlinedBaseFile(bool captured = true)
 {
     return diff3File("intro\nLeft title\n-----------\nleft body\ntail\n",
-        "intro\nRight title\n************\nright body\ntail\n",
-        "intro\nTitle\n=======\nbody\ntail\n",
-        "intro\n<<<<<<< ours\nLeft title\n-----------\nleft body\n||||||| base\nTitle\n=======\nbody\n"
-        "=======\nRight title\n************\nright body\n>>>>>>> theirs\ntail\n", captured);
+                     "intro\nRight title\n************\nright body\ntail\n", "intro\nTitle\n=======\nbody\ntail\n",
+                     "intro\n<<<<<<< ours\nLeft title\n-----------\nleft body\n||||||| base\nTitle\n=======\nbody\n"
+                     "=======\nRight title\n************\nright body\n>>>>>>> theirs\ntail\n",
+                     captured);
 }
 
 // The common earlier version ends the hunk both sides change with a heading
@@ -161,40 +174,39 @@ inline branch_truce::FileSession underlinedBaseFile(bool captured = true)
 inline branch_truce::FileSession underlineEndedBaseFile(bool captured = true, bool deleted = false)
 {
     return diff3File("intro\nLeft\n-----\ntail\n", deleted ? "intro\ntail\n" : "intro\nRight\n*****\ntail\n",
-        "intro\nTitle\n=======\ntail\n",
-        std::string("intro\n<<<<<<< ours\nLeft\n-----\n||||||| base\nTitle\n=======\n=======\n")
-            + (deleted ? "" : "Right\n*****\n") + ">>>>>>> theirs\ntail\n", captured);
+                     "intro\nTitle\n=======\ntail\n",
+                     std::string("intro\n<<<<<<< ours\nLeft\n-----\n||||||| base\nTitle\n=======\n=======\n")
+                         + (deleted ? "" : "Right\n*****\n") + ">>>>>>> theirs\ntail\n",
+                     captured);
 }
 
 // The user set the result to the common earlier version before launch, so
 // choices change text that matches neither side. By default one conflict
 // changes three lines on each side.
-inline branch_truce::FileSession commonVersionFile(
-    std::string left = "header\nleft one\nleft two\nleft three\ntail\n",
-    std::string right = "header\nright one\nright two\nright three\ntail\n",
-    const std::string &earlier = "header\nbase one\nbase two\nbase three\ntail\n")
+inline branch_truce::FileSession
+commonVersionFile(const std::string &left = "header\nleft one\nleft two\nleft three\ntail\n",
+                  const std::string &right = "header\nright one\nright two\nright three\ntail\n",
+                  const std::string &earlier = "header\nbase one\nbase two\nbase three\ntail\n")
 {
     using namespace branch_truce;
-    auto sources = *choiceFile(std::move(left), std::move(right)).snapshots();
-    sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
-        choiceText(earlier), "earlier-commit", "Common earlier version"};
+    auto sources = *choiceFile(left, right).snapshots();
+    sources.earlier = SourceSnapshot{"earlier-object",    "100644",         earlier,
+                                     choiceText(earlier), "earlier-commit", "Common earlier version"};
     sources.launchResult.text = choiceText(earlier);
-    return FileSession("choices", sources.path, {earlier, {}, 0},
-        Support::Supported, {}, sources, true);
+    return FileSession("choices", sources.path, {earlier, {}, 0}, {.snapshots = sources, .initializeChoices = true});
 }
 
 inline branch_truce::FileSession batchFile()
 {
-    return commonVersionFile(
-        "header\nleft only\nbridge one\nbase right\nbridge two\nleft conflict\ntail\n",
-        "header\nbase left\nbridge one\nright only\nbridge two\nright conflict\ntail\n",
-        "header\nbase left\nbridge one\nbase right\nbridge two\nbase conflict\ntail\n");
+    return commonVersionFile("header\nleft only\nbridge one\nbase right\nbridge two\nleft conflict\ntail\n",
+                             "header\nbase left\nbridge one\nright only\nbridge two\nright conflict\ntail\n",
+                             "header\nbase left\nbridge one\nbase right\nbridge two\nbase conflict\ntail\n");
 }
 
 inline branch_truce::FileSession combinationFile(branch_truce::ChoiceScope scope)
 {
-    return scope == branch_truce::ChoiceScope::Section ? choiceFile() : choiceFile(
-        "header\nleft first\nbridge\nleft later\ntail\n",
-        "header\nright first\nbridge\nright later\ntail\n");
+    return scope == branch_truce::ChoiceScope::Section ? choiceFile()
+                                                       : choiceFile("header\nleft first\nbridge\nleft later\ntail\n",
+                                                                    "header\nright first\nbridge\nright later\ntail\n");
 }
 }

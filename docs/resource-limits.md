@@ -19,13 +19,28 @@ is not recovered work.
 | --- | ---: | --- |
 | Longest line | 262144 bytes | the edit is refused and the previous buffer stays in place |
 | Git process output | 4194304 bytes | `OutputLimit`, with an incomplete captured prefix |
-| Recovery payload | 8388608 bytes | the commit fails, the prior journal record stays acknowledged, and the new payload is not published |
+| Result text / recovery payload | 8388608 bytes | the commit fails, the prior journal record stays acknowledged, and the new payload is not published |
+| Indexed lines | 65536 | the edit is refused and the previous buffer stays in place |
+| Revision history | 1024 undo entries, 268435456 retained bytes | oldest undo entries are pruned; current, launch and publication-held revisions remain protected |
+| Metadata | 65536 entries, 16777216 bytes | derived decisions, ranges or command candidates are refused before exceeding admission |
+| Destination read | 16908291 raw bytes | publication refuses the changed or oversized destination before reading it into memory |
+| Line alignment | 67108864 line pairs (source lines times result lines) | that source and result are one ambiguous passage: no choice in it is mapped and only direct editing applies |
 
 Each Git phase, including the canonical blob read and the checkout read, gets
 its own 4194304-byte budget. Stdout and stderr share the budget of that phase.
 Preflight output does not reduce a later read. A worktree file read stops at the 8388608-byte
 recovery ceiling, and a complete read still has to fit the line and text-size
 limits before it becomes editable.
+
+Destination reads compare the launch identity before allocating a buffer, then
+read bounded chunks and check for growth and identity changes. The raw ceiling
+allows the canonical text envelope expanded to UTF-16 with CRLF and a BOM.
+Deferred large-file loads retain the same destination baseline; an outside edit
+continues to block publication after loading.
+
+Recovery storage, continuation and inventory limits are documented in
+[the recovery journal contract](recovery-journal.md#continuation-and-bounded-discovery).
+They retain pending input on refusal and never report partial recovery as success.
 
 An edit that would cross a line or text-size limit is not acknowledged.
 The editor does not load that text. Mark resolved of a result that is already
@@ -43,10 +58,37 @@ are display only, so their limits drop the word ranges and never the text:
 | --- | ---: | --- |
 | Line length | 1000 bytes, newline excluded | the line is compared as one token and keeps its line colouring only |
 | Token comparisons for one pair of passages | 1000000 | the pair gets no word ranges |
-| Token comparisons for one revision | 4000000 | pairs later in the text get no word ranges |
+| Token comparisons for one revision | 4000000 | the revision gets no partial word ranges |
+| Combined input for one pair | 2097152 bytes | the revision gets no word ranges |
+| Tokens for one pair | 65536 | tokenization stops before further allocation |
+| Estimated token and match retention for one pair | 8388608 bytes | tokenization stops before further allocation |
+| Aggregate compared input for one file pass | 8388608 bytes | the revision gets no partial word ranges |
 
-The ranges are computed once for each result revision. Changing the theme or
-redrawing the panes reuses them.
+Word ranges and choice previews compute on owned immutable snapshots in the
+application worker pool. A shared admission boundary permits two visual jobs and
+1 GiB of conservatively charged retained input/output. A pending decoration
+request coalesces to the latest file/revision without retaining another snapshot.
+Completion checks file, revision, captures and correspondence before installing
+ranges; panes also check exact document text. A limit or failure clears word
+ranges while preserving text and other formatting. Changing the theme or redrawing
+reuses the current ranges.
+
+Preview acceptance starts work. `previewPending` covers alignment and computation;
+`previewReady` permits inspection and confirmation. Canceled or replaced requests
+cannot open a later dialog or apply a stale preview. Applying the displayed choice
+still uses durable command persistence.
+
+Background alignment admits two jobs and a conservative 256 MiB across session
+generations. Replacing a session invalidates publication but releases a reservation
+only when its old worker terminates. Current files form the coalesced queue and
+up to 128 observers receive explicit completion, stale-input or refusal results.
+An algorithm that blocks can occupy its finite slot and delay shutdown.
+
+Non-conflicting batch planning admits 8192 targets, 32 MiB of charged candidate
+storage and 4000000 units of identifier/text work. Accepted ranges, collisions and
+duplicate changes use indexes; admission failure returns `ResourceLimit` without
+partial edits. Ambiguous copied-marker analysis shares a 4000000 comparison budget.
+Exhaustion keeps unproved separator-like lines outstanding as markers.
 
 ## Typing and scrolling in highlighted panes
 
@@ -64,7 +106,7 @@ median of the three repeat medians must stay within these limits:
 | Typing, one key press to the next frame | 200 ms CPU | 63 to 66 ms alone, 62 to 89 ms with three runs at once, 100 to 106 ms with six at once |
 | Scrolling, one wheel notch to the next frame | 300 ms CPU | 100 to 112 ms alone or three runs at once, 154 to 163 ms with six at once |
 
-The runs use the offscreen platform, the software renderer and the
+These calibration measurements use the offscreen platform, the software renderer and the
 `org.kde.desktop` style on an 8-thread host. For scrolling the load average was
 2.0 to 2.7 alone and with three runs, and reached 9.6 with six. The typing row
 comes from later runs, made while other builds and tests shared the host. Their
@@ -75,9 +117,9 @@ the medians about 1.6 times. The limits hold at that load. On an idle host they
 catch a cost about 3 times the measured typing and scrolling costs, not a
 doubling.
 
-A key press costs about 65 ms of CPU here, under the 100 ms editor keystroke
-budget in the evidence above. The largest parts are the edit itself, about
-10 ms, and its recovery journal commit, about 3 ms. The commit rereads the
-journal's records only when the file differs from what the store last wrote, so
-its cost stays flat through the run: 2.9 ms for the first key and 3.4 ms for the
-eighteenth at a load average of about 4.
+The table records the original development-host calibration, not a new timing
+claim for each build. The current performance gates rerun the real editor and
+worker workloads against their budgets. Command computation and persistence use
+the serial journal worker; these historical synchronous cost breakdowns cannot
+predict current GUI latency. A journal append compares `fstat` with the last
+verified stamp and rereads the journal when it differs.

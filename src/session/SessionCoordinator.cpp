@@ -1,10 +1,11 @@
 // The session coordinator schedules guarded save and publication work and reconciles cancelled mutations.
 #include "session/SessionCoordinator.h"
+#include "problems/ProblemText.h"
 #include "recovery/RecoveryRestore.h"
+#include "storage/OffThread.h"
 #include <QDir>
 #include <QFileInfo>
-#include <QFutureWatcher>
-#include <QPromise>
+#include <QFuture>
 #include <QPointer>
 #include <QThread>
 #include <QThreadPool>
@@ -54,27 +55,31 @@ public:
         bool mutation;
         bool running = false;
         std::optional<git::Request> gitRequest;
-        git::GitAdapter *adapter = nullptr;
-        QString recoveryDirectory;
-        QString mutationId;
+        git::GitRunner *adapter = nullptr;
+        // The store the intent went to, held until the observation is recorded there too.
+        std::shared_ptr<storage::RecoveryLease> recoveryLease;
+        std::optional<MutationFact> fact;
         std::optional<FileSession> mutationTarget;
+        QFuture<TaskResult> future;
+        bool observationFailed = false;
     };
 
-    State(SessionCoordinator &owner, SessionModel &model, QString executable)
-        : owner(owner), model(model), executable(std::move(executable)) {}
+    State(SessionCoordinator &owner, SessionStore &store, git::GitRunners git, QThreadPool &workers)
+        : owner(owner), store(store), git(std::move(git)), workers(workers)
+    {}
 
     [[nodiscard]] bool owningThread() const
     {
-        return QThread::currentThread() == owner.thread() && model.thread() == owner.thread();
+        return QThread::currentThread() == owner.thread() && store.thread() == owner.thread();
     }
     [[nodiscard]] TaskDisposition disposition(const TaskStamp &stamp) const
     {
         if (stamp.generation != generation || stamp.worktree != worktree || stamp.operation != operation)
             return TaskDisposition::StaleSession;
-        const auto *file = model.file(stamp.fileId);
-        if (!file || file->current().id != stamp.inputRevision
-            || file->current().result != stamp.resultRevision
-            || file->current().decisions != stamp.decisionRevision) return TaskDisposition::StaleRevision;
+        const auto *file = store.file(stamp.fileId);
+        if (!file || file->current().id != stamp.inputRevision || file->current().result != stamp.resultRevision
+            || file->current().decisions != stamp.decisionRevision)
+            return TaskDisposition::StaleRevision;
         return TaskDisposition::Current;
     }
     [[nodiscard]] TaskDisposition disposition(const Job &job) const
@@ -84,20 +89,34 @@ public:
         if (job.control.cancellationRequested()) return TaskDisposition::Cancelled;
         return TaskDisposition::Current;
     }
-    TaskId enqueue(const std::string &fileId, RevisionId expected, bool mutation,
-                   Work work, Inspect inspect, Completion completion, std::optional<git::Request> request = {})
+    TaskId enqueue(const std::string &fileId, RevisionId expected, bool mutation, Work work, Inspect inspect,
+                   Completion completion, std::optional<git::Request> request = {})
     {
-        if (!owningThread() || replacing || generation == 0 || nextId == 0
-            || jobs.size() >= static_cast<std::size_t>(std::numeric_limits<int>::max())) return 0;
-        const auto *file = model.file(fileId);
+        if (!owningThread() || replacing || generation == 0 || nextId == 0 || jobs.size() >= limits.count
+            || retained > limits.bytes || RecoveryJournal::retainedBytes > limits.bytes - retained)
+            return 0;
+        const auto *file = store.file(fileId);
         if (!file || file->current().id != expected) return 0;
         const auto &revision = file->current();
         const auto id = nextId++;
-        auto job = std::make_shared<Job>(Job{
-            {{id, generation, worktree, operation, fileId, expected, revision.result, revision.decisions},
-             file->path(), revision}, TaskControl(mutation), std::move(work), std::move(inspect),
-            std::move(completion), mutation, false, std::move(request), nullptr, {}, {}, {}});
+        auto job = std::make_shared<Job>(
+            Job{{{id, generation, worktree, operation, fileId, expected, revision.result, revision.decisions},
+                 file->path(),
+                 revision},
+                TaskControl(mutation),
+                std::move(work),
+                std::move(inspect),
+                std::move(completion),
+                mutation,
+                false,
+                std::move(request),
+                nullptr,
+                {},
+                {},
+                {},
+                {}});
         jobs.emplace(id, job);
+        retained += RecoveryJournal::retainedBytes;
         if (mutation) queues[worktree].push_back(id);
         schedule();
         Q_EMIT owner.pendingTasksChanged();
@@ -110,6 +129,38 @@ public:
         QTimer::singleShot(0, &owner, [this] {
             scheduled = false;
             dispatch();
+        });
+    }
+    void startMutation(const std::shared_ptr<Job> &job)
+    {
+        store.recordTyping();
+        const auto *file = store.file(job->input.stamp.fileId);
+        if (!file || store.hasPendingRecovery() || store.hasRecoveryFailure(file->id())) {
+            finish(job,
+                   {TaskStatus::Failed, MutationObservation::NotAttempted, {}, ProblemCode::TaskRecoveryBlocked, {}});
+            return;
+        }
+        const MutationFact intent{QUuid::createUuid().toString(QUuid::WithoutBraces),
+                                  job->gitRequest ? MutationKind::Staging : MutationKind::Publication,
+                                  {}};
+        job->mutationTarget = *file;
+        store.commitMutation(*file, intent).then(&owner, [this, job, intent](const RecoveryJournal::Receipt &receipt) {
+            const auto &committed = receipt.commit;
+            if (!committed.succeeded) {
+                if (disposition(job->input.stamp) == TaskDisposition::Current)
+                    store.recordRecoveryFailure(job->input.stamp.fileId, committed.problem);
+                finish(job, {TaskStatus::Failed, MutationObservation::NotAttempted, {}, committed.problem, {}});
+                return;
+            }
+            job->recoveryLease = receipt.lease;
+            job->fact = intent;
+            if (disposition(*job) != TaskDisposition::Current) {
+                observeAndFinish(
+                    job,
+                    {TaskStatus::Cancelled, MutationObservation::NotAttempted, {}, ProblemCode::TaskSuperseded, {}});
+                return;
+            }
+            start(job);
         });
     }
     void dispatch()
@@ -126,55 +177,44 @@ public:
             const auto id = job->input.stamp.id;
             if (!jobs.contains(id) || job->running) continue;
             if (disposition(*job) != TaskDisposition::Current) {
-                finish(job, {TaskStatus::Cancelled, MutationObservation::NotAttempted, {},
-                             QStringLiteral("Task cancelled or superseded before execution"), {}});
+                finish(job,
+                       {TaskStatus::Cancelled, MutationObservation::NotAttempted, {}, ProblemCode::TaskSuperseded, {}});
                 if (!alive) return;
                 continue;
             }
             if (job->mutation && queues.at(job->input.stamp.worktree).front() != id) continue;
-            if (job->mutation) {
-                const auto *file = model.file(job->input.stamp.fileId);
-                auto &journal = model.recoveryJournal();
-                const auto leaseError = journal.ensureLease();
-                if (!file || model.hasPendingRecovery() || model.hasRecoveryFailure(file->id()) || !leaseError.isEmpty()) {
-                    finish(job, {TaskStatus::Failed, MutationObservation::NotAttempted, {},
-                        QStringLiteral("Mutation blocked by unavailable recovery storage: ") + leaseError, {}});
-                    if (!alive) return;
-                    continue;
-                }
-                const auto mutationId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-                const auto kind = job->gitRequest ? QStringLiteral("staging") : QStringLiteral("publication");
-                const auto committed = journal.commit(mutationRecoveryTransaction(*file, kind, mutationId));
-                if (!committed.succeeded) {
-                    model.recordRecoveryFailure(file->id(), committed.error);
-                    finish(job, {TaskStatus::Failed, MutationObservation::NotAttempted, {}, committed.error, {}});
-                    if (!alive) return;
-                    continue;
-                }
-                job->recoveryDirectory = model.recoveryDirectory();
-                job->mutationId = mutationId;
-                job->mutationTarget = *file;
-            }
+            if (!job->mutation && store.recording()) continue;
             job->running = true;
-            if (job->gitRequest) startGit(job);
-            else startWorker(job);
+            if (job->mutation)
+                startMutation(job);
+            else
+                start(job);
             if (!alive) return;
         }
+    }
+    void start(const std::shared_ptr<Job> &job)
+    {
+        if (job->gitRequest)
+            startGit(job);
+        else
+            startWorker(job);
     }
     static TaskResult execute(const std::shared_ptr<Job> &job)
     {
         TaskResult result;
         try {
-            if (job->control.cancellationRequested()) result.status = TaskStatus::Cancelled;
-            else result = job->work(job->input, job->control);
+            if (job->control.cancellationRequested())
+                result.status = TaskStatus::Cancelled;
+            else
+                result = job->work(job->input, job->control);
         } catch (...) {
             result.status = TaskStatus::Failed;
-            result.diagnostic = QStringLiteral("Background task threw an exception");
+            result.problem = ProblemCode::TaskThrew;
         }
         result.mutation = MutationObservation::NotAttempted;
         if (job->mutation && !job->control.mutationStarted() && result.status == TaskStatus::Succeeded) {
             result.status = TaskStatus::Failed;
-            result.diagnostic = QStringLiteral("Mutation did not reach admission");
+            result.problem = ProblemCode::TaskNotAdmitted;
         }
         if (job->control.mutationStarted()) {
             result.mutation = MutationObservation::Uncertain;
@@ -182,40 +222,38 @@ public:
                 const auto observed = job->inspect(job->input);
                 if (observed != MutationObservation::NotAttempted) result.mutation = observed;
             } catch (...) {
-                result.diagnostic += QStringLiteral("; mutation inspection failed, outcome uncertain");
+                result.problem = Problem{ProblemCode::TaskInspectionFailed}.wrapping(result.problem);
             }
         }
         if (job->control.cancellationRequested()) result.status = TaskStatus::Cancelled;
         if (result.status == TaskStatus::Succeeded && result.mutation == MutationObservation::Uncertain) {
             result.status = TaskStatus::Failed;
-            result.diagnostic += QStringLiteral("; mutation outcome could not be verified");
+            result.problem = Problem{ProblemCode::TaskUnverified}.wrapping(result.problem);
         }
         return result;
     }
     void startWorker(const std::shared_ptr<Job> &job)
     {
-        auto promise = std::make_shared<QPromise<TaskResult>>();
-        auto *watcher = new QFutureWatcher<TaskResult>(&owner);
-        watcher->setFuture(promise->future());
-        QObject::connect(watcher, &QFutureWatcher<TaskResult>::finished, &owner, [this, job, watcher] {
-            const auto result = watcher->result();
-            watcher->deleteLater();
-            finish(job, result);
-        });
-        promise->start();
-        QThreadPool::globalInstance()->start([job, promise] {
-            promise->addResult(execute(job));
-            promise->finish();
-        });
+        job->future = runOffThread(
+            workers, &owner,
+            [job] {
+                auto result = execute(job);
+                recordObservation(*job, result);
+                return result;
+            },
+            [this, job](const TaskResult &result) { finish(job, result); },
+            [job](const std::exception_ptr &) noexcept { return unexpected(*job); });
     }
     void startGit(const std::shared_ptr<Job> &job)
     {
-        auto *adapter = new git::GitAdapter(executable, &owner);
+        // The coordinator owns the runner as its child until the result is in.
+        auto *adapter = git(&owner).release();
         job->adapter = adapter;
-        QObject::connect(adapter, &git::GitAdapter::finished, &owner, [this, job, adapter](const git::Result &value) {
+        QObject::connect(adapter, &git::GitRunner::finished, &owner, [this, job, adapter](const git::Result &value) {
             TaskResult result;
             result.status = value.outcome == git::Outcome::Success ? TaskStatus::Succeeded
-                : value.outcome == git::Outcome::Cancelled ? TaskStatus::Cancelled : TaskStatus::Failed;
+                : value.outcome == git::Outcome::Cancelled         ? TaskStatus::Cancelled
+                                                                   : TaskStatus::Failed;
             switch (value.mutation) {
             case git::Mutation::NotAttempted: result.mutation = MutationObservation::NotAttempted; break;
             case git::Mutation::ObservedUnchanged: result.mutation = MutationObservation::ObservedUnchanged; break;
@@ -223,50 +261,92 @@ public:
             case git::Mutation::Uncertain: result.mutation = MutationObservation::Uncertain; break;
             }
             result.data = value.standardOutput;
-            result.diagnostic = value.diagnostic;
+            result.problem = value.problem;
             result.gitResult = value;
             job->adapter = nullptr;
             adapter->deleteLater();
-            finish(job, std::move(result));
+            observeAndFinish(job, std::move(result));
         });
-        if (!adapter->start(*job->gitRequest)) {
+        const auto &request = job->gitRequest;
+        if (!request || !adapter->start(*request)) {
             job->adapter = nullptr;
             adapter->deleteLater();
-            finish(job, {TaskStatus::Failed, MutationObservation::NotAttempted, {},
-                         QStringLiteral("Git adapter rejected task admission"), {}});
+            observeAndFinish(
+                job, {TaskStatus::Failed, MutationObservation::NotAttempted, {}, ProblemCode::GitStartRefused, {}});
         }
+    }
+    // Records an admitted mutation's observation under the lease its intent
+    // was committed under, even when the session has since moved to another
+    // store. A failed record makes the result a failure with an uncertain outcome.
+    static void recordObservation(Job &job, TaskResult &result)
+    {
+        if (!job.mutationTarget || !job.fact || !job.recoveryLease) return;
+        storage::RecoveryCommit committed;
+        try {
+            auto observed = *job.fact;
+            observed.observation = result.mutation;
+            committed = job.recoveryLease->commit(mutationRecoveryTransaction(*job.mutationTarget, observed));
+        } catch (...) {
+            committed = {false, ProblemCode::RecoveryCommitFailed};
+        }
+        if (committed.succeeded) return;
+        result.status = TaskStatus::Failed;
+        if (result.mutation != MutationObservation::NotAttempted) result.mutation = MutationObservation::Uncertain;
+        result.problem = Problem{ProblemCode::TaskOutcomeNotRetained, {problem_text::text(committed.problem)}}.wrapping(
+            result.problem);
+        job.observationFailed = true;
+    }
+    static TaskResult unexpected(Job &job, MutationObservation observation = MutationObservation::NotAttempted) noexcept
+    {
+        TaskResult result{TaskStatus::Failed, observation, {}, ProblemCode::TaskThrew, {}};
+        if (job.control.mutationStarted()) {
+            result.mutation = MutationObservation::Uncertain;
+            try {
+                const auto observed = job.inspect(job.input);
+                if (observed != MutationObservation::NotAttempted) result.mutation = observed;
+            } catch (...) {
+                result.mutation = MutationObservation::Uncertain;
+            }
+        }
+        // An admitted Git mutation's supplied observation survives failure of
+        // its recording worker too. Never turn it into NotAttempted.
+        try {
+            recordObservation(job, result);
+        } catch (...) {
+            job.observationFailed = true;
+            result.problem = ProblemCode::TaskOutcomeNotRetained;
+            if (result.mutation != MutationObservation::NotAttempted) result.mutation = MutationObservation::Uncertain;
+        }
+        return result;
+    }
+    void observeAndFinish(const std::shared_ptr<Job> &job, TaskResult result)
+    {
+        const auto observed = std::make_shared<TaskResult>(std::move(result));
+        job->future = runOffThread(
+            workers, &owner,
+            [job, observed]() mutable {
+                auto result = *observed;
+                recordObservation(*job, result);
+                return result;
+            },
+            [this, job](const TaskResult &result) { finish(job, result); },
+            [job, observed](const std::exception_ptr &) noexcept { return unexpected(*job, observed->mutation); });
     }
     void finish(const std::shared_ptr<Job> &job, TaskResult result)
     {
         if (job->control.cancellationRequested()) result.status = TaskStatus::Cancelled;
-        if (job->mutationTarget) {
-            QString observation;
-            switch (result.mutation) {
-            case MutationObservation::NotAttempted: observation = QStringLiteral("not-attempted"); break;
-            case MutationObservation::ObservedUnchanged: observation = QStringLiteral("unchanged"); break;
-            case MutationObservation::ObservedChanged: observation = QStringLiteral("changed"); break;
-            case MutationObservation::Uncertain: observation = QStringLiteral("uncertain"); break;
-            }
-            storage::RecoveryStore store(job->recoveryDirectory);
-            const auto committed = store.commit(mutationRecoveryTransaction(*job->mutationTarget,
-                job->gitRequest ? QStringLiteral("staging") : QStringLiteral("publication"), job->mutationId, observation));
-            if (!committed.succeeded) {
-                result.status = TaskStatus::Failed;
-                if (result.mutation != MutationObservation::NotAttempted) result.mutation = MutationObservation::Uncertain;
-                result.diagnostic += QStringLiteral("; recovery could not retain the mutation outcome: ") + committed.error;
-                if (job->input.stamp.worktree == worktree && job->recoveryDirectory == model.recoveryDirectory())
-                    model.recordRecoveryFailure(job->input.stamp.fileId, result.diagnostic);
-            }
-        }
+        if (job->observationFailed && job->input.stamp.worktree == worktree
+            && job->recoveryLease == store.recoveryLease())
+            store.recordRecoveryFailure(job->input.stamp.fileId, result.problem);
         const auto id = job->input.stamp.id;
         if (jobs.erase(id) == 0) return;
+        retained -= RecoveryJournal::retainedBytes;
         if (job->mutation) {
             auto queue = queues.find(job->input.stamp.worktree);
             std::erase(queue->second, id);
             if (queue->second.empty()) queues.erase(queue);
         }
         TaskCompletion completion{job->input.stamp, std::move(result), disposition(*job)};
-        if (job->mutation) mutations.push_back(completion);
         schedule();
         // Apply before emitting any notifications that could replace the
         // session or edit a revision. Discarded mutation evidence stays above.
@@ -278,61 +358,76 @@ public:
     }
 
     SessionCoordinator &owner;
-    SessionModel &model;
-    const QString executable;
+    SessionStore &store;
+    const git::GitRunners git;
+    QThreadPool &workers;
     quint64 generation = 0;
     TaskId nextId = 1;
+    RecoveryJournal::Limits limits;
+    std::size_t retained = 0;
     QString worktree;
     QString operation;
     bool scheduled = false;
     bool replacing = false;
     std::map<TaskId, std::shared_ptr<Job>> jobs;
     std::map<QString, std::deque<TaskId>> queues;
-    std::vector<TaskCompletion> mutations;
 };
 
-SessionCoordinator::SessionCoordinator(SessionModel &model, QString gitExecutable, QObject *parent)
-    : QObject(parent), d(std::make_unique<State>(*this, model, std::move(gitExecutable))) {}
+SessionCoordinator::SessionCoordinator(SessionStore &store, git::GitRunners git, QThreadPool &workers, QObject *parent)
+    : QObject(parent), d(std::make_unique<State>(*this, store, std::move(git), workers))
+{
+    connect(&store, &SessionStore::fileChanged, this, [this](int) { d->schedule(); });
+}
 SessionCoordinator::~SessionCoordinator()
 {
-    // No GUI-thread wait. Workers own values/control only; watcher connections
-    // disappear with this QObject, and cannot call a destroyed coordinator.
+    // Cancellation refuses work not yet admitted. An admitted worker finishes
+    // mutation, inspection and durable observation before its own future ends.
+    // Drain only these jobs, never the supplied pool or unrelated work. Shutdown
+    // has no artificial deadline; interrupted Git intents reconcile on restart.
     for (const auto &[id, job] : d->jobs) {
         (void)id;
         job->control.cancel();
+        if (job->adapter) {
+            QObject::disconnect(job->adapter, nullptr, this, nullptr);
+            job->adapter->cancel();
+        }
+    }
+    for (const auto &[id, job] : d->jobs) {
+        (void)id;
+        if (job->future.isValid()) job->future.waitForFinished();
     }
 }
 
-bool SessionCoordinator::replaceSession(const QString &worktree, const QString &operation, std::vector<FileSession> files)
+bool SessionCoordinator::replaceSession(const QString &worktree, const QString &operation,
+                                        std::vector<FileSession> files)
 {
     return replaceSession(worktree, operation, std::move(files), false);
 }
 
-bool SessionCoordinator::completeSessionLoad(const TaskStamp &stamp, std::vector<FileSession> files)
+bool SessionCoordinator::completeRecoveryLoad(const TaskStamp &stamp, std::vector<FileSession> observed,
+                                              RecoveryRestore restore)
 {
     if (!d->owningThread() || d->replacing || d->disposition(stamp) != TaskDisposition::Current
-        || !d->model.canCompleteLoad(files)) return false;
-    return replaceSession(d->worktree, d->operation, std::move(files), true);
-}
-
-bool SessionCoordinator::completeRecoveryLoad(const TaskStamp &stamp, std::vector<FileSession> observed, RecoveryRestore restore)
-{
-    if (!d->owningThread() || d->replacing || d->disposition(stamp) != TaskDisposition::Current
-        || !d->model.canRestoreLoad()) return false;
+        || !d->store.canRestoreLoad())
+        return false;
     const bool recovered = restore.found;
     auto files = recovered ? std::move(restore.files) : std::move(observed);
-    if (!replaceSession(d->worktree, d->operation, std::move(files), true, recovered ? &restore : nullptr)) return false;
     // Inventory diagnostics describe stores we did not adopt. Only an adopted
     // store's per-file failures may block the loaded files' recovery.
-    return true;
+    return replaceSession(d->worktree, d->operation, std::move(files), true, recovered ? &restore : nullptr);
 }
 
 bool SessionCoordinator::replaceSession(const QString &worktree, const QString &operation,
                                         std::vector<FileSession> files, bool completingLoad, RecoveryRestore *restore)
 {
-    if (!d->owningThread() || d->replacing || (!completingLoad && d->model.hasPendingRecovery()) || operation.isEmpty()
+    if (!d->owningThread() || d->replacing) return false;
+    // Typed edits reach the journal before the session can move on, and a
+    // failed one keeps it here as pending input.
+    d->store.recordTyping();
+    if (((!completingLoad && d->store.hasPendingRecovery()) || d->store.recording()) || operation.isEmpty()
         || d->generation == std::numeric_limits<quint64>::max()
-        || files.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) return false;
+        || files.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+        return false;
     const QFileInfo root(worktree);
     const auto canonical = root.canonicalFilePath();
     if (!root.isDir() || canonical.isEmpty()) return false;
@@ -345,21 +440,21 @@ bool SessionCoordinator::replaceSession(const QString &worktree, const QString &
     d->worktree = QDir::cleanPath(canonical);
     d->operation = operation;
     cancelAll();
-    d->model.replaceFiles(std::move(files), restore);
+    d->store.replaceFiles(std::move(files), restore);
     d->replacing = false;
     Q_EMIT sessionChanged();
     return true;
 }
 quint64 SessionCoordinator::generation() const { return d->generation; }
 int SessionCoordinator::pendingTasks() const { return static_cast<int>(d->jobs.size()); }
-const std::vector<TaskCompletion> &SessionCoordinator::mutationOutcomes() const { return d->mutations; }
+void SessionCoordinator::setExecutionLimits(RecoveryJournal::Limits limits) { d->limits = limits; }
 TaskId SessionCoordinator::submit(const std::string &fileId, RevisionId expected, Work work, Completion completion)
 {
     if (!work) return 0;
     return d->enqueue(fileId, expected, false, std::move(work), {}, std::move(completion));
 }
-TaskId SessionCoordinator::submitMutation(const std::string &fileId, RevisionId expected, Work work,
-                                          Inspect inspect, Completion completion)
+TaskId SessionCoordinator::submitMutation(const std::string &fileId, RevisionId expected, Work work, Inspect inspect,
+                                          Completion completion)
 {
     if (!work || !inspect) return 0;
     return d->enqueue(fileId, expected, true, std::move(work), std::move(inspect), std::move(completion));
@@ -368,8 +463,8 @@ TaskId SessionCoordinator::submitGit(const std::string &fileId, RevisionId expec
                                      Completion completion)
 {
     if (!d->owningThread() || d->replacing) return 0;
-    const auto *file = d->model.file(fileId);
-    const bool mutation = request.operation == git::Operation::StageFile;
+    const auto *file = d->store.file(fileId);
+    const bool mutation = git::isMutation(request.operation);
     if (!file || (mutation && request.path != QByteArray::fromStdString(file->path()))) return 0;
     request.directory = d->worktree;
     request.sessionGeneration = d->generation;

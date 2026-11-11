@@ -1,4 +1,4 @@
-# Build through packaging/scripts/package-fedora.sh so both versions agree.
+# Build through packaging/scripts/package-release.sh --format fedora-rpm so both versions agree.
 %{!?branch_truce_version:%{error:branch_truce_version is required}}
 %{!?branch_truce_native_version:%{error:branch_truce_native_version is required}}
 %global app_id com.canpicasoft.branch-truce
@@ -25,6 +25,7 @@ BuildRequires:  cmake(Qt6Network)
 BuildRequires:  cmake(Qt6Qml)
 BuildRequires:  cmake(Qt6Quick)
 BuildRequires:  cmake(Qt6QuickControls2)
+BuildRequires:  cmake(Qt6LinguistTools)
 BuildRequires:  cmake(KF6Kirigami) >= 6.0
 BuildRequires:  cmake(KF6SyntaxHighlighting) >= 6.0
 

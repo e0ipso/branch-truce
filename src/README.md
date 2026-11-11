@@ -9,6 +9,7 @@ The desktop app separates the Qt-free merge engine from repository, storage and 
 | [git/](git/README.md) | Repository discovery, classification and bounded Git operations | inspect or change Git state through named operations |
 | [highlighting/](highlighting/README.md) | Syntax colours and word decorations | format comparison documents |
 | [mergetool/](mergetool/README.md) | Git launcher, local protocol and parent handoff | connect a waiting Git mergetool process to the app |
+| [problems/](problems/README.md) | Typed failures and their translated sentences | add a failure code that a layer reports |
 | [publication/](publication/README.md) | Reviewed result publication | coordinate destination writes with verified staging or handoff |
 | [recovery/](recovery/README.md) | Acknowledgment, replay and interrupted-mutation reconciliation | retain or restore unfinished session work |
 | [session/](session/README.md) | Conflict capture and background operation coordination | assemble snapshots or schedule guarded session work |

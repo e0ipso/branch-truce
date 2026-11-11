@@ -1,34 +1,128 @@
 /**
- * --analyze prints the next main release version, or nothing for a successful
- * no-release analysis. Errors propagate. Only this mode loads semantic-release
- * and requires a release-write token for its push preflight.
+ * Picks the release version the CI packages are built for.
  *
- * The default mode selects a validation revision/version as JSON. PRs need
- * neither credentials nor release analysis. Main selection requires analysis
- * of this exact revision, even when that analysis selected no release.
+ *   node packaging/ci/next-release.js --analyze
+ *   node packaging/ci/next-release.js
+ *
+ * --analyze prints the next main release version, or nothing for a successful
+ * no-release analysis. Only this mode loads semantic-release and requires a
+ * release-write token for its push preflight.
+ *
+ * Without arguments it prints the validation revision and version as JSON.
+ * PRs need neither credentials nor release analysis. Main selection requires
+ * analysis of this exact revision, even when that analysis selected no
+ * release. The version must be one packaging/scripts/native-version.sh accepts.
+ *
+ * Every path is relative to the checkout it runs in, the current directory:
+ * package.json, Git's HEAD and packaging/scripts/native-version.sh.
+ *
+ * Diagnostics go to stderr: usage and configuration errors exit 2, failed checks exit 1.
+ * Metadata commands have a 30-second deadline and a 4 MiB combined output limit.
  */
-import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { run } from './metadata-command.js';
 
-if (process.argv[2] === '--analyze') {
+const USAGE = 'usage: node packaging/ci/next-release.js [--analyze]';
+
+/** A bad invocation or configuration, reported with exit status 2. */
+export class UsageError extends Error {}
+
+/**
+ * The next release version semantic-release would publish, or '' for none.
+ * @returns {Promise<string>}
+ */
+export async function analyze() {
   const { default: semanticRelease } = await import('semantic-release');
   const result = await semanticRelease({ dryRun: true }, { stdout: process.stderr, stderr: process.stderr });
-  if (result?.nextRelease) process.stdout.write(`${result.nextRelease.version}\n`);
-} else {
-  if (process.argv.length !== 2) throw new Error('usage: next-release.js [--analyze]');
-  const event = process.env.BRANCH_TRUCE_CI_EVENT;
-  if (!['pull_request', 'push'].includes(event)) throw new Error(`Unsupported validation event ${event}`);
-  const revision = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  return result ? result.nextRelease.version : '';
+}
+
+/**
+ * Whether the checkout ROOT's packaging/scripts/native-version.sh, which owns the packageable
+ * version grammar, accepts VERSION.
+ * @param {string} version
+ * @param {string} root
+ * @param {typeof run} [command]
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {Promise<boolean>}
+ */
+export async function packageable(version, root, command = run, env = process.env) {
+  try {
+    await command(join(root, 'packaging/scripts/native-version.sh'), ['--style', 'tilde', version], { cwd: root, env });
+    return true;
+  } catch (error) {
+    if (error instanceof Error && 'status' in error && error.status === 2 && 'signal' in error && !error.signal) return false;
+    throw error;
+  }
+}
+
+/**
+ * @typedef {object} SelectionInput
+ * @property {string | undefined} event the GitHub event, pull_request or push
+ * @property {string} revision the checked out revision
+ * @property {string} [analyzedRevision] the revision the release analysis ran on
+ * @property {string} [analyzedVersion] the analysed release version, '' for no release
+ * @property {string} packageVersion the version in package.json
+ *
+ * @typedef {object} Selection
+ * @property {string} version the version the packages are built for
+ * @property {string} revision the revision they are built from
+ * @property {boolean} publish whether the run publishes them
+ */
+
+/**
+ * The validation selection for an event at a revision. A push needs the analysis of this
+ * revision; a pull request builds packageVersion without publishing. ACCEPTS decides which
+ * versions can be packaged. Throws UsageError for an unsupported event and Error otherwise.
+ * @param {SelectionInput} input
+ * @param {(version: string) => boolean | Promise<boolean>} accepts
+ * @returns {Promise<Selection>}
+ */
+export async function select({ event, revision, analyzedRevision, analyzedVersion, packageVersion }, accepts) {
+  if (event !== 'pull_request' && event !== 'push') throw new UsageError(`Unsupported validation event ${event}`);
   let candidate = '';
   if (event === 'push') {
-    if (process.env.BRANCH_TRUCE_ANALYZED_REVISION !== revision || process.env.BRANCH_TRUCE_ANALYZED_VERSION === undefined) {
+    if (analyzedRevision !== revision || analyzedVersion === undefined) {
       throw new Error('Release analysis is missing or belongs to another revision');
     }
-    candidate = process.env.BRANCH_TRUCE_ANALYZED_VERSION;
+    candidate = analyzedVersion;
   }
-  const version = candidate || JSON.parse(readFileSync('package.json', 'utf8')).version;
-  if (typeof version !== 'string' || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[A-Za-z]+(\.[1-9]\d*)?)?$/.test(version)) {
-    throw new Error(`Unsupported native package version ${version}`);
+  const version = candidate || packageVersion;
+  if (typeof version !== 'string' || !await accepts(version)) throw new Error(`Unsupported native package version ${version}`);
+  return { version, revision, publish: Boolean(candidate) };
+}
+
+/**
+ * @param {string[]} argv
+ * @param {string} root
+ * @param {NodeJS.ProcessEnv} env
+ * @param {typeof run} [command]
+ */
+export async function main(argv, root, env, command = run) {
+  if (argv.length === 1 && (argv[0] === '-h' || argv[0] === '--help')) {
+    process.stdout.write(`${USAGE}\n`);
+  } else if (argv.length === 1 && argv[0] === '--analyze') {
+    const version = await analyze();
+    if (version) process.stdout.write(`${version}\n`);
+  } else if (argv.length === 0) {
+    const selection = await select({
+      event: env.BRANCH_TRUCE_CI_EVENT,
+      revision: await command('git', ['rev-parse', 'HEAD'], { cwd: root, env }),
+      analyzedRevision: env.BRANCH_TRUCE_ANALYZED_REVISION,
+      analyzedVersion: env.BRANCH_TRUCE_ANALYZED_VERSION,
+      packageVersion: JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version,
+    }, version => packageable(version, root, command, env));
+    process.stdout.write(`${JSON.stringify(selection)}\n`);
+  } else {
+    throw new UsageError(USAGE);
   }
-  process.stdout.write(`${JSON.stringify({ version, revision, publish: Boolean(candidate) })}\n`);
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main(process.argv.slice(2), process.cwd(), process.env).catch(error => {
+    process.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    if (process.exitCode !== 130 && process.exitCode !== 143) process.exitCode = error instanceof UsageError ? 2 : 1;
+  });
 }

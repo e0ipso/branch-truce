@@ -7,6 +7,8 @@ import struct
 import subprocess
 import zlib
 
+from processes import run
+
 REFERENCE = Path(__file__).resolve().parent / 'reference'
 PATHS = ['src/net/retry.cpp', 'docs/release-notes.md', 'assets/logo.png']
 
@@ -15,9 +17,15 @@ def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+class GitError(RuntimeError):
+    """A fixture Git command failed. The message carries the command, status and stderr."""
+
+
 def reference_bytes(name):
-    row = next(r for r in json.loads((REFERENCE / 'provenance.json').read_text())['files']
-               if r['file'] == name)
+    provenance = REFERENCE / 'provenance.json'
+    row = next((r for r in json.loads(provenance.read_text())['files'] if r['file'] == name), None)
+    if row is None:
+        raise KeyError(f'{name} is not listed in {provenance}')
     data = (REFERENCE / name).read_bytes()
     if len(data) != row['bytes'] or hashlib.sha256(data).hexdigest() != row['sha256']:
         raise ValueError(f'Pinned reference changed: {name}')
@@ -43,8 +51,15 @@ def git(repo, *args, check=True):
                GIT_AUTHOR_NAME='Branch Truce Fixture', GIT_AUTHOR_EMAIL='fixture@example.invalid',
                GIT_COMMITTER_NAME='Branch Truce Fixture', GIT_COMMITTER_EMAIL='fixture@example.invalid',
                GIT_AUTHOR_DATE='2000-01-01T00:00:00+0000', GIT_COMMITTER_DATE='2000-01-01T00:00:00+0000')
-    return subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.attributesFile=/dev/null', '-C', str(repo), *args],
-                          env=env, capture_output=True, check=check)
+    try:
+        result = run(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.attributesFile=/dev/null', '-C', str(repo), *args], env=env)
+    except subprocess.SubprocessError as error:
+        diagnostic = (getattr(error, 'stderr', b'') or b'').decode(errors='replace').strip()
+        raise GitError(f'git {" ".join(args)} in {repo}: {error}: {diagnostic}') from error
+    if check and result.returncode:
+        raise GitError(f'git {" ".join(args)} in {repo} exited {result.returncode}: '
+                       + result.stderr.decode(errors='replace').strip())
+    return result
 
 
 def make_fixture(root):

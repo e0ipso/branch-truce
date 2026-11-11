@@ -1,31 +1,56 @@
 add_executable(branch_truce_core_smoke core/BuildSmoke.cpp)
 target_compile_definitions(branch_truce_core_smoke PRIVATE
     BRANCH_TRUCE_EXPECTED_VERSION="${BRANCH_TRUCE_RESOLVED_VERSION}")
-target_link_libraries(branch_truce_core_smoke PRIVATE branch_truce_core branch_truce_build_options)
+target_link_libraries(branch_truce_core_smoke PRIVATE branch_truce_build_info branch_truce_build_options)
 add_test(NAME core.build-smoke COMMAND branch_truce_core_smoke)
 add_test(NAME core.version-resolution
     COMMAND "${CMAKE_COMMAND}"
         "-DBRANCH_TRUCE_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
         "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/version-tests"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/core/VersionTests.cmake")
+add_test(NAME core.include-boundary
+    COMMAND "${CMAKE_COMMAND}" "-DCORE_DIR=${PROJECT_SOURCE_DIR}/src/core"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/core/IncludeBoundaryTests.cmake")
+set_tests_properties(core.include-boundary PROPERTIES TIMEOUT 30 LABELS unit)
+add_test(NAME app.layer-boundary
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/app/LayerBoundaryTests.cmake")
+set_tests_properties(app.layer-boundary PROPERTIES TIMEOUT 30 LABELS unit)
 add_test(NAME core.native-version
     COMMAND "${CMAKE_COMMAND}"
         "-DBRANCH_TRUCE_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/core/NativeVersionTests.cmake")
-add_executable(branch_truce_session_tests core/SessionStateTests.cpp)
-target_include_directories(branch_truce_session_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(branch_truce_session_tests PRIVATE branch_truce_core branch_truce_build_options)
-# Reject matrix-sized allocations only while the correspondence resource fixture runs.
-target_link_options(branch_truce_session_tests PRIVATE "LINKER:--wrap=_Znwm")
-add_test(NAME core.session-state COMMAND branch_truce_session_tests)
-add_executable(branch_truce_correspondence_fixtures core/CorrespondenceCommandFixtures.cpp)
-target_include_directories(branch_truce_correspondence_fixtures PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(branch_truce_correspondence_fixtures PRIVATE branch_truce_core branch_truce_build_options)
-add_test(NAME core.correspondence-fixtures COMMAND branch_truce_correspondence_fixtures)
-add_executable(branch_truce_word_differences_tests core/WordDifferencesTests.cpp)
-target_include_directories(branch_truce_word_differences_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(branch_truce_word_differences_tests PRIVATE branch_truce_core branch_truce_build_options)
-add_test(NAME core.word-differences COMMAND branch_truce_word_differences_tests)
+# Skipped, not passed, on a host with none of dpkg, rpm and vercmp to check the order.
+set_tests_properties(core.native-version PROPERTIES TIMEOUT 60 LABELS unit SKIP_REGULAR_EXPRESSION "SKIPPED: ")
+# Fixture supervision stays Qt-free, independently of the engine's cases.
+add_executable(branch_truce_fixture_process_tests fixtures/FixtureProcessTests.cpp)
+target_include_directories(branch_truce_fixture_process_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(branch_truce_fixture_process_tests PRIVATE branch_truce_build_options)
+add_test(NAME fixtures.process COMMAND branch_truce_fixture_process_tests)
+set_tests_properties(fixtures.process PROPERTIES TIMEOUT 60 LABELS unit)
+# Engine unit tests: one executable per source file, Qt-free and without a display.
+function(branch_truce_add_core_test name source)
+    string(REPLACE "." "_" target "branch_truce_${name}_tests")
+    string(REPLACE "-" "_" target "${target}")
+    add_executable(${target} ${source})
+    target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(${target} PRIVATE branch_truce_core branch_truce_build_options)
+    add_test(NAME core.${name} COMMAND ${target})
+    set_tests_properties(core.${name} PROPERTIES TIMEOUT 60 LABELS unit)
+endfunction()
+branch_truce_add_core_test(file-session core/FileSessionTests.cpp)
+branch_truce_add_core_test(conflict-markers core/ConflictMarkersTests.cpp)
+branch_truce_add_core_test(correspondence core/CorrespondenceTests.cpp)
+branch_truce_add_core_test(editing-commands core/EditingCommandsTests.cpp)
+branch_truce_add_core_test(combinations core/CombinationTests.cpp)
+branch_truce_add_core_test(bulk-editing core/BulkEditingTests.cpp)
+branch_truce_add_core_test(marker-editing core/MarkerEditingTests.cpp)
+branch_truce_add_core_test(diff3-editing core/Diff3EditingTests.cpp)
+branch_truce_add_core_test(resource-limits core/ResourceLimitsTests.cpp)
+branch_truce_add_core_test(allocation-failure core/AllocationFailureTests.cpp)
+branch_truce_add_core_test(word-differences core/WordDifferencesTests.cpp)
+# The harness every suite shares: failure messages, deferred failures, skips and the case filter.
+branch_truce_add_core_test(test-harness core/TestHarnessTests.cpp)
 find_program(BASH_EXECUTABLE bash REQUIRED)
 add_test(NAME tooling.icon-name-collection
     COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
@@ -35,24 +60,58 @@ set_tests_properties(tooling.icon-name-collection PROPERTIES TIMEOUT 30)
 add_test(NAME lifecycle.cli-guards
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/SetupGuards.sh")
 set_tests_properties(lifecycle.cli-guards PROPERTIES TIMEOUT 30)
-# Entries that start the real binary or Qt Quick run through this wrapper. It gives them a private
-# HOME and XDG directories, removes those afterwards and fails the run when it created anything
-# under the recovery root of the invoking user's real data directory.
+add_test(NAME lifecycle.hook-installer
+    COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/HookInstaller.sh")
+set_tests_properties(lifecycle.hook-installer PROPERTIES TIMEOUT 30)
+# Every app, ui, acceptance and Git entry runs through this wrapper. It gives them a private HOME and
+# XDG directories, removes those afterwards and fails the run when it created anything under the
+# recovery root of the invoking user's real data directory. No suite redirects them itself.
 set(private_xdg "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/with-private-xdg.sh")
+# One test executable from one source file, registered as one CTest entry with the shared defaults:
+# a 60 s TIMEOUT, the LABELS "unit", and exit status 77 reported as skipped. LIBS are the libraries
+# under test, DEPENDS targets it runs and ARGS the arguments after the executable. Faults go in
+# through the product's seams, such as storage::FileSystem. PRIVATE_XDG runs it through
+# with-private-xdg.sh. WILL_FAIL marks a case that documents a known defect, so CTest reports it
+# once it starts to pass.
+function(branch_truce_add_unit_test name source)
+    cmake_parse_arguments(PARSE_ARGV 2 unit "PRIVATE_XDG;WILL_FAIL" "TIMEOUT" "LIBS;DEPENDS;ARGS;LABELS")
+    string(REGEX REPLACE "[.-]" "_" target "branch_truce_${name}_tests")
+    add_executable(${target} ${source})
+    target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(${target} PRIVATE ${unit_LIBS} branch_truce_build_options)
+    if(unit_DEPENDS)
+        add_dependencies(${target} ${unit_DEPENDS})
+    endif()
+    set(command $<TARGET_FILE:${target}> ${unit_ARGS})
+    if(unit_PRIVATE_XDG)
+        set(command ${private_xdg} ${command})
+    endif()
+    if(NOT unit_TIMEOUT)
+        set(unit_TIMEOUT 60)
+    endif()
+    if(NOT unit_LABELS)
+        set(unit_LABELS unit)
+    endif()
+    add_test(NAME ${name} COMMAND ${command})
+    set_tests_properties(${name} PROPERTIES TIMEOUT ${unit_TIMEOUT} LABELS "${unit_LABELS}" SKIP_RETURN_CODE 77)
+    if(unit_WILL_FAIL)
+        set_tests_properties(${name} PROPERTIES WILL_FAIL TRUE)
+    endif()
+endfunction()
 add_test(NAME lifecycle.private-xdg-isolation
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/PrivateXdgIsolation.sh")
 set_tests_properties(lifecycle.private-xdg-isolation PROPERTIES TIMEOUT 30)
 # Native helper contracts run without container or package-manager mutations.
-foreach(native_check IN ITEMS NativeIntegration DebianPreflight FedoraPackaging ArchPackaging)
+foreach(native_check IN ITEMS NativeIntegration DebianPreflight FedoraPackaging ArchPackaging PackageAdapters)
     add_test(NAME packaging.${native_check}
         COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/${native_check}.sh")
     set_tests_properties(packaging.${native_check} PROPERTIES TIMEOUT 30)
 endforeach()
 
-# Host side of the .deb build and inspection scripts against a stub container engine.
-add_test(NAME packaging.artifact-tooling
-    COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ArtifactTooling.sh")
-set_tests_properties(packaging.artifact-tooling PROPERTIES TIMEOUT 30)
+# Real ccache relocation, invalidation and fallback on small fixtures; skipped without ccache.
+add_test(NAME packaging.compiler-cache
+    COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/CompilerCache.sh")
+set_tests_properties(packaging.compiler-cache PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
 # The CI fixture checks that test stages list every runtime package dependency.
 add_test(NAME packaging.ci-test-stage-depends
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/CiTestStageDepends.sh")
@@ -66,7 +125,7 @@ set_tests_properties(packaging.provisioning-depends PROPERTIES TIMEOUT 30)
 # reported as skipped, when jq or python3 is missing.
 add_test(NAME packaging.installed-validation-tooling
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/InstalledValidationTooling.sh")
-set_tests_properties(packaging.installed-validation-tooling PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+set_tests_properties(packaging.installed-validation-tooling PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 # Native replay tooling uses only Python's standard library. Its Qt driver has a
 # separate build under tools/native-replay and is never linked into the app.
 find_package(Python3 QUIET COMPONENTS Interpreter)
@@ -88,68 +147,60 @@ if(Python3_Interpreter_FOUND)
     endif()
 endif()
 if(BRANCH_TRUCE_BUILD_DESKTOP)
-    add_executable(branch_truce_text_format_tests storage/TextFormatTests.cpp)
-    target_include_directories(branch_truce_text_format_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_text_format_tests PRIVATE branch_truce_storage branch_truce_build_options)
-    add_test(NAME storage.text-format COMMAND branch_truce_text_format_tests)
-
-    add_executable(branch_truce_recovery_tests storage/RecoveryStoreTests.cpp)
-    target_include_directories(branch_truce_recovery_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_recovery_tests PRIVATE branch_truce_storage branch_truce_build_options)
-    target_link_options(branch_truce_recovery_tests PRIVATE "LINKER:--wrap=fsync")
-    add_test(NAME storage.recovery-store COMMAND branch_truce_recovery_tests)
-
-    add_executable(branch_truce_destination_tests storage/DestinationWriterTests.cpp)
-    target_include_directories(branch_truce_destination_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_destination_tests PRIVATE branch_truce_storage branch_truce_build_options)
-    # Faults and exchange races are intercepted only in this test executable.
-    target_link_options(branch_truce_destination_tests PRIVATE
-        "LINKER:--wrap=write,--wrap=fsync,--wrap=renameat2,--wrap=unlinkat,--wrap=geteuid")
-    add_test(NAME storage.destination-writer COMMAND branch_truce_destination_tests)
-    set_tests_properties(storage.destination-writer PROPERTIES TIMEOUT 30)
-
-    add_executable(branch_truce_model_tests app/SessionModelTests.cpp)
-    target_include_directories(branch_truce_model_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_model_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    target_link_options(branch_truce_model_tests PRIVATE "LINKER:--wrap=fsync")
-    add_test(NAME app.session-model COMMAND branch_truce_model_tests)
-
-    add_executable(branch_truce_text_change_tests app/TextChangeTests.cpp)
-    target_include_directories(branch_truce_text_change_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_text_change_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    add_test(NAME app.text-change COMMAND branch_truce_text_change_tests)
-
-    add_executable(branch_truce_navigation_targets_tests app/NavigationTargetsTests.cpp)
-    target_include_directories(branch_truce_navigation_targets_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_navigation_targets_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    add_test(NAME app.navigation-targets COMMAND branch_truce_navigation_targets_tests)
-
-    add_executable(branch_truce_conflict_capture_tests app/ConflictCaptureTests.cpp)
-    target_include_directories(branch_truce_conflict_capture_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_conflict_capture_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    add_test(NAME app.conflict-capture COMMAND branch_truce_conflict_capture_tests)
-
-    add_executable(branch_truce_recovery_boundary_tests app/RecoveryBoundaryFaultTests.cpp)
-    target_include_directories(branch_truce_recovery_boundary_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_recovery_boundary_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    target_link_options(branch_truce_recovery_boundary_tests PRIVATE "LINKER:--wrap=fsync")
-    add_test(NAME app.recovery-boundary-faults COMMAND branch_truce_recovery_boundary_tests)
-    set_tests_properties(app.recovery-boundary-faults PROPERTIES TIMEOUT 60)
-
-    add_executable(branch_truce_recovery_record_tests app/RecoveryRecordTests.cpp)
-    target_include_directories(branch_truce_recovery_record_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_recovery_record_tests PRIVATE branch_truce_controller branch_truce_storage
-        branch_truce_build_options)
-    target_compile_definitions(branch_truce_recovery_record_tests PRIVATE
-        BRANCH_TRUCE_RECOVERY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/recovery")
-    add_test(NAME app.recovery-record COMMAND branch_truce_recovery_record_tests)
+    branch_truce_add_unit_test(storage.text-format storage/TextFormatTests.cpp LIBS branch_truce_storage)
+    branch_truce_add_unit_test(storage.recovery-store storage/RecoveryStoreTests.cpp LIBS branch_truce_storage)
+    branch_truce_add_unit_test(recovery.resources storage/RecoveryResourceTests.cpp
+        LIBS branch_truce_recovery PRIVATE_XDG)
+    # Faults and exchange races go in through the snapshot's FileSystem. Its read-only cases skip
+    # when it runs as root, which can write anyway.
+    branch_truce_add_unit_test(storage.destination-writer storage/DestinationWriterTests.cpp
+        LIBS branch_truce_storage TIMEOUT 30)
 
     find_package(Qt6 6.6 REQUIRED COMPONENTS Test QuickTest)
-    add_executable(branch_truce_comparison_tests app/ComparisonViewTests.cpp)
+    if(Python3_Interpreter_FOUND)
+        add_library(branch_truce_native_replay_driver MODULE "${CMAKE_CURRENT_SOURCE_DIR}/../tools/native-replay/Driver.cpp")
+        target_link_libraries(branch_truce_native_replay_driver PRIVATE
+            Qt6::Core Qt6::Gui Qt6::Quick Qt6::QuickControls2 Qt6::Network Qt6::Test branch_truce_build_options)
+        add_test(NAME tooling.native-driver-main
+            COMMAND ${private_xdg} "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/NativeDriverIntegration.py"
+                --app $<TARGET_FILE:branch-truce> --driver $<TARGET_FILE:branch_truce_native_replay_driver>)
+        set_tests_properties(tooling.native-driver-main PROPERTIES TIMEOUT 120 LABELS tooling)
+    endif()
+    # The app suites build sessions whose default recovery store, mergetool socket and Qt settings
+    # live under the XDG directories, so every one runs through with-private-xdg.sh.
+    branch_truce_add_unit_test(app.session-model app/SessionModelTests.cpp LIBS branch_truce_controller
+        PRIVATE_XDG LABELS app)
+    # Its process-exit case starts this executable again as the child that exits.
+    branch_truce_add_unit_test(app.session-recovery app/SessionRecoveryTests.cpp LIBS branch_truce_controller
+        PRIVATE_XDG TIMEOUT 120 LABELS app)
+    branch_truce_add_unit_test(app.command-guard app/CommandGuardTests.cpp LIBS branch_truce_controller
+        PRIVATE_XDG LABELS app)
+    branch_truce_add_unit_test(app.problem-text app/ProblemTextTests.cpp LIBS branch_truce_controller
+        PRIVATE_XDG LABELS app)
+    branch_truce_add_unit_test(app.selected-file app/SelectedFileTests.cpp LIBS branch_truce_controller Qt6::Test
+        PRIVATE_XDG LABELS app)
+    # Joined comparison presentation and revision-bound targets.
+    branch_truce_add_unit_test(app.comparison-presentation app/ComparisonPresentationTests.cpp
+        LIBS branch_truce_controller branch_truce_uiplugin Qt6::Test PRIVATE_XDG LABELS app)
+    branch_truce_add_unit_test(app.text-change app/TextChangeTests.cpp LIBS branch_truce_controller
+        PRIVATE_XDG LABELS app)
+    branch_truce_add_unit_test(app.navigation-targets app/NavigationTargetsTests.cpp LIBS branch_truce_controller
+        PRIVATE_XDG LABELS app)
+    branch_truce_add_unit_test(app.conflict-capture app/ConflictCaptureTests.cpp LIBS branch_truce_controller
+        PRIVATE_XDG LABELS app)
+    branch_truce_add_unit_test(app.recovery-boundary-faults app/RecoveryBoundaryFaultTests.cpp
+        LIBS branch_truce_controller PRIVATE_XDG LABELS app)
+    branch_truce_add_unit_test(app.recovery-record app/RecoveryRecordTests.cpp
+        LIBS branch_truce_controller branch_truce_storage PRIVATE_XDG LABELS app)
+
+    # One executable from the comparison view's feature files; ComparisonViewTests.cpp selects the groups.
+    add_executable(branch_truce_comparison_tests app/ComparisonViewTests.cpp app/ComparisonLayoutTests.cpp
+        app/ComparisonEditingTests.cpp app/ComparisonTextTests.cpp app/ComparisonMarkTests.cpp
+        app/ComparisonFoldingTests.cpp app/ComparisonNavigationTests.cpp app/ComparisonSessionTests.cpp
+        app/ComparisonBoundaryTests.cpp)
     target_include_directories(branch_truce_comparison_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_comparison_tests PRIVATE branch_truce_controller branch_truce_uiplugin
         Qt6::Widgets Qt6::QuickControls2 Qt6::Network Qt6::Test Qt6::QuickTest branch_truce_build_options)
-    target_link_options(branch_truce_comparison_tests PRIVATE "LINKER:--wrap=fsync")
     # The executable takes "scenes" or "boundary"; with no argument it runs both groups.
     # "display" reruns the result viewport cases on a real display and is not a ctest entry:
     #   QT_QPA_PLATFORM=wayland tests/with-private-xdg.sh build/desktop/tests/branch_truce_comparison_tests display
@@ -157,43 +208,37 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # replaces XDG_RUNTIME_DIR. "boundary" is the two Backspace and Delete fixtures that edit 262144-byte lines and an
     # 8388608-byte buffer in the real editor. Scenes use the app's org.kde.desktop style.
     # Each timeout must be at least twice the slowest measured run.
-    add_test(NAME app.comparison-view COMMAND branch_truce_comparison_tests scenes)
-    add_test(NAME app.comparison-view-boundary COMMAND branch_truce_comparison_tests boundary)
-    set_tests_properties(app.comparison-view PROPERTIES TIMEOUT 450
+    add_test(NAME app.comparison-view COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_comparison_tests> scenes)
+    add_test(NAME app.comparison-view-boundary
+        COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_comparison_tests> boundary)
+    set_tests_properties(app.comparison-view PROPERTIES TIMEOUT 450 LABELS app
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_QUICK_CONTROLS_STYLE=org.kde.desktop")
-    set_tests_properties(app.comparison-view-boundary PROPERTIES TIMEOUT 60
+    set_tests_properties(app.comparison-view-boundary PROPERTIES TIMEOUT 60 LABELS app
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
-    add_executable(branch_truce_comparison_panes_tests app/ComparisonPanesTests.cpp)
-    target_include_directories(branch_truce_comparison_panes_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_comparison_panes_tests PRIVATE branch_truce_controller branch_truce_uiplugin
-        Qt6::Quick branch_truce_build_options)
-    add_test(NAME app.comparison-panes COMMAND branch_truce_comparison_panes_tests)
-    set_tests_properties(app.comparison-panes PROPERTIES TIMEOUT 60
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    branch_truce_add_unit_test(app.comparison-panes app/ComparisonPanesTests.cpp
+        LIBS branch_truce_controller branch_truce_uiplugin Qt6::Quick PRIVATE_XDG LABELS app)
+    set_tests_properties(app.comparison-panes PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
-    add_executable(branch_truce_passage_search_tests app/PassageSearchTests.cpp)
-    target_include_directories(branch_truce_passage_search_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_passage_search_tests PRIVATE branch_truce_controller branch_truce_uiplugin
-        Qt6::Quick Qt6::Test branch_truce_build_options)
-    add_test(NAME app.passage-search COMMAND branch_truce_passage_search_tests)
-    set_tests_properties(app.passage-search PROPERTIES TIMEOUT 60)
+    branch_truce_add_unit_test(app.passage-search app/PassageSearchTests.cpp
+        LIBS branch_truce_controller branch_truce_uiplugin Qt6::Quick Qt6::Test PRIVATE_XDG LABELS app)
 
-    add_executable(branch_truce_text_blocks_tests app/TextBlocksTests.cpp)
-    target_include_directories(branch_truce_text_blocks_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_text_blocks_tests PRIVATE branch_truce_controller branch_truce_uiplugin
-        Qt6::Quick Qt6::Test branch_truce_build_options)
-    add_test(NAME app.text-blocks COMMAND branch_truce_text_blocks_tests)
-    set_tests_properties(app.text-blocks PROPERTIES TIMEOUT 60
+    branch_truce_add_unit_test(app.text-blocks app/TextBlocksTests.cpp
+        LIBS branch_truce_controller branch_truce_uiplugin Qt6::Quick Qt6::Test PRIVATE_XDG LABELS app)
+    set_tests_properties(app.text-blocks PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    branch_truce_add_unit_test(app.pane-marks app/PaneMarksTests.cpp
+        LIBS branch_truce_controller branch_truce_uiplugin Qt6::Quick PRIVATE_XDG LABELS app)
+    set_tests_properties(app.pane-marks PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    branch_truce_add_unit_test(app.connector-bands app/ConnectorBandsTests.cpp
+        LIBS branch_truce_controller branch_truce_uiplugin Qt6::Quick PRIVATE_XDG LABELS app)
+    set_tests_properties(app.connector-bands PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
     # Built either way: with highlighting OFF it checks the plain highlighters.
-    add_executable(branch_truce_syntax_highlighting_tests app/SyntaxHighlightingTests.cpp)
-    target_include_directories(branch_truce_syntax_highlighting_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_syntax_highlighting_tests PRIVATE branch_truce_controller
-        branch_truce_uiplugin Qt6::Widgets Qt6::QuickControls2 Qt6::Test branch_truce_build_options)
-    add_test(NAME app.syntax-highlighting COMMAND branch_truce_syntax_highlighting_tests)
-    set_tests_properties(app.syntax-highlighting PROPERTIES TIMEOUT 60
+    branch_truce_add_unit_test(app.syntax-highlighting app/SyntaxHighlightingTests.cpp
+        LIBS branch_truce_controller branch_truce_uiplugin Qt6::Widgets Qt6::QuickControls2 Qt6::Test
+        PRIVATE_XDG LABELS app)
+    set_tests_properties(app.syntax-highlighting PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
     # The real Main scene under the app's style and icon themes: every icon name src/ui uses
@@ -203,7 +248,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # The icon names are collected at build time from src/ui and from the model, which names
     # each file's status icon.
     file(GLOB theme_icon_sources CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/ui/*.qml")
-    list(APPEND theme_icon_sources "${PROJECT_SOURCE_DIR}/src/app/SessionModel.cpp")
+    list(APPEND theme_icon_sources "${PROJECT_SOURCE_DIR}/src/app/FilePresentation.cpp")
     list(JOIN theme_icon_sources "|" theme_icon_files)
     set(theme_icon_list "${CMAKE_CURRENT_BINARY_DIR}/theme-icon-names.txt")
     add_custom_command(OUTPUT "${theme_icon_list}"
@@ -218,10 +263,10 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_link_libraries(branch_truce_theme_tests PRIVATE branch_truce_controller branch_truce_uiplugin
         Qt6::Widgets Qt6::QuickControls2 Qt6::Test branch_truce_build_options)
     add_dependencies(branch_truce_theme_tests branch_truce_theme_icon_names)
-    add_test(NAME ui.theme-icons COMMAND branch_truce_theme_tests icons "${theme_icon_list}")
-    add_test(NAME ui.theme-roles-dark COMMAND branch_truce_theme_tests roles BreezeDark)
-    add_test(NAME ui.theme-roles-light COMMAND branch_truce_theme_tests roles BreezeLight)
-    add_test(NAME ui.theme-cues COMMAND branch_truce_theme_tests cues)
+    add_test(NAME ui.theme-icons COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_theme_tests> icons "${theme_icon_list}")
+    add_test(NAME ui.theme-roles-dark COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_theme_tests> roles BreezeDark)
+    add_test(NAME ui.theme-roles-light COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_theme_tests> roles BreezeLight)
+    add_test(NAME ui.theme-cues COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_theme_tests> cues)
     set_tests_properties(ui.theme-icons ui.theme-roles-dark ui.theme-roles-light ui.theme-cues PROPERTIES
         TIMEOUT 60 LABELS ui SKIP_RETURN_CODE 77
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
@@ -229,45 +274,54 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # when either median CPU time exceeds its limit in docs/resource-limits.md, and skips when the
     # build has BRANCH_TRUCE_SYNTAX_HIGHLIGHTING off.
     # The timeout must be at least twice the slowest measured run.
-    add_test(NAME performance.highlighted-editor COMMAND branch_truce_theme_tests cost)
+    add_test(NAME performance.highlighted-editor COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_theme_tests> cost)
     # CPU medians must not compete with other CTest processes.
     set_tests_properties(performance.highlighted-editor PROPERTIES TIMEOUT 200 RUN_SERIAL TRUE LABELS "ui;performance"
         SKIP_RETURN_CODE 77 ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
     # PRD observable acceptance examples, driven through the real Main scene and a real Git merge.
     # Entry point and coverage notes: tests/acceptance/README.md.
-    add_executable(branch_truce_journey_acceptance_tests acceptance/JourneyAcceptanceTests.cpp)
+    add_executable(branch_truce_journey_acceptance_tests acceptance/JourneyAcceptanceTests.cpp
+        acceptance/JourneyScene.cpp acceptance/JourneySteps.cpp acceptance/WindowChecks.cpp
+        acceptance/ReviewJourneys.cpp acceptance/HandoffJourneys.cpp acceptance/WindowJourneys.cpp
+        acceptance/PlatformJourneys.cpp)
     target_include_directories(branch_truce_journey_acceptance_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_journey_acceptance_tests PRIVATE branch_truce_controller branch_truce_uiplugin
         Qt6::Widgets Qt6::QuickControls2 Qt6::Test branch_truce_build_options)
-    # The executable takes "review", "handoff" or "window"; with no argument it runs every journey.
+    # The executable takes a group name, "review", "handoff", "window" or "platform", and runs every
+    # journey without one. Each journey prints a TIME line with its wall time. Platform covers a
+    # right-to-left layout, a 1.5 scale factor, accessible roles and the keyboard focus chain.
     # Review covers panes, choices, editing, search and Save. Handoff covers staged drafts,
     # startup recovery and mergetool completion. Window covers fit, navigation and the close guard.
-    # Each timeout must be at least twice the slowest measured run.
-    add_test(NAME acceptance.journeys-review COMMAND branch_truce_journey_acceptance_tests review)
-    add_test(NAME acceptance.journeys-handoff COMMAND branch_truce_journey_acceptance_tests handoff)
-    add_test(NAME acceptance.journeys-window COMMAND branch_truce_journey_acceptance_tests window)
-    foreach(journey_group review handoff window)
+    # Each timeout must be at least twice the slowest measured run. The private XDG wrapper keeps
+    # Qt's own settings and caches out of the real home and fails the run if anything reaches the
+    # real recovery root; each journey's Git, recovery root and socket directory are its own.
+    foreach(journey_group review handoff window platform)
+        add_test(NAME acceptance.journeys-${journey_group}
+            COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_journey_acceptance_tests> ${journey_group})
         set_tests_properties(acceptance.journeys-${journey_group} PROPERTIES TIMEOUT 120 LABELS acceptance
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;LC_ALL=C.UTF-8")
     endforeach()
-    set_tests_properties(acceptance.journeys-window PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_QUICK_CONTROLS_STYLE=org.kde.desktop")
+    # The handoff group runs two more mergetool and recovery journeys than when 120 s was set.
+    set_tests_properties(acceptance.journeys-handoff PROPERTIES TIMEOUT 180)
+    set_tests_properties(acceptance.journeys-window PROPERTIES ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;LC_ALL=C.UTF-8;QT_QUICK_CONTROLS_STYLE=org.kde.desktop")
+    set_tests_properties(acceptance.journeys-platform PROPERTIES ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;LC_ALL=C.UTF-8;QT_QUICK_CONTROLS_STYLE=org.kde.desktop;QT_SCALE_FACTOR=1.5")
 
-    add_executable(branch_truce_startup_route_tests app/StartupRouteTests.cpp)
+    # One executable from the startup route files; StartupRouteTests.cpp selects the group, and each
+    # group is its own CTest entry so they can run in parallel.
+    add_executable(branch_truce_startup_route_tests app/StartupRouteTests.cpp app/StartupPublicationTests.cpp
+        app/StartupRecoveryTests.cpp app/StartupCaptureTests.cpp app/StartupLaunchTests.cpp)
     target_include_directories(branch_truce_startup_route_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_startup_route_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    # Fail one initial map in the real load worker; other files use the real constructor.
-    set(correspondence_constructor "_ZN12branch_truce17CorrespondenceMapC1EmRKNS_13FileSnapshotsENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt10shared_ptrIKNS_23CorrespondenceAlgorithmEE")
-    target_link_options(branch_truce_startup_route_tests PRIVATE "LINKER:--wrap=${correspondence_constructor}")
-    target_link_options(branch_truce_startup_route_tests PRIVATE "LINKER:--wrap=fsync")
-    # Record the thread of every recovery store read, which every replay starts with.
-    target_link_options(branch_truce_startup_route_tests PRIVATE
-        "LINKER:--wrap=_ZNK12branch_truce7storage13RecoveryStore4readEv")
     add_dependencies(branch_truce_startup_route_tests branch-truce)
-    add_test(NAME app.startup-routes COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_startup_route_tests> $<TARGET_FILE:branch-truce>)
-    # The timeout must be at least twice the slowest measured run.
-    set_tests_properties(app.startup-routes PROPERTIES TIMEOUT 1000)
+    foreach(startup_group publication recovery capture launch)
+        add_test(NAME app.startup-routes.${startup_group} COMMAND ${private_xdg}
+            $<TARGET_FILE:branch_truce_startup_route_tests> $<TARGET_FILE:branch-truce> ${startup_group})
+        # The whole suite's measured budget, which each group stays within.
+        set_tests_properties(app.startup-routes.${startup_group} PROPERTIES TIMEOUT 1000 LABELS app)
+    endforeach()
 
     # Preloaded into the real binary to report its style and icon theme state.
     add_library(branch_truce_appearance_probe MODULE fixtures/AppearanceProbe.cpp)
@@ -279,70 +333,78 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_dependencies(branch_truce_startup_appearance_tests branch-truce branch_truce_appearance_probe)
     add_test(NAME app.startup-appearance COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_startup_appearance_tests>
         $<TARGET_FILE:branch-truce> $<TARGET_FILE:branch_truce_appearance_probe>)
-    set_tests_properties(app.startup-appearance PROPERTIES TIMEOUT 90)
+    # A case whose host theme package is missing is reported as skipped; 77 means every case was.
+    set_tests_properties(app.startup-appearance PROPERTIES TIMEOUT 90 LABELS app SKIP_RETURN_CODE 77)
 
-    add_executable(branch_truce_resolution_tests app/ResolutionPublisherTests.cpp)
-    target_include_directories(branch_truce_resolution_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_resolution_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    target_link_options(branch_truce_resolution_tests PRIVATE "LINKER:--wrap=fsync" "LINKER:--wrap=renameat2")
-    add_test(NAME app.resolution COMMAND branch_truce_resolution_tests)
-    set_tests_properties(app.resolution PROPERTIES TIMEOUT 90)
+    # Mark resolved and the result commands through the application, on real repositories.
+    branch_truce_add_unit_test(app.mark-resolved app/MarkResolvedTests.cpp LIBS branch_truce_controller
+        PRIVATE_XDG TIMEOUT 90 LABELS app)
+    # The publisher alone, on a session store and coordinator without a window.
+    branch_truce_add_unit_test(publication.resolution-publisher app/ResolutionPublisherTests.cpp
+        LIBS branch_truce_controller PRIVATE_XDG LABELS app)
+
+    # The launcher protocol alone: messages, framing, the listener against misbehaving peers, paths and restore.
+    branch_truce_add_unit_test(mergetool.protocol app/MergetoolProtocolTests.cpp LIBS branch_truce_mergetool_protocol
+        PRIVATE_XDG TIMEOUT 60)
+
+    branch_truce_add_unit_test(mergetool.admission app/MergetoolAdmissionTests.cpp LIBS branch_truce_controller
+        PRIVATE_XDG TIMEOUT 30 LABELS app)
 
     add_executable(branch_truce_mergetool_tests app/MergetoolLauncherTests.cpp)
     target_include_directories(branch_truce_mergetool_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_mergetool_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    # Its --foreign-peer-launcher child reports another uid for SO_PEERCRED.
-    target_link_options(branch_truce_mergetool_tests PRIVATE "LINKER:--wrap=getsockopt")
     add_dependencies(branch_truce_mergetool_tests branch-truce)
     add_test(NAME app.mergetool-launcher COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_mergetool_tests> $<TARGET_FILE:branch-truce>)
     # The timeout must be at least twice the slowest measured run.
     set_tests_properties(app.mergetool-launcher PROPERTIES TIMEOUT 360)
 
-    # Installed /usr/bin/git runs `git mergetool` against the launcher and an in-process session.
-    add_executable(branch_truce_mergetool_parent_tests git/MergetoolParentTests.cpp)
-    target_include_directories(branch_truce_mergetool_parent_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_mergetool_parent_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    add_dependencies(branch_truce_mergetool_parent_tests branch-truce)
-    add_test(NAME git.mergetool-parent COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_mergetool_parent_tests> $<TARGET_FILE:branch-truce>)
+    # The fixture Git runs `git mergetool` against the launcher and an in-process session.
     # The timeout must be at least twice the slowest measured run.
-    set_tests_properties(git.mergetool-parent PROPERTIES TIMEOUT 450)
+    branch_truce_add_unit_test(git.mergetool-parent git/MergetoolParentTests.cpp LIBS branch_truce_controller
+        PRIVATE_XDG TIMEOUT 450 LABELS git DEPENDS branch-truce ARGS $<TARGET_FILE:branch-truce>)
 
-    add_executable(branch_truce_coordinator_tests app/SessionCoordinatorTests.cpp)
-    target_include_directories(branch_truce_coordinator_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_coordinator_tests PRIVATE branch_truce_controller Qt6::Test branch_truce_build_options)
-    add_test(NAME app.session-coordinator COMMAND branch_truce_coordinator_tests)
-    set_tests_properties(app.session-coordinator PROPERTIES TIMEOUT 30)
+    branch_truce_add_unit_test(app.revision-computation app/RevisionComputationTests.cpp
+        LIBS branch_truce_controller Qt6::Test PRIVATE_XDG LABELS app)
+    set_tests_properties(app.revision-computation PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software")
 
-    add_executable(branch_truce_git_tests git/GitAdapterTests.cpp)
-    target_include_directories(branch_truce_git_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_git_tests PRIVATE branch_truce_git branch_truce_build_options)
-    add_test(NAME git.adapter COMMAND branch_truce_git_tests)
-    add_test(NAME git.conflict-classification COMMAND branch_truce_git_tests --classification-only)
-    set_tests_properties(git.conflict-classification PROPERTIES TIMEOUT 30)
-    # The timeout must be at least twice the slowest measured run, including the Git operation deadline.
-    set_tests_properties(git.adapter PROPERTIES TIMEOUT 90)
+    branch_truce_add_unit_test(app.session-execution app/SessionExecutionTests.cpp
+        LIBS branch_truce_controller PRIVATE_XDG LABELS app)
 
-    # The standalone editor fixture checks native text selection, editing and scrolling without product targets.
-    set(editor_fixture "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/editor")
-    add_executable(branch_truce_editor_tests "${editor_fixture}/main.cpp")
-    target_link_libraries(branch_truce_editor_tests PRIVATE Qt6::Quick Qt6::QuickControls2 branch_truce_build_options)
-    qt_add_resources(branch_truce_editor_tests editor_scene PREFIX "/" BASE "${editor_fixture}"
-        FILES "${editor_fixture}/Editor.qml")
-    add_test(NAME editor.baseline COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_editor_tests> --baseline)
-    add_test(NAME editor.regression COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_editor_tests>)
-    set_tests_properties(editor.baseline editor.regression PROPERTIES TIMEOUT 30
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    branch_truce_add_unit_test(app.session-coordinator app/SessionCoordinatorTests.cpp
+        LIBS branch_truce_controller Qt6::Test PRIVATE_XDG TIMEOUT 30 LABELS app)
+
+    # The Git suites run real Git in fixture repositories. They run under the private HOME and XDG
+    # wrapper, and fixture Git reads only the fixture's global configuration.
+    # The tool `git mergetool` runs in the adapter's parent staging cases.
+    add_executable(branch_truce_parent_staging_fixture git/ParentStagingFixture.cpp)
+    target_include_directories(branch_truce_parent_staging_fixture PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(branch_truce_parent_staging_fixture PRIVATE branch_truce_git branch_truce_build_options)
+    # The timeout must be at least twice the slowest measured run.
+    branch_truce_add_unit_test(git.adapter git/GitAdapterTests.cpp LIBS branch_truce_git PRIVATE_XDG TIMEOUT 90
+        DEPENDS branch_truce_parent_staging_fixture ARGS $<TARGET_FILE:branch_truce_parent_staging_fixture>)
+    branch_truce_add_unit_test(git.conflict-classification git/ConflictClassifierTests.cpp LIBS branch_truce_git
+        PRIVATE_XDG TIMEOUT 30)
+    branch_truce_add_unit_test(git.text-conversion git/TextConversionTests.cpp LIBS branch_truce_git PRIVATE_XDG)
+    branch_truce_add_unit_test(git.parsing git/GitParsingTests.cpp LIBS branch_truce_git)
+    branch_truce_add_unit_test(git.user-config-isolation git/UserConfigIsolationTests.cpp LIBS branch_truce_git
+        PRIVATE_XDG)
 
     # Gate profile classifies outcomes. The evidence profile publishes timings.
-    add_executable(branch_truce_workload_measurements performance/WorkloadMeasurements.cpp)
-    target_link_libraries(branch_truce_workload_measurements PRIVATE branch_truce_core
-        branch_truce_storage branch_truce_git Qt6::Quick Qt6::QuickControls2 branch_truce_build_options)
+    # The editor workload loads the real Main scene, so the measurement links the controller and the UI.
+    add_executable(branch_truce_workload_measurements performance/WorkloadMeasurements.cpp performance/Workload.cpp
+        performance/Workers.cpp performance/EditorWorker.cpp performance/Supervisor.cpp performance/Report.cpp)
+    target_include_directories(branch_truce_workload_measurements PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(branch_truce_workload_measurements PRIVATE branch_truce_controller branch_truce_uiplugin
+        branch_truce_core branch_truce_storage branch_truce_git Qt6::Widgets Qt6::Quick Qt6::QuickControls2
+        branch_truce_build_options)
     target_compile_definitions(branch_truce_workload_measurements PRIVATE
-        "BRANCH_TRUCE_MEASUREMENT_BUILD=\"${CMAKE_BUILD_TYPE}\"")
-    qt_add_resources(branch_truce_workload_measurements workload_editor PREFIX "/" BASE "${editor_fixture}"
-        FILES "${editor_fixture}/Editor.qml")
+        "BRANCH_TRUCE_MEASUREMENT_BUILD=\"${CMAKE_BUILD_TYPE}\""
+        "BRANCH_TRUCE_SOURCE_DIR=\"${PROJECT_SOURCE_DIR}\""
+        "BRANCH_TRUCE_EVIDENCE_TSV=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/performance/evidence.tsv\"")
     add_test(NAME performance.workloads COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_workload_measurements> --profile gate)
-    # Wall-clock budgets must not compete with other CTest processes.
+    # The gate holds each completed sample to its wall-clock budget, four times it in a Debug
+    # build, so it must not compete with other CTest processes.
     set_tests_properties(performance.workloads PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE LABELS performance
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
@@ -363,4 +425,20 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_test(NAME desktop.startup COMMAND ${private_xdg} $<TARGET_FILE:branch-truce> --smoke-test)
     set_tests_properties(desktop.startup PROPERTIES TIMEOUT 30
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+endif()
+
+# Recovery continuation and aggregate discovery exercise their own domain/storage boundary.
+if(BRANCH_TRUCE_BUILD_DESKTOP)
+    branch_truce_add_unit_test(recovery.continuation recovery/RecoveryContinuationTests.cpp
+        LIBS branch_truce_session branch_truce_recovery PRIVATE_XDG)
+endif()
+
+# Stable destination reads and complete engine checkpoints have independent boundary cases.
+if(BRANCH_TRUCE_BUILD_DESKTOP)
+    branch_truce_add_unit_test(storage.destination-reader storage/DestinationReaderTests.cpp
+        LIBS branch_truce_storage PRIVATE_XDG)
+    branch_truce_add_unit_test(recovery.session-checkpoint recovery/SessionCheckpointTests.cpp
+        LIBS branch_truce_recovery PRIVATE_XDG)
+    branch_truce_add_unit_test(publication.large-file app/LargeFilePublicationTests.cpp
+        LIBS branch_truce_controller PRIVATE_XDG TIMEOUT 60)
 endif()

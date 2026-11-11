@@ -1,54 +1,65 @@
 // The result editor adapter journals text edits and connects native editing actions to file history.
 #pragma once
-#include <QtQml/qqmlregistration.h>
-#include "highlighting/SyntaxHighlighting.h"
+#include "Selection.h"
 #include "WordDifferenceDecorations.h"
+#include "highlighting/SyntaxHighlighting.h"
 #include <QColor>
 #include <QMetaObject>
 #include <QObject>
 #include <QPointer>
 #include <QString>
 #include <QVariantMap>
-#include <functional>
+#include <QtQml/qqmlregistration.h>
 #include <vector>
 
 class QTextDocument;
 
 namespace branch_truce {
 class FileSession;
-class SessionModel;
+class SessionStore;
 
 // The result editor, one QML TextArea, seen from C++. Only this class reads or
 // sets its properties and calls its methods by name. It captures native edits
-// as domain edits, loads the selected file's text, keeps the cursor and scroll
-// position across text replacements, and attaches syntax highlighting and
-// word-level differences to the result and source panes.
-class ResultEditorAdapter : public QObject {
+// of the file it shows as domain edits, loads that file's text, keeps the
+// cursor and scroll position across text replacements, and attaches syntax
+// highlighting and word-level differences to the result and source panes.
+// While an input method composes, it holds the selection. Key presses and
+// input method commits are typing; a cut, a paste or a drop is one edit.
+class ResultEditorAdapter : public QObject, public SelectionGuard {
     Q_OBJECT
     QML_ELEMENT
-    QML_UNCREATABLE("Owned by ApplicationController")
+    QML_UNCREATABLE("Owned by the application")
+    // Whether the result takes edits; the editor's readOnly binds to the inverse.
+    Q_PROPERTY(bool decorationPending READ decorationPending NOTIFY decorationPendingChanged)
+    Q_PROPERTY(bool editable READ editable NOTIFY editableChanged)
+    Q_PROPERTY(bool hasSelection READ hasSelection NOTIFY stateChanged)
+    Q_PROPERTY(bool canPaste READ canPaste NOTIFY stateChanged)
+    // Where the editor put a newly shown file: its first undecided region, in
+    // the keys of FileNavigator's target, with count 0 when it has none.
+    Q_PROPERTY(QVariantMap placement READ placement NOTIFY placed)
 public:
     enum class ClipboardAction { Copy, Cut, Paste, SelectAll };
     Q_ENUM(ClipboardAction)
-    // Where a newly loaded file puts its cursor: the keys of editorPlacement,
-    // with utf16Begin as the cursor when it is not negative.
-    using Placement = std::function<QVariantMap(const FileSession *file, const QString &loaded)>;
     struct Caret {
         int cursor = 0;
         int selectionStart = 0;
         int selectionEnd = 0;
     };
-    ResultEditorAdapter(SessionModel &files, std::function<QString()> selectedFileId, Placement placement,
-                        QObject *parent = nullptr);
+    explicit ResultEditorAdapter(const SessionStore &store, RevisionWorkers &workers, QObject *parent = nullptr);
 
-    void attach(QObject *editor);
-    void attachSource(QObject *editor);
-    void setSyntaxFileName(const QString &fileName);
-    void setSyntaxBackground(const QColor &background);
-    bool clipboard(ClipboardAction action);
-    // Loads the selected file's text, or its pending draft, into the editor.
-    void sync();
+    Q_INVOKABLE void attach(QObject *editor);
+    // Highlights a read-only source pane with the shown file's syntax.
+    Q_INVOKABLE void attachSource(QObject *editor);
+    // The Kirigami colour scheme background; its lightness picks the syntax theme.
+    Q_INVOKABLE void setSyntaxBackground(const QColor &background);
+    Q_INVOKABLE bool clipboard(branch_truce::ResultEditorAdapter::ClipboardAction action);
+    // Shows fileId's text, or its pending draft, and reloads it after a
+    // change. A newly shown file takes its syntax and its placement.
+    void show(const QString &fileId);
+    [[nodiscard]] QString fileId() const { return fileId_; }
+    [[nodiscard]] bool holdsSelection() const override { return composing(); }
 
+    [[nodiscard]] bool decorationPending() const { return words_.pending(); }
     [[nodiscard]] bool attached() const { return !editor_.isNull(); }
     // Whether the result takes edits: the selected file is supported, its recovery is
     // clear and the editor shows its text losslessly. The editor's readOnly binds to the
@@ -69,11 +80,13 @@ public:
 
     // Remember the cursor, selection and scroll position, and put them back
     // later if the editor still shows the same text of the same file.
-    void holdLocation();
-    void restoreLocation();
+    Q_INVOKABLE void holdLocation();
+    Q_INVOKABLE void restoreLocation();
 
 Q_SIGNALS:
-    // A native edit of the selected file, as editResult arguments.
+    // Text typed into the selected file, as typeResult arguments.
+    void typed(const QString &fileId, const QString &revision, int begin, int end, const QString &replacement);
+    // A cut, paste or drop in the selected file, as editResult arguments.
     void edited(const QString &fileId, const QString &revision, int begin, int end, const QString &replacement);
     void editActionRequested(const QString &name);
     // The editor text no longer matched the file's current revision.
@@ -84,8 +97,10 @@ Q_SIGNALS:
     void loadRefused(const QString &message);
     // A newly selected file was loaded and its cursor moved to placement().
     void placed();
-    // editable(), hasSelection() or canPaste() may have changed.
+    // hasSelection() or canPaste() may have changed.
     void stateChanged();
+    void editableChanged();
+    void decorationPendingChanged();
 
 private:
     struct Location {
@@ -99,17 +114,23 @@ private:
         qreal contentY = 0;
         bool hasViewport = false;
     };
+    // How the editor changed its text.
+    enum class Input { Typing, Edit };
     bool eventFilter(QObject *watched, QEvent *event) override;
-    void capture();
+    void capture(Input input = Input::Edit);
+    // Loads the shown file's text, or its pending draft, into the editor.
+    void sync();
     void setEditable(bool editable);
     void place(const FileSession *file, const QString &loaded);
     [[nodiscard]] Location location() const;
     void keepPlace(const Location &place, const QString &before, const QString &after);
-    [[nodiscard]] const FileSession *selectedFile() const;
+    [[nodiscard]] const FileSession *shownFile() const;
+    // The first undecided region of a newly shown file, whose loaded text is
+    // its current revision; offsets of a pending draft would differ.
+    [[nodiscard]] QVariantMap firstUndecidedPlacement(const FileSession *file, const QString &loaded) const;
 
-    SessionModel &files_;
-    std::function<QString()> selectedFileId_;
-    Placement placementFor_;
+    const SessionStore &store_;
+    QString fileId_;
     SyntaxHighlighting syntax_;
     WordDifferenceDecorations words_;
     QPointer<QObject> editor_;

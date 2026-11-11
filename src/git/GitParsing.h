@@ -17,10 +17,9 @@ inline bool relativeFile(const QByteArray &path)
 }
 inline bool objectId(const QByteArray &id)
 {
-    return (id.size() == 40 || id.size() == 64)
-        && std::all_of(id.cbegin(), id.cend(), [](char c) {
-            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-        });
+    return (id.size() == 40 || id.size() == 64) && std::all_of(id.cbegin(), id.cend(), [](char c) {
+               return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+           });
 }
 inline std::optional<QList<IndexEntry>> parseIndex(const QByteArray &bytes)
 {
@@ -37,7 +36,8 @@ inline std::optional<QList<IndexEntry>> parseIndex(const QByteArray &bytes)
         if (fields.size() != 3 || fields[0].size() != 6
             || !std::all_of(fields[0].cbegin(), fields[0].cend(), [](char c) { return c >= '0' && c <= '7'; })
             || !objectId(fields[1]) || fields[2].size() != 1 || fields[2][0] < '0' || fields[2][0] > '3'
-            || !relativeFile(path)) return std::nullopt;
+            || !relativeFile(path))
+            return std::nullopt;
         entries.append({path, fields[0], fields[1], static_cast<unsigned int>(fields[2][0] - '0')});
         offset = end + 1;
     }

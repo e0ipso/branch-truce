@@ -6,15 +6,23 @@
 
 namespace branch_truce::git {
 enum class ConflictSupport {
-    SupportedText, MissingSide, ModeConflict, UnsupportedType, TopologyConflict,
-    UnsupportedText, UnsupportedConversion, UnverifiedSource, UnsupportedOperation,
-    InspectionFailure, LoadFailure
+    SupportedText,
+    MissingSide,
+    ModeConflict,
+    UnsupportedType,
+    TopologyConflict,
+    UnsupportedText,
+    UnsupportedConversion,
+    UnverifiedSource,
+    UnsupportedOperation,
+    InspectionFailure,
+    LoadFailure
 };
 struct Conflict {
     QByteArray path; // Exact repository filename bytes, including unsupported paths.
     QList<IndexEntry> stages;
     ConflictSupport support = ConflictSupport::InspectionFailure;
-    QString reason; // Empty only for supported text. Unsupported work stays outstanding.
+    Problem reason; // Empty only for supported text. Unsupported work stays outstanding.
     QByteArray mode; // Agreed stage-2/stage-3 mode, never inferred from the result.
     QList<ConvertedText> sources; // Present only after every available stage passes.
     std::optional<storage::TextDocument> result; // Preserves launch-time manual edits.
@@ -33,7 +41,7 @@ struct ConflictClassificationResult {
     Outcome outcome = Outcome::Rejected;
     RepositoryContext repository;
     QList<Conflict> conflicts;
-    QString diagnostic;
+    Problem problem;
 };
 
 // Read-only editing admission: discovery alone verifies operation identity, and
@@ -43,13 +51,16 @@ struct ConflictClassificationResult {
 class ConflictClassifier final : public QObject {
     Q_OBJECT
 public:
-    explicit ConflictClassifier(const QString &executable, QObject *parent = nullptr);
+    // Takes its discovery runner and its conversion's runner from runners.
+    explicit ConflictClassifier(const GitRunners &runners, QObject *parent = nullptr);
+    explicit ConflictClassifier(GitProgram program, QObject *parent = nullptr);
     ~ConflictClassifier() override;
     bool start(const ConflictClassificationRequest &request);
     void cancel();
     [[nodiscard]] bool busy() const;
 Q_SIGNALS:
     void finished(const branch_truce::git::ConflictClassificationResult &result);
+
 private:
     class State;
     std::unique_ptr<State> d;

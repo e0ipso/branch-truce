@@ -1,0 +1,148 @@
+#pragma once
+
+// Event-loop driving for the Qt suites. Nothing here lets an exception unwind through Qt: a
+// predicate that throws, or an EXPECT that fails in a slot, stops the wait and the failure is
+// raised after the loop returns.
+//
+//   waitUntil(ready, detail)         runs the loop until ready() holds; detail may be a callable
+//                                    that describes the state when the wait fails.
+//   AsyncCompletion(service, signal) drives one request of a start()/busy()/finished() service.
+//   WhenCreated(path, action)        runs action from the event loop once a file appears.
+
+#include "TestHarness.h"
+
+#include <QCoreApplication>
+#include <QEventLoop>
+#include <QFileInfo>
+#include <QFileSystemWatcher>
+#include <QObject>
+#include <QTimer>
+
+#include <concepts>
+#include <exception>
+#include <functional>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace test_support {
+
+// How long a wait lasts before it fails, unless a case asks for longer.
+inline constexpr int kWaitDeadlineMs = 25000;
+// How long one asynchronous service request may take.
+inline constexpr int kRequestDeadlineMs = 10000;
+
+// Runs the event loop until `ready` returns true, re-evaluating it every `pulseMs`. Fails the case
+// with `describe()` after `deadlineMs`; build that message from the state at the deadline. Stops
+// early when ready() throws or an EXPECT fails, and raises that failure here.
+template <typename Predicate, std::invocable Describe>
+void waitUntil(Predicate ready, Describe describe, int deadlineMs = kWaitDeadlineMs, int pulseMs = 10)
+{
+    std::exception_ptr error;
+    bool satisfied = false;
+    const auto evaluate = [&] {
+        try {
+            satisfied = ready();
+        } catch (...) {
+            error = std::current_exception();
+        }
+        return satisfied || error || failurePending();
+    };
+    if (!evaluate()) {
+        QEventLoop loop;
+        QTimer deadline;
+        deadline.setSingleShot(true);
+        QTimer pulse;
+        pulse.setInterval(pulseMs);
+        QObject::connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
+        QObject::connect(&pulse, &QTimer::timeout, &loop, [&] {
+            if (evaluate()) loop.quit();
+        });
+        deadline.start(deadlineMs);
+        pulse.start();
+        loop.exec();
+    }
+    if (error) std::rethrow_exception(error);
+    throwPending();
+    if (!satisfied) throw Failure(std::string(describe()));
+}
+
+// As above, failing with the fixed message `detail`.
+template <typename Predicate>
+void waitUntil(Predicate ready, const std::string &detail, int deadlineMs = kWaitDeadlineMs, int pulseMs = 10)
+{
+    waitUntil(std::move(ready), [&detail] { return detail; }, deadlineMs, pulseMs);
+}
+
+// Collects the results one service emits. run() checks the service's request contract: start()
+// accepts the request, the service stays busy, a second start() is refused without a result,
+// and exactly one result arrives asynchronously.
+template <typename Service, typename Result> class AsyncCompletion {
+public:
+    AsyncCompletion(Service &service, void (Service::*finished)(const Result &)) : service_(service)
+    {
+        QObject::connect(&service, finished, &loop_, [this](const Result &result) {
+            results.push_back(result);
+            loop_.quit();
+        });
+    }
+    AsyncCompletion(const AsyncCompletion &) = delete;
+    AsyncCompletion &operator=(const AsyncCompletion &) = delete;
+
+    // Waits for a result. Exactly one must have arrived, and one more pass of the event loop
+    // must not add another.
+    Result wait(int deadlineMs = kRequestDeadlineMs)
+    {
+        QTimer deadline;
+        deadline.setSingleShot(true);
+        QObject::connect(&deadline, &QTimer::timeout, &loop_, &QEventLoop::quit);
+        deadline.start(deadlineMs);
+        if (results.empty()) loop_.exec();
+        throwPending();
+        CHECK_EQ(results.size(), 1u);
+        CHECK(!service_.busy());
+        QCoreApplication::processEvents();
+        CHECK_EQ(results.size(), 1u);
+        return results.front();
+    }
+    template <typename Request> Result run(const Request &request, int deadlineMs = kRequestDeadlineMs)
+    {
+        CHECK(service_.start(request));
+        CHECK(service_.busy() && results.empty()); // Completion must be asynchronous.
+        CHECK(!service_.start(request)); // A busy refusal must not emit another result.
+        return wait(deadlineMs);
+    }
+
+    std::vector<Result> results;
+
+private:
+    Service &service_;
+    QEventLoop loop_;
+};
+
+// Calls `action` once, from the event loop, when `path` first exists. The directory is watched
+// through inotify, so a script's marker file is seen without polling.
+class WhenCreated {
+public:
+    WhenCreated(const QString &path, std::function<void()> action) : path_(path), action_(std::move(action))
+    {
+        CHECK(watcher_.addPath(QFileInfo(path).absolutePath()));
+        QObject::connect(&watcher_, &QFileSystemWatcher::directoryChanged, &watcher_, [this] { fire(); });
+        fire();
+    }
+
+private:
+    void fire()
+    {
+        if (done_ || !QFileInfo::exists(path_)) return;
+        done_ = true;
+        // It runs inside a Qt slot, so a failure is recorded rather than thrown.
+        contain(action_);
+    }
+    QString path_;
+    std::function<void()> action_;
+    QFileSystemWatcher watcher_;
+    bool done_ = false;
+};
+
+} // namespace test_support

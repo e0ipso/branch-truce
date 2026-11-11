@@ -55,23 +55,78 @@ result lines) memory for different buffers, including line, match and passage
 records. Each split releases its length rows before recursing. Binding keeps one
 line-start index per text and finds a paired line by binary search. Lines are
 interned, so long-line bytes are compared during interning rather than at each
-length calculation. Initial correspondence failure marks only that file session
-unreadable with a path-specific diagnostic, retaining its captured sources and
-launch result. Other files can finish loading. Allocation or representation
-failure during later edits still throws before a new session revision is
-published. There is no enforced file-size or latency limit. Representative
-measurements and a proposed envelope for large-file performance are in
-tests/fixtures/performance/evidence.md. Product output, line and recovery
-limits are unchanged.
+length calculation.
+
+`CorrespondenceAlgorithm` states the contract every implementation keeps: valid
+UTF-8 input inside the text envelope, a complete ordered partition, `Ambiguous`
+where equally good alignments disagree, no state between calls, and
+`std::bad_alloc` as the only failure. Choice sections and their decision IDs
+come from the passages an algorithm returns, so each implementation names
+itself with `identity()`. The recovery journal records that name with the
+launch capture, and replay refuses a journal another algorithm wrote rather
+than matching its decisions to different sections. `CorrespondenceMap` checks every text it
+aligns against that input contract before the algorithm sees it, and
+`FileSession` takes the algorithm it uses as an argument, with
+`ExactLineCorrespondence` as the default. tests/core/CorrespondenceTests.cpp runs
+the contract checks against the default and a minimal implementation.
+
+The limits in ResourceLimits.h bound the input: no line over `kMaxLineBytes`
+and no text over `kMaxRecoveryPayloadBytes`. A file whose result or captured
+sources hold more than `kLargeFileLines` lines opens only after the user
+confirms it, because alignment time grows with the product of line counts.
+Before allocating tokens or line records, `ExactLineCorrespondence` counts both
+texts. More than `kMaxIndexedLines` lines in either, or a product greater than
+`kMaxAlignmentCells`, yields one `Ambiguous` passage. Identical texts need no
+workspace. A map shares that cell budget across its different sources; a
+whole-buffer recomputation also charges its old-to-new comparison to it.
+The algorithm identity is `exact-line/2`; older journals are refused rather
+than replayed with different passages.
+
+Metadata has independent limits of 65536 entries and a conservative 16 MiB byte
+estimate. Choice construction preflights each differing passage's line picks
+and sections, reserving four entries per pick or section and 512 bytes plus
+capture identity lengths per entry for choices, indexes, decision identifiers
+and anchors. Non-conflicting targets preflight the same estimates against a
+separate budget before generating IDs. Anchor binding separately charges its actual identity lengths
+before copying them. Initial and replacement decision maps are bounded by
+entry count and aggregate identifier bytes before copying; initialization
+reserves the generated IDs before copying the initial map. Line indexes and
+supported edited results are capped at 65536 lines, independently of the text
+byte envelope. The 4000-line confirmation cannot waive these limits.
+
+If comparison metadata cannot be admitted, the file opens as `OutsideApp`
+with `MetadataTooLarge`. The current launch text, decisions and immutable raw
+and converted captures remain available through the read APIs, with support
+facts and the diagnostic for inspection and outside-app handoff. App editing,
+choices, undo/redo, discards and Mark resolved stay blocked. The file stays
+outstanding; no choices are truncated and no anchors are guessed. A rejected
+or deferred large-file launch has an empty marker scan and no launch frames.
+Confirming a large file retries full admission and either opens it or retains
+this explicit fallback. Allocation failures open only that file as unreadable.
+Measurements of the representative 4000-line size are in
+tests/fixtures/performance/evidence.md.
+
+Commands validate the complete ordered edit set and stream its final fragments
+through the shared text/index policy before copying the draft. A shared
+`kMaxAlignmentCells` work allowance charges each edit's text bytes and anchor
+visits, request metadata and subsequent marker-cleanup edits. Oversized
+commands return `TextTooLarge` without publishing a revision. Decision admission
+is conservative and counts both current and submitted entries, including
+repeated IDs. `edited` and `rebuilt` consume an unpublished map; callers copy
+an immutable map explicitly, then move the candidate through its edits. Source
+alignment runs only for the final candidate. Marker cleanup uses only original
+result-owned marker lines that survive those edits, so inserted source text
+cannot acquire marker ownership from provisional passages. Final alignment or
+allocation failure leaves history and publication unchanged.
 
 `SourceAnchor` carries the caller's stable contribution ID, immutable source
 side/range and insertion affinity. `ResultAnchor` adds captured session, path and
 source-object identities, the exact transaction revision, mapping safety,
 manual-overlap state and a hand-edit flag. Contribution IDs cannot be rebound
-to different source ranges. `FileSession::replaceMapped` checks the current
-registered anchor and revision before changing either text or the
-contribution's decision. It changes only that result range, leaving
-neighboring edits and other decisions intact.
+to different source ranges. `FileSession::applyCommand` checks every target
+against the current registered anchor and revision before changing either text
+or decisions. It changes only those result ranges, leaving neighboring edits and
+other decisions intact.
 An overlapping manual change requires confirmation for that exact preview.
 An ambiguous or invalidated anchor remains unavailable even with confirmation.
 
@@ -100,11 +155,31 @@ A whole-file command clears it on all. A choice that only clears flags, with
 text and decisions unchanged, still records a revision, so undo and recovery
 replay bring the flags back.
 
-The existing whole-buffer `replaceDraft` API has no editor edit location. Its
+Immediate and deferred edits check the total bytes, joined line lengths and
+result line count before mutating text or anchors. An edit can leave the
+alignment for later. `edited` with
+`Realignment::Deferred` moves the anchors and hand edits at once, as above, but
+does not compare the sources with the new text: the passages before and after
+the edited lines keep their alignment, shifted past the edit, and the edited
+lines with every passage they touch become one `Ambiguous` passage, so the
+partition stays complete and claims no match it has not verified.
+`realigned()` then builds the map an immediate edit would have built. It is a
+const member of an immutable map, so a worker thread may run it while the
+session goes on editing; `FileSession::installAlignment` keeps the result only
+for the revision it was made for. Undo of a pending revision restores its
+provisional passages, and Mark resolved aligns a pending revision before it
+counts markers.
+
+The whole-buffer `replaceDraft` API has no editor edit location. Its
 old-to-new comparison transforms only ranges with unambiguous correspondence.
 It never assumes a common prefix identifies the edited occurrence. Uncertain
 anchors remain uncertain through later recomputation, even when similar text
 reappears. Fresh source-to-result passages remain available for navigation.
+
+Recovery replays a recorded revision with `replayDraft`: the same comparison
+against the recorded text, then the recorded hand-edit flags and ranges, under
+the recorded revision id. One record can stand for a burst of edits that were
+joined into one undo entry (`EditOptions::join`).
 
 Mapping values belong to revision snapshots. Undo, redo and checkpoint discard
 restore text, decisions and mapping together while assigning the normal fresh
@@ -113,24 +188,3 @@ stay immutable. These APIs perform no persistence, Qt or filesystem work.
 [`EditingCommands`](EditingCommands.md) builds scoped choices on these mappings.
 SessionModel owns recovery acknowledgment, and the Qt controller translates
 exact editor changes without introducing a second undo history.
-
-Disposable C++ fixtures compare the linear-space implementation with independent
-enumeration of every best alignment for binary-line sequences up to six lines
-and ternary sequences up to four lines, including UTF-8 and missing final
-newlines. The C++20 `-O1` AddressSanitizer/UndefinedBehaviorSanitizer run checked
-34,614 source/result pairs and passed 34,630 assertions, including repeated-line
-ambiguity, stale anchors, manual-edit preservation and history. A one-shot
-allocation failure during initial correspondence passed 14 assertions: the
-failed file stayed unreadable with its diagnostic and captures, while a second
-file retained its sources, result and correspondence.
-
-A generated 20,000-line conflict with a 1,057,790-byte result completed
-construction and a whole-buffer draft edit under a 2,000,000 KiB address-space
-cap. The `-O2` fixture process peaked at 44,184 KiB resident memory; construction
-took 12,225 ms and the edit took 15,498 ms. A real desktop load of a separate
-20,000-line conflict beside a small manually edited file completed under a
-3,000,000 KiB cap, with 13 acceptance and cleanup assertions. These are local
-observations from that fixture run. The representative measurements and proposed
-envelope are in tests/fixtures/performance/evidence.md. Quadratic time remains a
-tradeoff. Permanent regression additions are deferred to the wave gate by the
-worker contract.

@@ -1,11 +1,12 @@
 // The session coordinator schedules guarded save and publication work and reconciles cancelled mutations.
 #pragma once
 
-#include "app/SessionModel.h"
 #include "git/GitAdapter.h"
+#include "session/SessionStore.h"
 #include <QByteArray>
 #include <QObject>
 #include <QString>
+#include <QThreadPool>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -14,7 +15,6 @@ namespace branch_truce {
 
 using TaskId = quint64;
 enum class TaskStatus { Succeeded, Failed, Cancelled };
-enum class MutationObservation { NotAttempted, ObservedUnchanged, ObservedChanged, Uncertain };
 enum class TaskDisposition { Current, Cancelled, StaleSession, StaleRevision };
 
 struct TaskStamp {
@@ -36,7 +36,7 @@ struct TaskResult {
     TaskStatus status = TaskStatus::Succeeded;
     MutationObservation mutation = MutationObservation::NotAttempted;
     QByteArray data;
-    QString diagnostic;
+    Problem problem;
     std::optional<git::Result> gitResult;
 };
 struct TaskCompletion {
@@ -52,6 +52,7 @@ class TaskControl {
 public:
     [[nodiscard]] bool cancellationRequested() const;
     [[nodiscard]] bool beginMutation() const;
+
 private:
     struct State;
     explicit TaskControl(bool mutation);
@@ -61,7 +62,7 @@ private:
     friend class SessionCoordinator;
 };
 
-// One application-owned coordinator, used only on the model's event-loop
+// One application-owned coordinator, used only on the store's event-loop
 // thread. Work/Inspect run in the thread pool on value snapshots; they must
 // not capture GUI objects. Completion runs on this object's thread, only for
 // an uncancelled, current session and revision. Git keeps its asynchronous
@@ -76,32 +77,31 @@ public:
     using Inspect = std::function<MutationObservation(const TaskInput &)>;
     using Completion = std::function<void(const TaskCompletion &)>;
 
-    explicit SessionCoordinator(SessionModel &model, QString gitExecutable, QObject *parent = nullptr);
+    // Each Git task runs in its own runner from git, a child of this
+    // coordinator; other work runs on workers, which outlives it. Destruction
+    // drains this coordinator's job futures without waiting on unrelated work.
+    SessionCoordinator(SessionStore &store, git::GitRunners git, QThreadPool &workers, QObject *parent = nullptr);
     ~SessionCoordinator() override;
     // worktree is the verified repository root, not a launch subdirectory.
     // Canonicalization coalesces symlink aliases. Replacing cancels old work
     // without releasing an active mutation's queue slot prematurely.
     bool replaceSession(const QString &worktree, const QString &operation, std::vector<FileSession> files);
-    // Complete a current load of the same initial placeholders, including
-    // failed open commits. Captured files replace their pending placeholders;
-    // pending edits and unrelated session replacements remain protected.
-    bool completeSessionLoad(const TaskStamp &stamp, std::vector<FileSession> files);
+    // Completes a current load of the same initial placeholders, including
+    // failed open commits, with the restored files or else the observed ones.
+    // Pending edits and unrelated session replacements remain protected.
     bool completeRecoveryLoad(const TaskStamp &stamp, std::vector<FileSession> observed, RecoveryRestore restore);
     [[nodiscard]] quint64 generation() const;
     [[nodiscard]] int pendingTasks() const;
+    void setExecutionLimits(RecoveryJournal::Limits limits);
     // Zero rejects invalid/stale requests. Accepted requests finish once,
     // asynchronously. Work owns expensive computation/serialization only;
     // use submitMutation for any app-owned filesystem/index side effect.
     TaskId submit(const std::string &fileId, RevisionId expected, Work work, Completion completion = {});
-    TaskId submitMutation(const std::string &fileId, RevisionId expected, Work work,
-                          Inspect inspect, Completion completion = {});
-    TaskId submitGit(const std::string &fileId, RevisionId expected, git::Request request,
-                     Completion completion = {});
+    TaskId submitMutation(const std::string &fileId, RevisionId expected, Work work, Inspect inspect,
+                          Completion completion = {});
+    TaskId submitGit(const std::string &fileId, RevisionId expected, git::Request request, Completion completion = {});
     bool cancel(TaskId id);
     void cancelAll();
-    // Retains outcomes for original worktrees/revisions, including discarded
-    // completions. Uncertain entries require further adapter inspection.
-    [[nodiscard]] const std::vector<TaskCompletion> &mutationOutcomes() const;
 
 Q_SIGNALS:
     void pendingTasksChanged();
@@ -111,8 +111,8 @@ Q_SIGNALS:
     void taskFinished(const branch_truce::TaskCompletion &completion);
 
 private:
-    bool replaceSession(const QString &worktree, const QString &operation,
-                        std::vector<FileSession> files, bool completingLoad, RecoveryRestore *restore = nullptr);
+    bool replaceSession(const QString &worktree, const QString &operation, std::vector<FileSession> files,
+                        bool completingLoad, RecoveryRestore *restore = nullptr);
     class State;
     std::unique_ptr<State> d;
 };

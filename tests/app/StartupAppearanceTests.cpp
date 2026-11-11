@@ -1,4 +1,5 @@
 #include "TestHarness.h"
+#include "fixtures/Files.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -13,12 +14,7 @@
 #include <utility>
 
 namespace {
-void writeFile(const QString &path, const QByteArray &bytes)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
-    CHECK(file.write(bytes) == bytes.size());
-}
+using test_support::writeFile;
 
 // Symlinks every entry of source into target except the path in hidden, whose
 // parent directories become real directories so their other entries stay visible.
@@ -55,11 +51,19 @@ void installThemedApplicationIcon(const QString &dataHome)
 // because the app's fallback theme and the action icons depend on it.
 void isolateIconThemes(const QString &dataDirs)
 {
-    const auto breeze = QStandardPaths::locate(QStandardPaths::GenericDataLocation, "icons/breeze",
-                                               QStandardPaths::LocateDirectory);
-    CHECK(!breeze.isEmpty());
+    const auto breeze =
+        QStandardPaths::locate(QStandardPaths::GenericDataLocation, "icons/breeze", QStandardPaths::LocateDirectory);
+    // A host package, not the app, provides it; without it the case cannot tell what it checks.
+    if (breeze.isEmpty()) test_support::skip("no Breeze icon theme is installed (breeze-icon-theme)");
     CHECK(QDir().mkpath(dataDirs + "/icons"));
     CHECK(QFile::link(breeze, dataDirs + "/icons/breeze"));
+}
+
+// Whether Qt can load the KDE platform theme, which plasma-integration installs.
+bool kdePlatformTheme()
+{
+    const QDir themes(QLibraryInfo::path(QLibraryInfo::PluginsPath) + "/platformthemes");
+    return !themes.entryList({"KDEPlasmaPlatformTheme*"}, QDir::Files).isEmpty();
 }
 
 // The real binary started offscreen with no Plasma session variables and the
@@ -69,9 +73,7 @@ class Launch {
 public:
     explicit Launch(const QString &probe)
     {
-        CHECK(home.isValid() && runtime.isValid());
-        CHECK(QFile::setPermissions(runtime.path(),
-                                    QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+        CHECK(home.isValid());
         environment.insert("PATH", "/usr/bin:/bin");
         environment.insert("HOME", home.path());
         environment.insert("XDG_CONFIG_HOME", home.path() + "/config");
@@ -100,7 +102,10 @@ public:
         QByteArray record;
         int records = 0;
         for (const auto &line : process.readAllStandardOutput().split('\n')) {
-            if (line.startsWith("BRANCH_TRUCE_APPEARANCE=")) { record = line.mid(24); ++records; }
+            if (line.startsWith("BRANCH_TRUCE_APPEARANCE=")) {
+                record = line.mid(24);
+                ++records;
+            }
         }
         CHECK(records == 1);
         QJsonParseError error;
@@ -109,8 +114,7 @@ public:
         return document.object();
     }
     QTemporaryDir home;
-    // A short base keeps the session socket path under its length limit.
-    QTemporaryDir runtime{QStringLiteral("/tmp/bt-run-XXXXXX")};
+    test_support::RuntimeDirectory runtime;
     QProcessEnvironment environment;
 };
 
@@ -130,10 +134,14 @@ public:
         binary = directory.path() + "/branch-truce";
         CHECK(QFile::copy(application, binary));
         const std::pair<const char *, QLibraryInfo::LibraryPath> paths[] = {
-            {"Prefix", QLibraryInfo::PrefixPath}, {"Libraries", QLibraryInfo::LibrariesPath},
-            {"LibraryExecutables", QLibraryInfo::LibraryExecutablesPath}, {"Binaries", QLibraryInfo::BinariesPath},
-            {"Plugins", QLibraryInfo::PluginsPath}, {"ArchData", QLibraryInfo::ArchDataPath},
-            {"Data", QLibraryInfo::DataPath}, {"Translations", QLibraryInfo::TranslationsPath}};
+            {"Prefix", QLibraryInfo::PrefixPath},
+            {"Libraries", QLibraryInfo::LibrariesPath},
+            {"LibraryExecutables", QLibraryInfo::LibraryExecutablesPath},
+            {"Binaries", QLibraryInfo::BinariesPath},
+            {"Plugins", QLibraryInfo::PluginsPath},
+            {"ArchData", QLibraryInfo::ArchDataPath},
+            {"Data", QLibraryInfo::DataPath},
+            {"Translations", QLibraryInfo::TranslationsPath}};
         QByteArray conf = "[Paths]\n";
         for (const auto &[key, path] : paths) conf += QByteArray(key) + '=' + QLibraryInfo::path(path).toUtf8() + '\n';
         conf += "QmlImports=" + (directory.path() + "/qml").toUtf8() + '\n';
@@ -147,7 +155,10 @@ public:
 int main(int argc, char **argv)
 {
     QCoreApplication application(argc, argv);
-    if (application.arguments().size() != 3) return 2;
+    if (application.arguments().size() != 3) {
+        std::cerr << "usage: branch_truce_startup_appearance_tests <branch-truce> <appearance probe>\n";
+        return 2;
+    }
     const auto binary = application.arguments()[1];
     const auto probe = application.arguments()[2];
     test_support::Suite suite("startup-appearance");
@@ -222,6 +233,7 @@ int main(int argc, char **argv)
         Launch launch(probe);
         // Plain offscreen Qt exposes only :/icons. The KDE platform theme supplies
         // the XDG icon search paths used by an installed desktop application.
+        if (!kdePlatformTheme()) test_support::skip("the KDE platform theme is not installed (plasma-integration)");
         launch.environment.insert("QT_QPA_PLATFORMTHEME", "kde");
         launch.environment.insert("XDG_DATA_DIRS", dataDirs.path());
         installThemedApplicationIcon(launch.home.path() + "/data");

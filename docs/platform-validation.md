@@ -2,7 +2,11 @@
 
 This file separates installed-package observations from build-tree UI captures and physical-desktop validation. Current native CI targets Kubuntu 26.04, Fedora 44 and Arch Linux. Headless compilation, package installation and native Qt captures do not establish Plasma, KWin, scaling or AT-SPI compatibility on a physical desktop. The older Kubuntu/Tuxedo observations below keep their original scope.
 
-## Current CI evidence
+<a id="current-ci-evidence"></a>
+
+## Recorded CI baseline
+
+These dated observations retain their original source revision. The [CI workflow](https://github.com/e0ipso/branch-truce/actions/workflows/ci.yml) lists later runs; current development captures are recorded separately below.
 
 [CI run 42222287914](https://github.com/e0ipso/branch-truce/actions/runs/42222287914), completed on 2026-11-06, passed the Kubuntu, Fedora and Arch desktop/package jobs for PR source `63c9b89d4348a9650e17bb603ff4164de7f84efa`. Each desktop ran 56 CTest groups with zero failures or skips, including the acceptance journeys and QML lint. The canonical Kubuntu job also built the application with syntax highlighting disabled and passed its dedicated test, 1/1. `highlighting-off/scope.json` records successful configure, build, inventory and test execution with real CTest outputs.
 
@@ -10,7 +14,15 @@ The canonical artifact retains 16 native captures at both heights, eight zero-di
 
 Twelve additional original Qt scenes under `ui-scenes/` cover compact and long-message placeholders, literal diagnostic paths, earlier context and ordered-choice previews. They were inspected at their retained sizes. The stressed 960x540 scene scrolls to Technical details; literal markup remains text. Earlier/context previews retain visible keyboard selection and shared row geometry. Their JSON records `Fusion` for the review dialogs and `org.kde.desktop` for the window stress scenes; these observations do not imply the same style in every fixture. The synthetic localized prose is a stress input, not a shipped translation.
 
-The documentation pair was inspected and copied unchanged from `native/720/documentation-readme/`. [Its provenance](images/redesigned-comparison-provenance.json) records source, producing merge, command, capture time and image hashes. The README uses the native C++ comparison at 1280x800, current reading-view examples and an animated gallery of those application states; [media provenance](images/readme-media-provenance.json) records the original frames and encoding. These build-tree captures do not establish installed-package UI or physical Plasma/AT-SPI behavior. The earlier [CI baseline](https://github.com/e0ipso/branch-truce/actions/runs/41235434979) remains historical and did not execute the highlighting-disabled desktop variant.
+That run's documentation pair and review scenes remain historical CI evidence. Current README media comes from the local development captures below. Build-tree captures do not establish installed-package UI or physical Plasma/AT-SPI behavior. The earlier [CI baseline](https://github.com/e0ipso/branch-truce/actions/runs/41235434979) remains historical and did not execute the highlighting-disabled desktop variant.
+
+## Current development captures
+
+Local development captures from 2026-11-11 use source `18d528e7350285bc9d73bf2ab5d3580e319b578d`. The native replay runs the real application in a private headless Wayland session with Breeze Light and Dark at 1280x720 and 1280x800, repeating each scene. Acceptance journeys retain the actual ordered-choice preview and earlier-context windows with offscreen Fusion controls.
+
+The [media provenance](images/readme-media-provenance.json) records the source, executable SHA-256, producing commands, original frame hashes and encoding. The documentation pair at 1440x900 is copied unchanged from `native/720/documentation-readme/`; [its provenance](images/redesigned-comparison-provenance.json) records both originals. The GIF and MP4 are a four-state screenshot gallery with four seconds per state, rather than a continuous interaction recording.
+
+These observations apply to a development build. Installed-package UI, physical Plasma/KWin, input methods and AT-SPI still require separate observation.
 
 ## Historical installed-package status
 
@@ -28,7 +40,7 @@ it does on a Wayland compositor with Breeze, three scale factors and AT-SPI.
 
 ## Redesign evidence still required
 
-No fresh installed-desktop UI observation is established by the current build-tree captures. The 2026-10-25 package results and 2026-10-26 startup observations remain historical, with their original hashes, dates and scope. Every README screenshot, GIF and video now uses the inspected 2026-11-06 development captures. Earlier media remains in Git history.
+No fresh installed-desktop UI observation is established by the current build-tree captures. The 2026-10-25 package results and 2026-10-26 startup observations remain historical, with their original hashes, dates and scope. Every README screenshot, GIF and video uses the inspected 2026-11-11 local development captures recorded above. Earlier media remains in Git history.
 
 For installed-UI validation, run the commands under [How to reproduce](#how-to-reproduce) against current packages, using a new owned output directory per target. Record the actual run date, source revision, package SHA-256, environment, command, exit status and emitted `.validation`, `.atspi` and PNG paths here. Replace pending observations only with the results that run produced. The current CI package lifecycle checks and development screenshots do not substitute for this observation.
 
@@ -50,7 +62,7 @@ Host, shared by both containers:
   (`/run/user/1000/wayland-1`) through a bind mount. They used their own
   D-Bus session bus, home and XDG directories, and never touched the host's.
 
-Artifacts, built with `tools/build-artifact.sh` from the commit that added
+Artifacts, built with the since-removed per-base builder from the commit that added
 `qt6-wayland` to `Depends`, with no changed source paths:
 
 | | Kubuntu 26.04 | Tuxedo OS 24.04 |
@@ -101,16 +113,23 @@ do not provide KWin, the Plasma shell, portals or a real seat.
 
 ## How to reproduce
 
-Build both artifacts as described in
-[target-platforms.md](target-platforms.md#build-and-inspect), then, from a
-shell inside a wlroots session such as sway:
+Build the Kubuntu release DEB as described in
+[target-platforms.md](target-platforms.md#build-and-inspect-a-release-deb),
+then, from a shell inside a wlroots session such as sway:
 
 ```sh
-tools/validate-installed-artifact.sh --target kubuntu --wayland \
-    --package "$out/branch-truce_0.1.0+kubuntu26.04_amd64.deb" --output "$out/kubuntu"
-tools/validate-installed-artifact.sh --target tuxedo --wayland \
-    --package "$out/branch-truce_0.1.0+tuxedo24.04_amd64.deb" --output "$out/tuxedo"
+deb="$out/branch-truce_1.2.3_amd64-ubuntu26.04.deb"
+tools/validate-installed-artifact.sh --target kubuntu --wayland --package "$deb" --output "$out/kubuntu"
+tools/validate-installed-artifact.sh --target tuxedo --wayland --package "$deb" --output "$out/tuxedo"
 ```
+
+`--target` names a row of
+[packaging/validation-targets.tsv](../packaging/validation-targets.tsv): the
+Kubuntu 26.04 target stage of the CI image, or Tuxedo OS 24.04 with its vendor
+Qt/KDE repositories. The script builds that image, or reuses it from the
+engine's layer cache. The dated runs below used the earlier per-base DEBs,
+which a removed builder made with a `+kubuntu26.04` or `+tuxedo24.04` version
+suffix.
 
 Run them one after the other: both look for the same window on the
 compositor. Without `--wayland` the script runs only the offscreen steps.
@@ -377,11 +396,11 @@ mergetool intake path do not use it. On Linux Qt does put it into
 `QStandardPaths::AppLocalDataLocation`, so setting one moves that directory,
 and with it the recovery journals of earlier runs.
 
-`SessionModel::recoveryRoot()` no longer reads `AppLocalDataLocation`. It is
+`recoveryRoot()` in `app/AppPaths.h` no longer reads `AppLocalDataLocation`. It is
 `GenericDataLocation` plus `/Branch Truce/recovery/v1`, which is the path the
 app already used with no organization name, so stores written by earlier
 builds are found where they are and nothing is moved. A later change that sets
-an organization name leaves the root alone. `app.session-model` pins both: the
+an organization name leaves the root alone. `app.session-recovery` pins both: the
 root, and a store written at the earlier path with an organization name set.
 
 ### QApplication and the KDE style

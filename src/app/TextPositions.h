@@ -1,7 +1,7 @@
 // Text positions connect captured source lines and byte ranges to the editor's character offsets.
 #pragma once
-#include "core/FileSnapshot.h"
 #include "core/Correspondence.h"
+#include "core/FileSnapshot.h"
 #include <QString>
 #include <QVariantMap>
 #include <algorithm>
@@ -57,12 +57,12 @@ private:
     static int utf16Units(char byte) noexcept
     {
         const auto value = static_cast<unsigned char>(byte);
-        return (value & 0xC0) == 0x80 ? 0 : value >= 0xF0 ? 2 : 1;
+        return (value & 0xC0U) == 0x80 ? 0 : value >= 0xF0 ? 2 : 1;
     }
     [[nodiscard]] std::vector<Start>::const_iterator lineAt(std::size_t offset) const
     {
         return std::prev(std::upper_bound(starts_.begin(), starts_.end(), offset,
-            [](std::size_t value, const Start &start) { return value < start.byte; }));
+                                          [](std::size_t value, const Start &start) { return value < start.byte; }));
     }
     std::string_view text_;
     std::vector<Start> starts_{{0, 0}};
@@ -72,6 +72,7 @@ private:
 inline const std::optional<SourceSnapshot> &snapshotFor(const FileSnapshots &snapshots, SourceSide side)
 {
     return side == SourceSide::Earlier ? snapshots.earlier
-        : side == SourceSide::Stage2 ? snapshots.stage2 : snapshots.stage3;
+        : side == SourceSide::Stage2   ? snapshots.stage2
+                                       : snapshots.stage3;
 }
 }

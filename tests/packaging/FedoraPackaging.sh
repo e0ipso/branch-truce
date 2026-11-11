@@ -25,7 +25,11 @@ done
 tar -tzf "$top/SOURCES/branch-truce-$version.tar.gz" | sort > "$FEDORA_TEST_LOG.source"
 grep -qx "branch-truce-$version/LICENSE" "$FEDORA_TEST_LOG.source"
 mkdir -p "$top/RPMS/x86_64"
-printf artifact > "$top/RPMS/x86_64/branch-truce-$version-1.fc44.x86_64.rpm"
+if [ "${FEDORA_TEST_OMIT_RUNTIME:-0}" != 1 ]; then
+    printf artifact > "$top/RPMS/x86_64/branch-truce-$version-1.fc44.x86_64.rpm"
+fi
+printf debuginfo > "$top/RPMS/x86_64/branch-truce-debuginfo-$version-1.fc44.x86_64.rpm"
+printf debugsource > "$top/RPMS/x86_64/branch-truce-debugsource-$version-1.fc44.x86_64.rpm"
 STUB
 cat > "$work/bin/rpm" <<'STUB'
 #!/usr/bin/env bash
@@ -58,32 +62,40 @@ for semver in 1.2.3 1.2.3-rc.2; do
     native=1.2.3
     [ "$semver" = 1.2.3 ] || native=1.2.3~rc2
     export FEDORA_TEST_IDENTITY="branch-truce|0|$native|1.fc44|x86_64|GPL-3.0-or-later AND CC0-1.0"
-    bash "$root/packaging/scripts/package-fedora.sh" --version "$semver" --output "$work/out" > "$work/result"
+    bash "$root/packaging/scripts/package-release.sh" --format fedora-rpm --version "$semver" --output "$work/out" > "$work/result"
     test "$(tail -1 "$work/result")" = "$work/out/branch-truce-$native-1.fc44.x86_64.rpm"
+    test "$(cat "$work/out/branch-truce-$native-1.fc44.x86_64.rpm")" = artifact
     grep -qx "branch_truce_version $semver" "$FEDORA_TEST_LOG"
     grep -qx "branch_truce_native_version $native" "$FEDORA_TEST_LOG"
 done
+test "$(find "$work/out" -maxdepth 1 -type f | wc -l)" -eq 2
 echo 'ok: stable/prerelease mapping and standalone licensed sources'
 rm -f "$FEDORA_TEST_LOG"
-expect_failure 'cannot be packaged' bash "$root/packaging/scripts/package-fedora.sh" --version 1.2.3-rc.0 --output "$work/out"
+expect_failure 'cannot be packaged' bash "$root/packaging/scripts/package-release.sh" --format fedora-rpm --version 1.2.3-rc.0 --output "$work/out"
 test ! -e "$FEDORA_TEST_LOG"
 echo 'ok: unsupported version rejected before building'
 stable_version=1.2.3
 stable_package="$work/out/branch-truce-$stable_version-1.fc44.x86_64.rpm"
-for identity in \
-    'other|0|1.2.3|1.fc44|x86_64|GPL-3.0-or-later AND CC0-1.0' \
-    'branch-truce|1|1.2.3|1.fc44|x86_64|GPL-3.0-or-later AND CC0-1.0' \
-    'branch-truce|0|9.9.9|1.fc44|x86_64|GPL-3.0-or-later AND CC0-1.0' \
-    'branch-truce|0|1.2.3|1.fc43|x86_64|GPL-3.0-or-later AND CC0-1.0' \
-    'branch-truce|0|1.2.3|1.fc44|aarch64|GPL-3.0-or-later AND CC0-1.0' \
-    'branch-truce|0|1.2.3|1.fc44|x86_64|MIT'; do
+rm -f "$stable_package"
+FEDORA_TEST_OMIT_RUNTIME=1 expect_failure 'expected RPM' bash "$root/packaging/scripts/package-release.sh" \
+    --format fedora-rpm --version 1.2.3 --output "$work/out"
+test ! -e "$stable_package"
+expected='expected branch-truce|1.2.3-1.fc44|x86_64'
+while IFS=';' read -r identity builder_message checker_message; do
     export FEDORA_TEST_IDENTITY="$identity"
     rm -f "$stable_package"
-    expect_failure 'RPM identity mismatch' bash "$root/packaging/scripts/package-fedora.sh" --version 1.2.3 --output "$work/out"
+    expect_failure "$builder_message" bash "$root/packaging/scripts/package-release.sh" --format fedora-rpm --version 1.2.3 --output "$work/out"
     test ! -e "$stable_package"
     touch "$work/candidate.rpm"
-    expect_failure 'RPM identity mismatch' bash "$root/packaging/scripts/check-fedora.sh" --version 1.2.3 --package "$work/candidate.rpm"
+    expect_failure "$checker_message" bash "$root/packaging/scripts/check-package.sh" --format fedora-rpm --version 1.2.3 --package "$work/candidate.rpm"
     test ! -e "$FEDORA_TEST_LOG.dnf"
-done
+done <<ROWS
+other|0|1.2.3|1.fc44|x86_64|GPL-3.0-or-later AND CC0-1.0;$expected;differs from branch-truce|1.2.3-1.fc44|x86_64
+branch-truce|1|1.2.3|1.fc44|x86_64|GPL-3.0-or-later AND CC0-1.0;is branch-truce|1:1.2.3-1.fc44|x86_64, $expected;identity branch-truce|1:1.2.3-1.fc44|x86_64 differs
+branch-truce|0|9.9.9|1.fc44|x86_64|GPL-3.0-or-later AND CC0-1.0;$expected;differs from branch-truce|1.2.3-1.fc44|x86_64
+branch-truce|0|1.2.3|1.fc43|x86_64|GPL-3.0-or-later AND CC0-1.0;$expected;differs from branch-truce|1.2.3-1.fc44|x86_64
+branch-truce|0|1.2.3|1.fc44|aarch64|GPL-3.0-or-later AND CC0-1.0;$expected;differs from branch-truce|1.2.3-1.fc44|x86_64
+branch-truce|0|1.2.3|1.fc44|x86_64|MIT;license is 'MIT';license is 'MIT'
+ROWS
 echo 'ok: wrong name, epoch, version, distribution, architecture and license fail before publication/install'
 echo 'all Fedora helper contract checks passed'

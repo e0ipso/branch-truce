@@ -6,10 +6,10 @@
     "quick_backend": "software",
     "platform": "wayland",
     "physical_desktop": false,
-    "colour_schemes": [
-      "BreezeLight",
-      "BreezeDark"
-    ],
+    "colour_schemes": {
+      "light": "BreezeLight",
+      "dark": "BreezeDark"
+    },
     "logical_sizes": [
       [
         1280,
@@ -22,9 +22,12 @@
     ],
     "scale": 1
   },
+  "clean_replays": 2,
   "requested_fonts": {
-    "normal": "Noto Sans 10pt",
-    "fixed": "Hack 9pt",
+    "kdeglobals": {
+      "font": "Noto Sans,10,-1,5,50,0,0,0,0,0",
+      "fixed": "Hack,9,-1,5,50,0,0,0,0,0"
+    },
     "small": "Observe Kirigami.Theme.smallFont; do not override"
   },
   "observations": "Each state.json separates the configured colour-scheme name from observed Qt application palette roles and actual resolved fonts, style, units, DPI and DPR. capture_environment includes requested scheme, actual sway output and OS. build-provenance.json separates exact executable hash from observed source/build checkout identities.",

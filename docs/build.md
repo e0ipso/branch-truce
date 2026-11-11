@@ -55,7 +55,22 @@ cmake --build build/sanitize --parallel 2
 ctest --test-dir build/sanitize --output-on-failure
 
 /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /bin/bash tools/check-shell-syntax.sh
+tools/check-shell-lint.sh
+tools/check-format.sh
+tools/check-tidy.sh build/desktop
 ```
+
+`tools/check-shell-lint.sh` runs the ShellCheck that `tools/shellcheck.txt` pins
+over the packaging and tooling scripts, at warning severity. In the scripts
+under `tools/` and `packaging/`, a `fail` function records a failed check and
+the run goes on; `die` stops it.
+`tools/check-format.sh` and `tools/check-tidy.sh` need the pinned clang tools of
+`tools/clang-tools.txt` (`python3 -m pip install --require-hashes -r
+tools/clang-tools.txt`). `check-format.sh --fix` rewrites the sources;
+`check-tidy.sh` reads `compile_commands.json` from a configured and built tree
+and takes the number of parallel jobs as an optional second argument. CI runs
+the shell syntax, shell lint and format checks; run clang-tidy before asking
+for review.
 
 The QML lint target fails on any qmllint warning, because
 `src/ui/.qmllint.ini` sets `MaxWarnings=0`. The desktop CTest run includes it
@@ -67,8 +82,8 @@ Two independent desktop tests may overlap. `install.prefix`, `ui.qmllint`,
 Do not run a second build or CTest process against that build tree concurrently.
 Run GUI/permission tests as an unprivileged user; retain reported skips as skips.
 
-CTest entries that start the real binary or load Qt Quick outside the unit harness run through
-`tests/with-private-xdg.sh`. It gives them a private `HOME` and XDG directories, removes
+Every app, ui, acceptance and Git CTest entry runs through `tests/with-private-xdg.sh`; no suite
+redirects those directories itself. It gives them a private `HOME` and XDG directories, removes
 them afterwards, and fails the entry if the run created anything under
 `<data home>/Branch Truce/recovery` of the invoking user, so a test run never adds
 sessions to the recovery list of the developer's installed app. The data home is
@@ -97,17 +112,23 @@ text. Each pane still gets a plain `PaneHighlighter` for decorations, and the
 CTest includes the core build canary, revisioned session tests, correspondence
 command fixtures and CLI guards. Desktop builds also test the Qt session model,
 the asynchronous Git adapter in temporary repositories, and the accepted editor
-fixture. The session, correspondence, model and Git tests report case and
-assertion counts; the editor reports assertions.
-The Git test includes the real 30-second operation deadline and has a 90-second
+fixture. The shared C++ harness reports case, assertion, failure and skip counts.
+The Git test runs its deadline case with a 300 ms deadline and has a 90-second
 suite timeout. Its scripted executables live outside the temporary repositories.
+
+Set `BRANCH_TRUCE_TEST_FILTER` when starting a test binary to select cases by
+name substring. Git fixtures likewise choose `BRANCH_TRUCE_TEST_GIT` and `PATH`
+from the launch environment; later changes inside a case do not retarget them.
+These settings use Linux's [initial process environment](https://man7.org/linux/man-pages/man5/proc_pid_environ.5.html).
+The harness fails if it cannot read that snapshot. Binaries using the harness's
+argument parser also accept `--filter` and `--list`.
 
 The desktop startup canary loads the embedded QML and Kirigami with offscreen
 software rendering, then waits for repository discovery and file loading. The
 executable accepts `--smoke-test` to print a `BRANCH_TRUCE_SESSION=` JSON record and
 exit after startup settles, including an unsupported or invalid selection. Its
 exit code checks window loading; the record describes session opening separately.
-GUI tests retain a 30-second timeout. Startup does not report an assertion count.
+The startup canary has a 30-second timeout. Startup does not report an assertion count.
 
 Launch directly into a repository's current merge or rebase with
 `build/desktop/src/app/branch-truce /path/to/repository`. A subdirectory selects
@@ -124,23 +145,6 @@ records its transport, lifecycle and the behaviours tested with a real parent.
 Build directories are disposable. The default root `build/` directory is ignored
 by Git. An optional second absolute argument to `prepare-worktree.sh` places
 generated files outside the checkout.
-
-For evidence collection, `./tools/verification-context.sh source` prints the path
-of an environment file under `/tmp/branch-truce-verification.*`. Source that
-file in the calling shell before executing or validating a check. Capture again
-before each validation. Use `desktop`, `core` or `sanitize` instead of `source`
-after configuring that build to include its generated test membership and
-available binaries. Retain the adjacent manifests with the check receipts.
-CTest output logs are excluded from artifact identity.
-
-The stamps record tool contents and versions, installed package versions,
-selected environment variables with set/unset state, platform, committed HEAD
-and selected build artifacts. Package versions do not establish the contents
-of compiler headers, QML plugins or user configuration. These observations alone
-cannot justify a complete build/runtime dependency declaration. The normalized
-shell syntax command above has a separate stamp covering env, Bash and their
-linked libraries. That stamp is empty when exported loader overrides are present,
-so the evidence helper must treat its declaration as incomplete in that case.
 
 ## Native CI and release packages
 
@@ -226,6 +230,12 @@ npm test
 npm run check:tracker-refs
 ```
 
+Node tests sit next to the module or script they test as `*.test.ts`, under
+`scripts/`, `packaging/` and `tools/`, and `npm test` runs all of them. The
+type check covers those TypeScript files and, through JSDoc, the JavaScript in
+`packaging/ci/`. Shell and Python tests of the packaging scripts and tools live
+under `tests/packaging/` and `tests/tools/` and run in CTest.
+
 Commit messages follow Conventional Commits. `npm ci` installs a commit-msg
 hook that runs commitlint, and CI runs the same check. semantic-release
 derives the release version from the messages.
@@ -295,11 +305,11 @@ keeps its size. The PNG names end in the size, such as
 Agents sharing the headless session run the script under
 `flock /tmp/branch-truce-preview.lock`, so two runs never add outputs at once.
 
-`tools/merge-fixture.sh` builds the fixture. The installed-artifact validator
-uses the same function inside its container for its single `tracked.txt`
-conflict.
+`tools/lib/fixture.sh` builds the fixture. The installed-artifact validator,
+the package checkers and the install-prefix check use the same functions for
+their single `tracked.txt` conflict.
 
-The README uses the inspected 2026-11-06 CI captures below. Their [provenance](images/readme-media-provenance.json) records the producing source and original image hashes. The comparison, preview, earlier-context, GIF and video files now show the current app. The animation is an encoded gallery of actual CI states, not a continuous interaction recording.
+The README uses inspected local captures from 2026-11-11, source `18d528e7350285bc9d73bf2ab5d3580e319b578d`. Their [provenance](images/readme-media-provenance.json) records the executable hash, commands and original image hashes. Comparison and binary scenes use Breeze on private headless Wayland; preview and earlier-context scenes use the acceptance suite's offscreen Fusion controls. The animation is an encoded gallery of actual application states, not a continuous interaction recording.
 
 | Breeze Light | Breeze Dark |
 | --- | --- |
@@ -315,7 +325,7 @@ PREVIEW_FILE=notes.md PREVIEW_SIZE=1440x900 PREVIEW_OUTPUT="$capture_dir" \
     build/desktop/src/app/branch-truce
 ```
 
-Retain the printed `branch-truce-BreezeLight-1440x900.png` and `branch-truce-BreezeDark-1440x900.png`, the source revision, build identity, command, date and display environment. Inspect the actual captures before updating the documentation images, provenance and README caption. The published pair was copied unchanged from [CI run 42222287914](https://github.com/e0ipso/branch-truce/actions/runs/42222287914); no application capture ran during this documentation edit. Development-build captures on sway do not replace installed-package or real Plasma evidence.
+Retain the printed `branch-truce-BreezeLight-1440x900.png` and `branch-truce-BreezeDark-1440x900.png`, the source revision, build identity, command, date and display environment. Inspect the actual captures before updating the documentation images, provenance and README caption. The published pair was copied unchanged from the 2026-11-11 local replay's `720/documentation-readme/` originals. [Its provenance](images/redesigned-comparison-provenance.json) records the source and commands. Development-build captures on sway do not replace installed-package or real Plasma evidence.
 
 Collect separate 1280x720 and 1280x800 evidence with the corresponding `PREVIEW_SIZE` examples above. Screenshots alone do not establish eight visible rows, control/menu reachability or no-wrap fit. Those obligations need the final acceptance and native interaction checks, including source context-menu gestures, source-fill continuity and connector hover behaviour. Keep the narrow strict-960x540 fit waiver separate from these required checks.
 
@@ -361,9 +371,11 @@ To check an install without touching the system or your home, run:
 ./tools/verify-install-prefix.sh --mergetool-tests build/desktop/tests/branch_truce_mergetool_tests
 ```
 
-The script copies the checkout's tracked and untracked non-ignored files into
-a fixture under `${TMPDIR:-/tmp}`, builds and installs a Release prefix, and
-deletes the copied sources and build tree before launching anything. It then:
+The script copies the package build inputs of
+`packaging/scripts/stage-source.sh` (tracked and untracked non-ignored files)
+and `package.json` into a fixture under `${TMPDIR:-/tmp}`, builds and installs
+a Release prefix, and deletes the copied sources and build tree before
+launching anything. It then:
 
 1. Compares the deployed file list with the eight files above and runs
    `desktop-file-validate` and `appstreamcli validate --no-net`.
@@ -406,19 +418,8 @@ After this scaffold lands, run from the newly prepared checkout:
 ./tools/prepare-worktree.sh desktop
 ```
 
-After committing the scaffold, verify clean preparation with:
-
-```sh
-./tools/verify-clean-worktree.sh
-```
-
-This creates a disposable detached worktree of HEAD, builds and runs only the
-core/startup canaries in desktop, core and sanitizer configurations, checks QML,
-confirms the checkout stayed clean after each default preparation and after the
-checks, and removes the fixture. Build output uses the default `build/<mode>`
-directories inside the fixture checkout, including the setup hook's
-`./tools/prepare-worktree.sh desktop` command. Failure logs must be retained by
-the caller.
+CI checks that a fresh checkout stays clean after the core and sanitizer
+preparation, build and CTest, the same commands as above.
 
 The desktop preparation above is the per-worktree setup command to register with Sift. It configures;
 checks remain separate `cmake --build` and `ctest` commands above. Hook registration

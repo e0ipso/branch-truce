@@ -1,5 +1,7 @@
-#include "core/WordDifferences.h"
+// Word differences: token ranges for a line pair and for a session's sources and result.
 #include "TestHarness.h"
+#include "core/FileWordDifferences.h"
+#include "core/WordDifferences.h"
 #include "fixtures/ChoiceFile.h"
 
 #include <string>
@@ -12,6 +14,7 @@ namespace {
 std::vector<std::string> words(std::string_view text, const std::vector<ByteRange> &ranges)
 {
     std::vector<std::string> found;
+    found.reserve(ranges.size());
     for (const auto &range : ranges) found.emplace_back(text.substr(range.begin, range.end - range.begin));
     return found;
 }
@@ -59,6 +62,59 @@ int main()
         CHECK(words(indented, blanks.right) == std::vector<std::string>{"    "});
     });
 
+    suite.run("punctuation, non-breaking spaces and ideographs separate tokens", [] {
+        std::size_t budget = kMaxWordDifferenceCells;
+        const std::string dashLeft = "foo\xe2\x80\x94"
+                                     "bar\n";
+        const std::string dashRight = "foo\xe2\x80\x94"
+                                      "baz\n";
+        const auto dash = wordDifferences(dashLeft, dashRight, budget);
+        CHECK(words(dashLeft, dash.left) == std::vector<std::string>{"bar"});
+        CHECK(words(dashRight, dash.right) == std::vector<std::string>{"baz"});
+        // A no-break space separates words and is trimmed like a space.
+        const std::string spaced = "a\xc2\xa0"
+                                   "b\n";
+        const std::string other = "a\xc2\xa0"
+                                  "c\xc2\xa0\n";
+        const auto blanks = wordDifferences(spaced, other, budget);
+        CHECK(words(spaced, blanks.left) == std::vector<std::string>{"b"});
+        CHECK(words(other, blanks.right) == std::vector<std::string>{"c"});
+        // Japanese has no spaces, so each character is compared on its own.
+        const std::string desu = "\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\xe3\x81\xa7\xe3\x81\x99\n";
+        const std::string deshita = "\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\xe3\x81\xa7\xe3\x81\x97\xe3\x81\x9f\n";
+        const auto japanese = wordDifferences(desu, deshita, budget);
+        CHECK(words(desu, japanese.left) == std::vector<std::string>{"\xe3\x81\x99"});
+        CHECK(words(deshita, japanese.right) == std::vector<std::string>{"\xe3\x81\x97\xe3\x81\x9f"});
+        // A stray byte is one token of its own.
+        const auto stray = wordDifferences("x\xff\n", "x\xfe\n", budget);
+        CHECK(stray.left == std::vector<ByteRange>{{1, 2}} && stray.right == std::vector<ByteRange>{{1, 2}});
+    });
+
+    suite.run("Unicode symbols stay separate from words, blanks and malformed bytes", [] {
+        // Symbols from BMP and supplementary categories, plus non-Latin punctuation.
+        for (const auto &symbol : {"−", "😀", "😃", "€", "´", "‿", "־", "❨", "❩", "«", "»", "،", "𐄀"}) {
+            for (const auto &neighbor :
+                 {"ab", "café", "éx", "αβ", "аб", "عرب", "漢字", "かな", " \t", "\xc2\xa0", "\xff"}) {
+                const std::string prefix = std::string(neighbor) + "_";
+                const auto left = prefix + symbol + neighbor + "\n";
+                const auto right = prefix + "+" + neighbor + "\n";
+                std::size_t budget = kMaxWordDifferenceCells;
+                const auto found = wordDifferences(left, right, budget);
+                CHECK(found.left
+                      == std::vector<ByteRange>{{prefix.size(), prefix.size() + std::string_view(symbol).size()}});
+                CHECK(found.right == std::vector<ByteRange>{{prefix.size(), prefix.size() + 1}});
+            }
+        }
+        std::size_t budget = kMaxWordDifferenceCells;
+        const auto emoji = wordDifferences("a😀b", "a😃b", budget);
+        CHECK(emoji.left == std::vector<ByteRange>{{1, 5}} && emoji.right == emoji.left);
+        const auto minus = wordDifferences("a−b", "a+b", budget);
+        CHECK(minus.left == std::vector<ByteRange>{{1, 4}} && minus.right == std::vector<ByteRange>{{1, 2}});
+        // Letter and combining-mark changes still decorate the entire word.
+        CHECK(words("café", wordDifferences("café", "cafe", budget).left) == std::vector<std::string>{"café"});
+        CHECK(words("éx", wordDifferences("éx", "èx", budget).left) == std::vector<std::string>{"éx"});
+    });
+
     suite.run("a line over the documented limit gets no word ranges", [] {
         const std::string longLeft(kMaxWordDifferenceLineBytes + 1, 'x');
         const std::string longRight(kMaxWordDifferenceLineBytes + 1, 'y');
@@ -85,24 +141,43 @@ int main()
             right += "b b b b b b b\n";
         }
         std::size_t budget = kMaxWordDifferenceCells;
-        CHECK(wordDifferences(left, right, budget) == WordDifferences{});
+        CHECK(wordDifferences(left, right, budget) == WordDifferences{{}, {}, WordDifferenceState::ResourceLimit});
         CHECK(budget == kMaxWordDifferenceCells);
         std::size_t small = 3;
-        CHECK(wordDifferences("one two\n", "six ten\n", small) == WordDifferences{});
+        CHECK(wordDifferences("one two\n", "six ten\n", small)
+              == WordDifferences{{}, {}, WordDifferenceState::ResourceLimit});
         CHECK(small == 3);
+    });
+
+    suite.run("token input and retained admission precedes allocation and preserves pair budget", [] {
+        std::string punctuation;
+        for (int i = 0; i < 200; ++i) punctuation += "!!!???\n";
+        for (const auto limits : {WordDifferenceLimits{64, 65536, 8388608}, WordDifferenceLimits{2097152, 32, 8388608},
+                                  WordDifferenceLimits{2097152, 65536, 256}}) {
+            std::size_t budget = kMaxWordDifferenceCells;
+            const auto refused = wordDifferences(punctuation, punctuation + "x", budget, limits);
+            CHECK(refused.state == WordDifferenceState::ResourceLimit);
+            CHECK(refused.left.empty() && refused.right.empty() && budget == kMaxWordDifferenceCells);
+        }
+        std::size_t budget = 4;
+        const auto small = wordDifferences("same prefix left same suffix", "same prefix right same suffix", budget);
+        CHECK(small.state == WordDifferenceState::Computed && small.left == std::vector<ByteRange>{{12, 16}});
+        CHECK(small.right == std::vector<ByteRange>{{12, 17}} && budget == 3);
     });
 
     suite.run("undecided competing sections pair with each other in the sources and the result", [] {
         const auto marked = test_support::markedText();
         auto file = test_support::choiceFile("header\nleft first\nleft second\nbridge\nleft later\ntail\n",
-            "header\nright first\nright second\nbridge\nright later\ntail\n", marked);
+                                             "header\nright first\nright second\nbridge\nright later\ntail\n", marked);
         const auto found = fileWordDifferences(file);
         const auto &left = file.snapshots()->stage2->worktree.utf8;
         const auto &right = file.snapshots()->stage3->worktree.utf8;
-        CHECK(words(left, sourceRanges(found, SourceSide::Stage2)) == (std::vector<std::string>{"left", "left", "left"}));
-        CHECK(words(right, sourceRanges(found, SourceSide::Stage3)) == (std::vector<std::string>{"right", "right", "right"}));
+        CHECK(words(left, sourceRanges(found, SourceSide::Stage2))
+              == (std::vector<std::string>{"left", "left", "left"}));
+        CHECK(words(right, sourceRanges(found, SourceSide::Stage3))
+              == (std::vector<std::string>{"right", "right", "right"}));
         CHECK(words(file.correspondence()->text(), found.result)
-            == (std::vector<std::string>{"left", "left", "right", "right", "left", "right"}));
+              == (std::vector<std::string>{"left", "left", "right", "right", "left", "right"}));
         CHECK(!found.sources.contains(SourceSide::Earlier));
     });
 

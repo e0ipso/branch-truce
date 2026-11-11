@@ -10,11 +10,12 @@ import org.kde.kirigami as Kirigami
 
 RowLayout {
     id: mainToolBar
-    required property ApplicationController controller
+    required property FileNavigator navigator
+    required property SelectedFile selectedFile
     signal handoffRequested()
     // Current result regions, separate from the source decisions kept for review.
     readonly property int conflicts: {
-        const progress = controller.selectedFile.progress
+        const progress = selectedFile.progress
         return progress ? Number(progress.conflicts) : 0
     }
     objectName: "mainToolBar"
@@ -35,17 +36,17 @@ RowLayout {
                 ToolTip.text: text
                 ToolTip.visible: hovered
                 ToolTip.delay: Kirigami.Units.toolTipDelay
-                onClicked: mainToolBar.controller.navigate(FileNavigator.Conflict, -1)
+                onClicked: mainToolBar.navigator.navigate(FileNavigator.Conflict, -1)
             }
             Kirigami.Separator { Layout.fillHeight: true }
             ToolButton {
                 objectName: "undecidedCounter"
-                text: mainToolBar.conflicts > 0 ? (mainToolBar.conflicts === 1 ? qsTr("%n conflict left", "", mainToolBar.conflicts) : qsTr("%n conflicts left", "", mainToolBar.conflicts))
+                text: mainToolBar.conflicts > 0 ? qsTr("%n conflict(s) left", "", mainToolBar.conflicts)
                                                 : qsTr("No conflicts to step through")
                 icon.name: "vcs-conflicting"
                 enabled: mainToolBar.conflicts > 0
                 Accessible.name: text
-                onClicked: mainToolBar.controller.navigate(FileNavigator.Conflict, 1)
+                onClicked: mainToolBar.navigator.navigate(FileNavigator.Conflict, 1)
             }
             Kirigami.Separator { Layout.fillHeight: true }
             ToolButton {
@@ -58,7 +59,7 @@ RowLayout {
                 ToolTip.text: text
                 ToolTip.visible: hovered
                 ToolTip.delay: Kirigami.Units.toolTipDelay
-                onClicked: mainToolBar.controller.navigate(FileNavigator.Conflict, 1)
+                onClicked: mainToolBar.navigator.navigate(FileNavigator.Conflict, 1)
             }
         }
     }
@@ -68,14 +69,14 @@ RowLayout {
         text: qsTr("Previous file")
         icon.name: "go-previous-skip"
         Accessible.name: text
-        onClicked: mainToolBar.controller.navigate(FileNavigator.Unfinished, -1)
+        onClicked: mainToolBar.navigator.navigate(FileNavigator.Unfinished, -1)
     }
     ToolButton {
         objectName: "nextUnfinished"
         text: qsTr("Next file")
         icon.name: "go-next-skip"
         Accessible.name: text
-        onClicked: mainToolBar.controller.navigate(FileNavigator.Unfinished, 1)
+        onClicked: mainToolBar.navigator.navigate(FileNavigator.Unfinished, 1)
     }
     Kirigami.Separator { Layout.fillHeight: true }
     ToolButton {
@@ -91,10 +92,10 @@ RowLayout {
         tooltip: qsTr("Move between differences and saved or reviewed files")
         icon.name: "application-menu"
         iconOnly: true
-        MenuEntry { controlName: "previousDifference"; text: qsTr("Previous difference"); icon.name: "go-previous"; onTriggered: mainToolBar.controller.navigate(FileNavigator.Difference, -1) }
-        MenuEntry { controlName: "nextDifference"; text: qsTr("Next difference"); icon.name: "go-next"; onTriggered: mainToolBar.controller.navigate(FileNavigator.Difference, 1) }
-        MenuEntry { controlName: "previousSavedOrReviewed"; text: qsTr("Previous saved or reviewed"); icon.name: "go-up"; onTriggered: mainToolBar.controller.navigate(FileNavigator.SavedOrReviewed, -1) }
-        MenuEntry { controlName: "nextSavedOrReviewed"; text: qsTr("Next saved or reviewed"); icon.name: "go-down"; onTriggered: mainToolBar.controller.navigate(FileNavigator.SavedOrReviewed, 1) }
+        MenuEntry { controlName: "previousDifference"; text: qsTr("Previous difference"); icon.name: "go-previous"; onTriggered: mainToolBar.navigator.navigate(FileNavigator.Difference, -1) }
+        MenuEntry { controlName: "nextDifference"; text: qsTr("Next difference"); icon.name: "go-next"; onTriggered: mainToolBar.navigator.navigate(FileNavigator.Difference, 1) }
+        MenuEntry { controlName: "previousSavedOrReviewed"; text: qsTr("Previous saved or reviewed"); icon.name: "go-up"; onTriggered: mainToolBar.navigator.navigate(FileNavigator.SavedOrReviewed, -1) }
+        MenuEntry { controlName: "nextSavedOrReviewed"; text: qsTr("Next saved or reviewed"); icon.name: "go-down"; onTriggered: mainToolBar.navigator.navigate(FileNavigator.SavedOrReviewed, 1) }
     }
     Loader { sourceComponent: mainToolBar.applicationMenu.displayComponent }
 }

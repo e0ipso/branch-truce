@@ -1,92 +1,88 @@
-// Recovery restore rebuilds saved sessions and reconciles interrupted repository mutations before editing resumes.
+// Recovery restore chooses a saved session for this operation and reconciles it before editing resumes.
 #pragma once
 
-#include "recovery/RecoveryRecord.h"
+#include "core/Correspondence.h"
 #include "git/GitAdapter.h"
-#include <QLockFile>
+#include "recovery/RecoveryJournal.h"
+#include "recovery/RecoveryReconciler.h"
+#include "recovery/RecoveryReplay.h"
+#include "storage/FileSystem.h"
+#include <QDateTime>
+#include <QStringList>
+#include <map>
 #include <memory>
 #include <set>
+#include <string>
+#include <vector>
 
 namespace branch_truce {
-struct RecoveryMutation {
-    QString id;
-    QString kind;
-    QString observation;
-    FileSession target;
-    bool completed = false;
-};
-
-struct RecoveryReplay {
-    bool succeeded = false;
-    QString error;
-    bool incompleteTail = false;
-    // False when every record is a launch capture or a large-file load: the
-    // store holds no app edit, decision, Save, review or repository outcome.
-    bool userWork = false;
-    // File IDs with at least one record after their launch capture, other than
-    // a large-file load.
-    std::set<std::string> editedFiles;
-    std::vector<FileSession> files;
-    std::vector<RecoveryMutation> mutations;
-};
-
-// Replays existing domain transitions and compares every complete state with
-// its canonical encoding. No repository I/O or acknowledgment happens here.
-[[nodiscard]] RecoveryReplay replayRecovery(const storage::RecoveryStore &store);
-[[nodiscard]] storage::RecoveryTransaction mutationRecoveryTransaction(
-    const FileSession &file, const QString &kind, const QString &id,
-    const QString &observation = {});
-
 // One matching store with app edits when restoration is blocked. The user
 // picks one of these; paths are the exact path bytes of the files it edited.
 struct RecoveryChoice {
     QString session;
     QString directory;
-    QString lastChanged;
+    QDateTime lastChanged;
     std::vector<std::string> paths;
 };
 
 struct RecoveryRestore {
     bool found = false;
-    QString directory;
-    // Whether the adopted store holds a record other than a launch capture.
-    bool userWork = false;
+    // The adopted store; set exactly when found.
+    std::optional<AdoptedStore> adopted;
     std::vector<FileSession> files;
-    std::map<std::string, QString> failures;
     std::set<std::string> newFiles;
-    QStringList diagnostics;
+    // What the restore found and did, for the window to tell the user.
+    QList<Problem> diagnostics;
     // Filled only when several stores with app edits block restoration.
     std::vector<RecoveryChoice> choices;
     // Files whose repository file was replaced by a copy: bytes, mode, size,
     // device, index entries and conversion policy still match the launch
     // capture, only the inode and timestamps changed, as when git mergetool
-    // moves MERGED aside and copies it back. Each keeps its entry in failures
-    // (copiedLaunchFailure) with the identity validation observed; only a
-    // waiting launcher whose MERGED copy holds the launch bytes may clear it.
+    // moves MERGED aside and copies it back. Each keeps its entry in the
+    // adopted store's failures (RecoveryCopiedLaunch) with the identity
+    // validation observed; only a waiting launcher whose MERGED copy holds the
+    // launch bytes may clear it.
     std::map<std::string, SnapshotFileIdentity> copiedLaunches;
-    std::shared_ptr<QLockFile> lease;
 };
 
-// The recovery error of a copiedLaunches entry.
-[[nodiscard]] QString copiedLaunchFailure();
+struct InventoryLimits {
+    qsizetype sessions = 32;
+    qsizetype entries = 65536;
+    qsizetype candidates = 16;
+    qint64 bytes = 1024LL * 1024 * 1024;
+    qint64 decodedBytes = 512LL * 1024 * 1024;
+};
 
-// Worker-only, read-only. Before a waiting launcher clears a copiedLaunches
-// error: empty while the file still has the identity validation observed and
-// the launch bytes, and its index entries and conversion policy still match
-// the capture. Otherwise the error that replaces copiedLaunchFailure.
-[[nodiscard]] QString revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
-    const git::RepositoryContext &repository, const QString &gitExecutable);
+struct RestoreOptions {
+    // Restored and new files align their sources with this, as loaded files do.
+    std::shared_ptr<const CorrespondenceAlgorithm> correspondence;
+    // A set-aside store whose marker is older than kSetAsideLifetimeDays at
+    // this time is deleted. An invalid time deletes none.
+    QDateTime now;
+    std::shared_ptr<const storage::FileSystem> files = storage::systemFileSystem();
+    InventoryLimits inventoryLimits = {};
+};
 
-// Worker-only, read-only repository inspection. Ambiguous inventories and
-// mismatched identities fail closed; no worktree/index mutation is retried.
-// When several stores match, stores holding only launch captures are set
-// aside and never make the inventory ambiguous. chosenSession names the store
-// the user picked; it is adopted and the other matching stores are set aside.
-// If the named store is not adopted, no store with app edits is adopted in its
-// place: the edited stores stay unmarked and are listed as choices.
-// Setting aside writes a marker inside the store and never deletes it.
-[[nodiscard]] RecoveryRestore restoreRecovery(const QString &inventory,
-    const QString &exclude, const git::RepositoryContext &repository,
-    const std::vector<FileSession> &observed, const QString &gitExecutable,
-    const QString &chosenSession = {});
+// How long a set-aside store is kept before a later restore deletes it.
+inline constexpr int kSetAsideLifetimeDays = 30;
+
+// Worker-only, read-only. Runs Git on runners from git and reads the file through files.
+[[nodiscard]] Problem revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
+                                             const git::RepositoryContext &repository, const git::GitRunners &git,
+                                             std::shared_ptr<const storage::FileSystem> files);
+
+// Worker-only. Inspects the repository read-only, running Git on runners from
+// git; ambiguous inventories and
+// mismatched identities fail closed and no worktree or index mutation is
+// retried. Stores holding only launch captures carry no work: one that is not
+// adopted is deleted. chosenSession names the store the user picked; it is
+// adopted and the other matching stores with app edits are set aside. If the
+// named store is not adopted, no store with app edits is adopted in its place:
+// the edited stores stay unmarked and are listed as choices. Setting aside
+// writes a marker inside the store; a set-aside store is deleted once it
+// expires (see RestoreOptions::now).
+[[nodiscard]] RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude,
+                                              const git::RepositoryContext &repository,
+                                              const std::vector<FileSession> &observed, const git::GitRunners &git,
+                                              const QString &chosenSession = {}, const RestoreOptions &options = {});
 }

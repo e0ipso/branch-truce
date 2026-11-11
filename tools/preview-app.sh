@@ -46,24 +46,22 @@
 #
 # Needs WAYLAND_DISPLAY and XDG_RUNTIME_DIR from a sway session (SWAYSOCK or
 # $XDG_RUNTIME_DIR/sway-ipc.*.sock), plus git, swaymsg, jq, grim and comm. The
-# fixture, home and logs live in one private directory, /tmp/bt-preview-fixture
-# (not under $TMPDIR, which varies between sessions). The script creates it
-# exclusively and removes it on every exit, so a second run that starts while
-# the first is active stops with an error instead of sharing it; serialise runs
-# with flock. A run killed with SIGKILL leaves the directory behind, and the
-# next run names it in its error. The checkout and $HOME are not written. Only
-# the app this script started is stopped.
+# fixture, home and logs live in an invocation-owned /tmp/bt-fixture.* directory,
+# removed on exit. The checkout and $HOME are not written. Only the app this
+# script started is stopped. Serialise desktop captures with flock.
 set -euo pipefail
 
 schemes=(BreezeLight BreezeDark)
 fixture_files=(tracked.txt notes.md image.bin)
 
-usage() { echo "Usage: $0 [APP]" >&2; exit 2; }
+usage() { echo "Usage: $0 [APP]"; }
 die() { echo "preview-app: $*" >&2; exit 1; }
 
-(($# <= 1)) || usage
-[[ "${1:-}" != -* ]] || usage
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+(($# <= 1)) || { usage >&2; exit 2; }
+[[ "${1:-}" != -* ]] || { usage >&2; exit 2; }
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+source "$root/tools/lib/fixture.sh"
 app=${1:-$root/build/desktop/src/app/branch-truce}
 [[ -x "$app" && -f "$app" ]] || die "no executable app at $app; build it or pass its path"
 app=$(cd -- "$(dirname -- "$app")" && pwd -P)/$(basename -- "$app")
@@ -108,12 +106,9 @@ else
     output=$(mktemp -d "${TMPDIR:-/tmp}/bt-preview-shots.XXXXXXXX")
     made_output=1
 fi
-# The fixed fixture directory. $work stays empty until this run has created the
-# directory, so the exit handler never removes one that belongs to another run.
-fixture_dir=/tmp/bt-preview-fixture
 work=
-home=$fixture_dir/home
-repo=$fixture_dir/repo
+home=
+repo=
 app_pid=
 scheme=
 log=
@@ -186,30 +181,14 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 cd /
 
-# mkdir without -p fails if the path exists, even as a symlink, so only one run
-# owns the directory and nobody else can have prepared it.
-if [[ -e "$fixture_dir" || -L "$fixture_dir" ]]; then
-    die "$fixture_dir exists: another preview run is active, or one was killed; remove it if none is"
-fi
-mkdir -m 700 -- "$fixture_dir" || die "could not create $fixture_dir"
-work=$fixture_dir
+work=$(fixture_root) || die "could not create fixture root"
+home=$work/home
+repo=$work/repo
 
-source "$root/tools/merge-fixture.sh"
-
-# The isolated environment of the fixture's Git commands and the app.
-base_env=(
-    "PATH=/usr/bin:/bin" "HOME=$home" "TMPDIR=$home/tmp" "LC_ALL=C.UTF-8"
-    "XDG_DATA_HOME=$home/data" "XDG_CONFIG_HOME=$home/config" "XDG_CACHE_HOME=$home/cache"
-    "XDG_RUNTIME_DIR=$home/runtime" "GIT_CONFIG_NOSYSTEM=1" "GIT_CONFIG_GLOBAL=$home/gitconfig"
-    "GIT_TERMINAL_PROMPT=0"
-)
-# The fixture's Git commands also get fixed commit dates. The identity is fixed
-# in the gitconfig that make_merge_fixture writes. Together they make the
-# commit ids the same on every run. The app does not get these.
-fixture_env=(
-    "GIT_AUTHOR_DATE=2000-01-01T00:00:00+0000" "GIT_COMMITTER_DATE=2000-01-01T00:00:00+0000"
-)
-isolated() { (cd "$repo" && env -i "${base_env[@]}" "${fixture_env[@]}" "$@"); }
+# The isolated environment of the app. fixture_merge_repo gives the fixture's
+# Git commands the same one, plus fixed commit dates; with the fixed identity
+# in the gitconfig, the commit ids are the same on every run.
+mapfile -d '' base_env < <(fixture_env "$home")
 
 has_window() {
     swaymsg -t get_tree | jq -e --argjson pid "$app_pid" 'any(.. | objects; .pid? == $pid)' >/dev/null
@@ -243,7 +222,8 @@ capture() {
     local colors=/usr/share/color-schemes/$scheme.colors file=$output/branch-truce-$scheme${size:+-$size}.png
     log=$work/$scheme.log
     local deadline rect=
-    make_merge_fixture "$app" "${fixture_files[@]}" || die "the fixture merge did not stop on a conflict"
+    fixture_home "$work" "$home" && fixture_gitconfig "$work" "$home" "$app" \
+        && fixture_merge_repo "$work" "$home" "$repo" "${fixture_files[@]}" || die "the fixture merge did not stop on a conflict"
     { cat "$colors"; printf '\n[General]\nColorScheme=%s\n' "$scheme"; } > "$home/config/kdeglobals"
     # A new window opens on the focused workspace.
     if [[ -n "$screen" ]]; then

@@ -1,13 +1,17 @@
-// Real-parent mergetool fixtures: installed /usr/bin/git runs `git mergetool`,
+// Real-parent mergetool fixtures: the fixture Git runs `git mergetool`,
 // which runs the Branch Truce launcher, which waits on an in-process session.
 // docs/mergetool-launcher.md records the tested Git version and configuration.
 
-#include "app/ApplicationController.h"
+#include "TestHarness.h"
+#include "app/AppPaths.h"
+#include "app/Application.h"
+#include "app/Translations.h"
+#include "fixtures/AppSession.h"
+#include "fixtures/Await.h"
 #include "fixtures/GitOnPath.h"
-#include "mergetool/MergetoolProtocol.h"
 #include "fixtures/mergetool/GitGate.h"
 #include "fixtures/mergetool/RealParent.h"
-#include "TestHarness.h"
+#include "mergetool/MergetoolSocket.h"
 
 #include <QCoreApplication>
 #include <QFileInfo>
@@ -16,6 +20,8 @@
 
 #include <csignal>
 #include <sys/stat.h>
+
+using test_support::commandResult;
 
 using namespace branch_truce;
 using namespace mergetool_fixture;
@@ -32,75 +38,112 @@ ConflictPath conflict(const QByteArray &path, const QByteArray &launch)
 QString checkSocketDirectory(const ParentRepository &repo)
 {
     CHECK(qEnvironmentVariable("XDG_RUNTIME_DIR") == repo.runtimeDirectory());
-    const auto socket = mergetoolSocketDirectory();
+    const auto socket = mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"));
     if (socket != repo.runtimeDirectory() + QStringLiteral("/branch-truce"))
         throw std::runtime_error("socket directory outside the private runtime directory: " + socket.toStdString());
     return socket;
 }
 
-void openController(ApplicationController &controller, const ParentRepository &repo)
+void openController(Application &controller, const ParentRepository &repo)
 {
     checkSocketDirectory(repo);
     CHECK(controller.loader()->openRepository(repo.root));
     // Opening takes about 0.5 s on an idle host. At load averages of 25 to 36 on 8 cores it
     // averaged 2.5 s and some opens took over 10 s.
-    pump([&] { return !controller.loader()->opening(); }, QStringLiteral("the repository opening did not finish"));
+    pump([&] { return !controller.loader()->opening() && !controller.store()->recording(); },
+         QStringLiteral("the repository opening did not finish"));
     CHECK(!controller.loader()->opening());
-    if (controller.loader()->startupState() != "ready")
+    if (controller.loader()->startupState() != SessionLoader::StartupState::Ready)
         throw std::runtime_error("controller startup: " + controller.loader()->detail().toStdString());
-    CHECK(controller.mergetool()->listening());
+    CHECK(controller.mergetoolSession()->listening());
     CHECK(QFileInfo(checkSocketDirectory(repo)).isDir());
 }
 
-const FileSession &opened(ApplicationController &controller, const QByteArray &path)
+const FileSession &opened(Application &controller, const QByteArray &path)
 {
-    const auto *file = controller.files()->file(path.toHex().toStdString());
+    const auto *file = controller.store()->file(path.toHex().toStdString());
     CHECK(file != nullptr);
     return *file;
 }
 
-QString select(ApplicationController &controller, const QByteArray &path)
+QString select(Application &controller, const QByteArray &path)
 {
     const auto id = QString::fromLatin1(path.toHex());
-    CHECK(controller.selectFile(id));
+    CHECK(controller.selection()->select(id));
     return id;
 }
 
-QString revisionOf(ApplicationController &controller, const QByteArray &path)
+QString revisionOf(Application &controller, const QByteArray &path)
 {
     return QString::number(static_cast<qulonglong>(opened(controller, path).current().id));
 }
 
-std::string draftOf(ApplicationController &controller, const QByteArray &path)
+std::string draftOf(Application &controller, const QByteArray &path)
 {
     return opened(controller, path).current().draft.text;
 }
 
 // Prepends a line to the result, so the draft differs from the bytes Git launched with.
-void editDraft(ApplicationController &controller, const QByteArray &path, const QString &prefix)
+void editDraft(Application &controller, const QByteArray &path, const QString &prefix)
 {
     const auto id = select(controller, path);
-    CHECK(controller.editResult(id, revisionOf(controller, path), 0, 0, prefix));
+    CHECK(commandResult(controller, controller.commands()->editResult(id, revisionOf(controller, path), 0, 0, prefix)));
 }
 
-void waitForWaiter(ApplicationController &controller, const QByteArray &path)
+void waitForWaiter(Application &controller, const QByteArray &path)
 {
-    pump([&] { return controller.mergetool()->waitingPath() == path; },
-         controller.commandMessage() + " | waiting=" + QString::fromLatin1(controller.mergetool()->waitingPath()));
+    pump([&] { return controller.mergetoolSession()->waitingPath() == path; },
+         controller.feedback()->message()
+             + " | waiting=" + QString::fromLatin1(controller.mergetoolSession()->waitingPath()));
 }
 
-bool parentBlocked(const QProcess &parent, ApplicationController &controller, const QByteArray &path)
+bool parentBlocked(const QProcess &parent, Application &controller, const QByteArray &path)
 {
-    return parent.state() == QProcess::Running && controller.mergetool()->hasWaiter(path);
+    return parent.state() == QProcess::Running && controller.mergetoolSession()->hasWaiter(path);
 }
+
+// Waits until the window has no Git task or publication step in flight, so a state checked
+// afterwards cannot change unless the user or Git acts again.
+void waitIdle(Application &controller, const QString &detail)
+{
+    pump([&] { return controller.coordinator()->pendingTasks() == 0 && !controller.publisher()->busy(); },
+         detail + QStringLiteral(" | Git tasks still running"));
+}
+
+// Counts the index inspections the window finished for one path. Acknowledgment polls run one
+// each time they check whether Git staged the offered object.
+class IndexChecks {
+public:
+    IndexChecks(Application &controller, const QByteArray &path)
+    {
+        QObject::connect(controller.coordinator(), &SessionCoordinator::taskFinished, &context_,
+                         [this, path](const TaskCompletion &completion) {
+                             const auto &result = completion.result.gitResult;
+                             if (result && result->request.operation == git::Operation::InspectIndex
+                                 && result->request.path == path)
+                                 ++count_;
+                         });
+    }
+    // Waits for two more checks, so at least one ran wholly after this call.
+    void waitForMore(const QString &detail)
+    {
+        const int target = count_ + 2;
+        pump([&] { return count_ >= target; }, detail + QStringLiteral(" | no acknowledgment check ran"));
+    }
+
+private:
+    QObject context_;
+    int count_ = 0;
+};
 
 // Edits and saves an app-only draft for each path. Returns the saved text per path.
-QMap<QByteArray, std::string> saveDrafts(ApplicationController &controller, const QList<QByteArray> &paths)
+QMap<QByteArray, std::string> saveDrafts(Application &controller, const QList<QByteArray> &paths)
 {
     QMap<QByteArray, std::string> drafts;
     for (const auto &path : paths) {
         editDraft(controller, path, QStringLiteral("draft kept by leave: %1\n").arg(QString::fromLatin1(path)));
-        CHECK(controller.saveDraft(select(controller, path), revisionOf(controller, path)));
+        CHECK(commandResult(controller,
+                            controller.commands()->saveDraft(select(controller, path), revisionOf(controller, path))));
         drafts.insert(path, draftOf(controller, path));
     }
     return drafts;
@@ -109,11 +152,12 @@ QMap<QByteArray, std::string> saveDrafts(ApplicationController &controller, cons
 // A new session on the same repository restores every saved draft, still unresolved.
 void checkRecovered(const ParentRepository &repo, const QMap<QByteArray, std::string> &drafts)
 {
-    ApplicationController reopened(gitOnPath());
+    Application reopened{test_support::windowConfig()};
     openController(reopened, repo);
     for (auto draft = drafts.cbegin(); draft != drafts.cend(); ++draft) {
         const auto &file = opened(reopened, draft.key());
-        CHECK(file.checkpoint() && file.checkpoint()->draft.text == draft.value());
+        CHECK(file.publication().checkpoint()
+              && file.revision(*file.publication().checkpoint())->draft.text == draft.value());
         CHECK(!file.facts().resolved);
     }
 }
@@ -125,14 +169,14 @@ struct SessionEnd {
     bool clean = true;
 };
 
-void watchSessionEnd(ApplicationController &controller, SessionEnd &end)
+void watchSessionEnd(Application &controller, SessionEnd &end)
 {
-    QObject::connect(&controller, &ApplicationController::sessionEnded, &controller,
+    QObject::connect(controller.completion(), &SessionCompletion::sessionEnded, &controller,
                      [&end](const QString &outcome, bool clean) {
-        ++end.count;
-        end.outcome = outcome;
-        end.clean = clean;
-    });
+                         ++end.count;
+                         end.outcome = outcome;
+                         end.clean = clean;
+                     });
 }
 // The Git temporary of one kind (LOCAL, REMOTE, BASE or BACKUP) for a path, which must exist exactly once.
 QString temporary(const ParentRepository &repo, const QByteArray &path, const QString &kind)
@@ -158,7 +202,7 @@ void checkIntakeMatchesGit(const ParentRepository &repo, const QString &intake, 
 
 ino_t inodeOf(const QString &path)
 {
-    struct stat status {};
+    struct stat status{};
     CHECK(::stat(QFile::encodeName(path).constData(), &status) == 0);
     return status.st_ino;
 }
@@ -167,16 +211,18 @@ ino_t inodeOf(const QString &path)
 // restore stays blocked on a choice. Returns the session of the "chosen" store.
 QString twoEditedStores(const ParentRepository &repo)
 {
-    ApplicationController chosen(gitOnPath());
+    Application chosen{test_support::windowConfig()};
     openController(chosen, repo);
     // A second window on the operation finds the socket taken and does not listen.
-    ApplicationController other(gitOnPath());
+    Application other{test_support::windowConfig()};
     CHECK(other.loader()->openRepository(repo.root));
-    pump([&] { return !other.loader()->opening(); }, QStringLiteral("the second window's repository opening did not finish"));
-    CHECK(other.loader()->startupState() == "ready" && !other.mergetool()->listening());
+    pump([&] { return !other.loader()->opening() && !other.store()->recording(); },
+         QStringLiteral("the second window's repository opening did not finish"));
+    CHECK(other.loader()->startupState() == SessionLoader::StartupState::Ready
+          && !other.mergetoolSession()->listening());
     editDraft(chosen, "other.txt", QStringLiteral("chosen\n"));
     editDraft(other, "other.txt", QStringLiteral("other\n"));
-    return QFileInfo(chosen.files()->recoveryDirectory()).fileName();
+    return QFileInfo(chosen.store()->recoveryDirectory()).fileName();
 }
 
 }
@@ -184,80 +230,100 @@ QString twoEditedStores(const ParentRepository &repo)
 int main(int argc, char **argv)
 {
     QCoreApplication application(argc, argv);
-    if (argc != 2) {
-        QTextStream(stderr) << "usage: mergetool-parent-tests <branch-truce>\n";
+    // The English catalog supplies the plural forms the outcome checks read.
+    branch_truce::installTranslations(application);
+    const auto arguments = test_support::configure(argc, argv);
+    if (arguments.size() != 2) {
+        QTextStream(stderr) << "usage: mergetool-parent-tests [--filter TEXT] <branch-truce>\n";
         return 2;
     }
-    launcherBinary = QString::fromLocal8Bit(argv[1]);
+    launcherBinary = QFile::decodeName(QByteArray::fromStdString(arguments[1]));
     {
         QProcess version;
-        version.start("/usr/bin/git", {"--version"});
-        CHECK(version.waitForFinished(5000) && version.exitCode() == 0);
-        QTextStream(stdout) << "parent: /usr/bin/" << version.readAllStandardOutput();
+        version.start(test_support::gitExecutable(), {"--version"});
+        if (!version.waitForFinished(5000) || version.exitCode() != 0) {
+            QTextStream(stderr) << "cannot run " << test_support::gitExecutable() << " --version\n";
+            return 2;
+        }
+        QTextStream(stdout) << "parent: " << test_support::gitExecutable() << ": " << version.readAllStandardOutput();
     }
     test_support::Suite suite("MergetoolParentTests");
 
     suite.run("Save checkpoints in the app only while installed Git stays blocked and nothing is staged", [] {
-        ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n"),
-                                               conflict("other.txt", "other launch bytes\n")});
+        ParentRepository repo(
+            launcherBinary, {conflict("tracked.txt", "launch bytes\n"), conflict("other.txt", "other launch bytes\n")});
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller(gitOnPath());
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         const auto indexBefore = repo.index();
         auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
         waitForWaiter(controller, "tracked.txt");
-        CHECK(controller.parentSessionActive());
+        CHECK(controller.mergetool()->parentSessionActive());
         editDraft(controller, "tracked.txt", QStringLiteral("draft kept in the app\n"));
         const auto draft = draftOf(controller, "tracked.txt");
-        CHECK(controller.saveDraft(select(controller, "tracked.txt"), revisionOf(controller, "tracked.txt")));
-        CHECK(controller.commandMessage().contains(QStringLiteral("repository file unchanged")));
-        CHECK(opened(controller, "tracked.txt").checkpoint());
-        CHECK(opened(controller, "tracked.txt").checkpoint()->draft.text == draft);
+        CHECK(commandResult(controller,
+                            controller.commands()->saveDraft(select(controller, "tracked.txt"),
+                                                             revisionOf(controller, "tracked.txt"))));
+        CHECK(controller.feedback()->message().contains(QStringLiteral("repository file unchanged")));
+        CHECK(opened(controller, "tracked.txt").publication().checkpoint());
+        CHECK(opened(controller, "tracked.txt")
+                  .revision(*opened(controller, "tracked.txt").publication().checkpoint())
+                  ->draft.text
+              == draft);
         CHECK(!opened(controller, "tracked.txt").facts().resolved);
         // Git is still inside the tool command; a launcher that returned would let it stage or restore.
-        holdFor(1000, [&] { return parentBlocked(*parent, controller, "tracked.txt"); },
-                QStringLiteral("the parent was released by Save"));
+        // Only an offer or a leave sends the launcher a decision, and with no offer and nothing in
+        // flight neither can come.
+        waitIdle(controller, QStringLiteral("after Save"));
+        CHECK(!controller.publisher()->parentStagingOffer(select(controller, "tracked.txt").toStdString()));
+        CHECK(parentBlocked(*parent, controller, "tracked.txt"));
         CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
         CHECK(repo.index() == indexBefore);
         CHECK(repo.unmerged("tracked.txt") && repo.unmerged("other.txt"));
-        CHECK(controller.leaveMergetool());
-        waitParent(*parent, 1, controller.commandMessage());
+        CHECK(controller.mergetool()->leave());
+        waitParent(*parent, 1, controller.feedback()->message());
         CHECK(repo.index() == indexBefore);
         CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
-        CHECK(opened(controller, "tracked.txt").checkpoint()->draft.text == draft);
+        CHECK(opened(controller, "tracked.txt")
+                  .revision(*opened(controller, "tracked.txt").publication().checkpoint())
+                  ->draft.text
+              == draft);
     });
 
     suite.run("Git stages the launched path itself and resolution waits for the exact acknowledged object", [] {
-        ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n"),
-                                               conflict("other.txt", "other launch bytes\n")});
+        ParentRepository repo(
+            launcherBinary, {conflict("tracked.txt", "launch bytes\n"), conflict("other.txt", "other launch bytes\n")});
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller(gitOnPath());
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         auto parent = startParent(repo, ParentRepository::GatedTool, {"tracked.txt"});
         waitForWaiter(controller, "tracked.txt");
+        IndexChecks checks(controller, "tracked.txt");
         editDraft(controller, "tracked.txt", QStringLiteral("reviewed in the app\n"));
         const auto id = select(controller, "tracked.txt");
         const auto expected = QByteArray::fromStdString(draftOf(controller, "tracked.txt"));
-        CHECK(controller.markResolved(id, revisionOf(controller, "tracked.txt"), true));
+        CHECK(controller.commands()->markResolved(id, revisionOf(controller, "tracked.txt"), true));
         // The launcher returned 0; the parent now holds before its own `git add`.
-        pump([&] { return repo.exits() == "tracked.txt 0\n"; }, controller.commandMessage() + " | launcher still waiting");
-        const auto offer = controller.parentStagingOffer(id);
+        pump([&] { return repo.exits() == "tracked.txt 0\n"; },
+             controller.feedback()->message() + " | launcher still waiting");
+        const auto offer = controller.publisher()->parentStagingOffer(id.toStdString());
         CHECK(offer && offer->path == "tracked.txt");
         CHECK(offer->canonicalObjectId == repo.objectOf(expected));
         CHECK(readFile(repo.path("tracked.txt")) == expected);
-        holdFor(800, [&] {
-            return !opened(controller, "tracked.txt").facts().resolved && repo.unmerged("tracked.txt");
-        }, QStringLiteral("resolution was reported before the parent staged the path"));
+        // The gate holds Git before its own `git add`, so every acknowledgment check finds the path
+        // unstaged and none may report it resolved.
+        checks.waitForMore(controller.feedback()->message());
+        CHECK(!opened(controller, "tracked.txt").facts().resolved && repo.unmerged("tracked.txt"));
         CHECK(parent->state() == QProcess::Running);
         repo.release();
-        waitParent(*parent, 0, controller.commandMessage());
-        pump([&] { return opened(controller, "tracked.txt").facts().resolved; }, controller.commandMessage());
+        waitParent(*parent, 0, controller.feedback()->message());
+        pump([&] { return opened(controller, "tracked.txt").facts().resolved; }, controller.feedback()->message());
         CHECK(!repo.unmerged("tracked.txt"));
         CHECK(repo.stagedObject("tracked.txt") == offer->canonicalObjectId);
         CHECK(repo.git({"show", ":tracked.txt"}) == expected);
         CHECK(repo.unmerged("other.txt"));
         CHECK(repo.stagedObject("notes.txt") == repo.notesObject);
-        CHECK(!controller.parentStagingOffer(id));
+        CHECK(!controller.publisher()->parentStagingOffer(id.toStdString()));
     });
 
     // the in-window recovery choice reloads the files while
@@ -265,214 +331,253 @@ int main(int argc, char **argv)
     // aside and copied it back, so only the inode and timestamps changed. The
     // waiting launcher's MERGED copy holds the captured launch bytes, so the
     // restore accepts the copy and Mark resolved hands the path back to Git.
-    suite.run("a recovery choice made while Git waits keeps the launched path editable and Mark resolved hands it back to Git", [] {
-        ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n"),
-                                               conflict("other.txt", "other launch bytes\n")});
-        ScopedEnvironment environment(repo.environment);
-        const auto session = twoEditedStores(repo);
-        ApplicationController controller(gitOnPath());
-        openController(controller, repo);
-        const auto launchInode = inodeOf(repo.path("tracked.txt"));
-        auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
-        waitForWaiter(controller, "tracked.txt");
-        // Git's copy is a new file with the same bytes.
-        CHECK(inodeOf(repo.path("tracked.txt")) != launchInode);
-        CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
-        CHECK(readFile(controller.mergetool()->intakes().front() + "/merged") == "launch bytes\n");
-        CHECK(controller.loader()->chooseRecoverySession(session));
-        pump([&] { return !controller.loader()->opening(); }, controller.loader()->detail());
-        CHECK(controller.loader()->startupState() == "ready" && controller.loader()->recoveryChoices().isEmpty());
-        CHECK(draftOf(controller, "other.txt").starts_with("chosen\n"));
-        CHECK(opened(controller, "tracked.txt").snapshots()->launchResult.text.bytes == "launch bytes\n");
-        waitForWaiter(controller, "tracked.txt");
-        const auto id = select(controller, "tracked.txt");
-        // Git rechecks the index and conversion policy before the error clears.
-        pump([&] { return !controller.files()->hasRecoveryFailure(id.toStdString()); }, controller.commandMessage());
-        CHECK(controller.mergetoolWaiting());
-        editDraft(controller, "tracked.txt", QStringLiteral("reviewed after the choice\n"));
-        const auto expected = QByteArray::fromStdString(draftOf(controller, "tracked.txt"));
-        CHECK(controller.markResolved(id, revisionOf(controller, "tracked.txt"), true));
-        waitParent(*parent, 0, controller.commandMessage());
-        pump([&] { return opened(controller, "tracked.txt").facts().resolved; }, controller.commandMessage());
-        CHECK(!repo.unmerged("tracked.txt"));
-        CHECK(repo.git({"show", ":tracked.txt"}) == expected);
-        CHECK(readFile(repo.path("tracked.txt")) == expected);
-        CHECK(repo.unmerged("other.txt"));
-        CHECK(repo.stagedObject("notes.txt") == repo.notesObject);
-        CHECK(!controller.mergetool()->hasWaiter("tracked.txt"));
-    });
+    suite.run("a recovery choice made while Git waits keeps the launched path editable and Mark resolved hands it back "
+              "to Git",
+              [] {
+                  ParentRepository repo(
+                      launcherBinary,
+                      {conflict("tracked.txt", "launch bytes\n"), conflict("other.txt", "other launch bytes\n")});
+                  ScopedEnvironment environment(repo.environment);
+                  const auto session = twoEditedStores(repo);
+                  Application controller{test_support::windowConfig()};
+                  openController(controller, repo);
+                  const auto launchInode = inodeOf(repo.path("tracked.txt"));
+                  auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
+                  waitForWaiter(controller, "tracked.txt");
+                  // Git's copy is a new file with the same bytes.
+                  CHECK(inodeOf(repo.path("tracked.txt")) != launchInode);
+                  CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
+                  CHECK(readFile(controller.mergetoolSession()->intake("tracked.txt") + "/merged") == "launch bytes\n");
+                  CHECK(controller.loader()->chooseRecoverySession(session));
+                  pump([&] { return !controller.loader()->opening(); }, controller.loader()->detail());
+                  CHECK(controller.loader()->startupState() == SessionLoader::StartupState::Ready
+                        && controller.loader()->recoveryChoices().isEmpty());
+                  CHECK(draftOf(controller, "other.txt").starts_with("chosen\n"));
+                  CHECK(opened(controller, "tracked.txt").snapshots()->launchResult.text.bytes == "launch bytes\n");
+                  waitForWaiter(controller, "tracked.txt");
+                  const auto id = select(controller, "tracked.txt");
+                  // Git rechecks the index and conversion policy before the error clears.
+                  pump([&] { return !controller.store()->hasRecoveryFailure(id.toStdString()); },
+                       controller.feedback()->message());
+                  CHECK(controller.mergetool()->waiting());
+                  editDraft(controller, "tracked.txt", QStringLiteral("reviewed after the choice\n"));
+                  const auto expected = QByteArray::fromStdString(draftOf(controller, "tracked.txt"));
+                  CHECK(controller.commands()->markResolved(id, revisionOf(controller, "tracked.txt"), true));
+                  waitParent(*parent, 0, controller.feedback()->message());
+                  pump([&] { return opened(controller, "tracked.txt").facts().resolved; },
+                       controller.feedback()->message());
+                  CHECK(!repo.unmerged("tracked.txt"));
+                  CHECK(repo.git({"show", ":tracked.txt"}) == expected);
+                  CHECK(readFile(repo.path("tracked.txt")) == expected);
+                  CHECK(repo.unmerged("other.txt"));
+                  CHECK(repo.stagedObject("notes.txt") == repo.notesObject);
+                  CHECK(!controller.mergetoolSession()->hasWaiter("tracked.txt"));
+              });
 
-    suite.run("an outside edit of the launched path before a recovery choice keeps its recovery error and stages nothing", [] {
-        ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n"),
-                                               conflict("other.txt", "other launch bytes\n")});
-        ScopedEnvironment environment(repo.environment);
-        const auto session = twoEditedStores(repo);
-        const auto indexBefore = repo.index();
-        ApplicationController controller(gitOnPath());
-        openController(controller, repo);
-        auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
-        waitForWaiter(controller, "tracked.txt");
-        writeFile(repo.path("tracked.txt"), "written by another editor\n");
-        CHECK(controller.loader()->chooseRecoverySession(session));
-        pump([&] { return !controller.loader()->opening(); }, controller.loader()->detail());
-        CHECK(controller.loader()->startupState() == "ready" && controller.loader()->recoveryChoices().isEmpty());
-        waitForWaiter(controller, "tracked.txt");
-        const auto id = select(controller, "tracked.txt");
-        CHECK(controller.files()->hasRecoveryFailure(id.toStdString()));
-        CHECK(!controller.markResolved(id, revisionOf(controller, "tracked.txt"), true));
-        holdFor(800, [&] {
-            return parentBlocked(*parent, controller, "tracked.txt") && repo.index() == indexBefore
-                && !opened(controller, "tracked.txt").facts().resolved;
-        }, controller.commandMessage() + QStringLiteral(" | the path was staged or the parent released"));
-        CHECK(readFile(repo.path("tracked.txt")) == "written by another editor\n");
-        const auto draft = draftOf(controller, "tracked.txt");
-        CHECK(controller.leaveMergetool());
-        waitParent(*parent, 1, controller.commandMessage());
-        CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
-        CHECK(repo.index() == indexBefore);
-        CHECK(repo.unmerged("tracked.txt") && repo.unmerged("other.txt"));
-        CHECK(!opened(controller, "tracked.txt").facts().resolved);
-        CHECK(draftOf(controller, "tracked.txt") == draft);
-        CHECK(!controller.mergetool()->hasWaiter("tracked.txt"));
-    });
+    suite.run(
+        "an outside edit of the launched path before a recovery choice keeps its recovery error and stages nothing",
+        [] {
+            ParentRepository repo(
+                launcherBinary,
+                {conflict("tracked.txt", "launch bytes\n"), conflict("other.txt", "other launch bytes\n")});
+            ScopedEnvironment environment(repo.environment);
+            const auto session = twoEditedStores(repo);
+            const auto indexBefore = repo.index();
+            Application controller{test_support::windowConfig()};
+            openController(controller, repo);
+            auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
+            waitForWaiter(controller, "tracked.txt");
+            writeFile(repo.path("tracked.txt"), "written by another editor\n");
+            CHECK(controller.loader()->chooseRecoverySession(session));
+            pump([&] { return !controller.loader()->opening(); }, controller.loader()->detail());
+            CHECK(controller.loader()->startupState() == SessionLoader::StartupState::Ready
+                  && controller.loader()->recoveryChoices().isEmpty());
+            waitForWaiter(controller, "tracked.txt");
+            const auto id = select(controller, "tracked.txt");
+            CHECK(controller.store()->hasRecoveryFailure(id.toStdString()));
+            CHECK(!controller.commands()->markResolved(id, revisionOf(controller, "tracked.txt"), true));
+            // The refusal started nothing, so nothing in flight can stage the path or release Git.
+            waitIdle(controller, controller.feedback()->message());
+            CHECK(parentBlocked(*parent, controller, "tracked.txt") && repo.index() == indexBefore);
+            CHECK(!opened(controller, "tracked.txt").facts().resolved);
+            CHECK(readFile(repo.path("tracked.txt")) == "written by another editor\n");
+            const auto draft = draftOf(controller, "tracked.txt");
+            CHECK(controller.mergetool()->leave());
+            waitParent(*parent, 1, controller.feedback()->message());
+            CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
+            CHECK(repo.index() == indexBefore);
+            CHECK(repo.unmerged("tracked.txt") && repo.unmerged("other.txt"));
+            CHECK(!opened(controller, "tracked.txt").facts().resolved);
+            CHECK(draftOf(controller, "tracked.txt") == draft);
+            CHECK(!controller.mergetoolSession()->hasWaiter("tracked.txt"));
+        });
 
     // the waiting launcher's MERGED copy still holds the launch
     // bytes, but the index entries or the conversion policy changed since the
     // store captured the path, so the restored draft keeps its recovery error.
-    suite.run("a staged launched path or a changed conversion policy before a recovery choice keeps its recovery error", [] {
-        for (const QByteArray &change : {QByteArray("staged"), QByteArray("autocrlf")}) {
-            ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n"),
-                                                   conflict("other.txt", "other launch bytes\n")});
-            ScopedEnvironment environment(repo.environment);
-            const auto session = twoEditedStores(repo);
-            ApplicationController controller(gitOnPath());
-            openController(controller, repo);
-            auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
-            waitForWaiter(controller, "tracked.txt");
-            CHECK(readFile(controller.mergetool()->intakes().front() + "/merged") == "launch bytes\n");
-            if (change == "staged") repo.git({"add", "--", "tracked.txt"});
-            else repo.git({"config", "core.autocrlf", "true"});
-            const auto indexChanged = repo.index();
-            CHECK(controller.loader()->chooseRecoverySession(session));
-            pump([&] { return !controller.loader()->opening(); }, controller.loader()->detail());
-            CHECK(controller.loader()->startupState() == "ready" && controller.loader()->recoveryChoices().isEmpty());
-            waitForWaiter(controller, "tracked.txt");
-            const auto id = select(controller, "tracked.txt");
-            holdFor(800, [&] {
-                return controller.files()->hasRecoveryFailure(id.toStdString())
-                    && parentBlocked(*parent, controller, "tracked.txt") && repo.index() == indexChanged;
-            }, QString::fromLatin1(change) + QStringLiteral(": the recovery error cleared or the parent was released | ")
-                + controller.commandMessage());
-            CHECK(!controller.editResult(id, revisionOf(controller, "tracked.txt"), 0, 0, QStringLiteral("edited\n")));
-            CHECK(!controller.markResolved(id, revisionOf(controller, "tracked.txt"), true));
-            CHECK(controller.leaveMergetool());
-            waitParent(*parent, 1, controller.commandMessage());
-            CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
-            CHECK(repo.index() == indexChanged);
-            CHECK(!opened(controller, "tracked.txt").facts().resolved);
-        }
-    });
+    suite.run(
+        "a staged launched path or a changed conversion policy before a recovery choice keeps its recovery error", [] {
+            for (const QByteArray &change : {QByteArray("staged"), QByteArray("autocrlf")}) {
+                ParentRepository repo(
+                    launcherBinary,
+                    {conflict("tracked.txt", "launch bytes\n"), conflict("other.txt", "other launch bytes\n")});
+                ScopedEnvironment environment(repo.environment);
+                const auto session = twoEditedStores(repo);
+                Application controller{test_support::windowConfig()};
+                openController(controller, repo);
+                auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
+                waitForWaiter(controller, "tracked.txt");
+                CHECK(readFile(controller.mergetoolSession()->intake("tracked.txt") + "/merged") == "launch bytes\n");
+                if (change == "staged")
+                    repo.git({"add", "--", "tracked.txt"});
+                else
+                    repo.git({"config", "core.autocrlf", "true"});
+                const auto indexChanged = repo.index();
+                CHECK(controller.loader()->chooseRecoverySession(session));
+                pump([&] { return !controller.loader()->opening(); }, controller.loader()->detail());
+                CHECK(controller.loader()->startupState() == SessionLoader::StartupState::Ready
+                      && controller.loader()->recoveryChoices().isEmpty());
+                waitForWaiter(controller, "tracked.txt");
+                const auto id = select(controller, "tracked.txt");
+                // Every revalidation the choice started has finished.
+                waitIdle(controller, QString::fromLatin1(change));
+                CHECK(controller.store()->hasRecoveryFailure(id.toStdString()));
+                CHECK(parentBlocked(*parent, controller, "tracked.txt") && repo.index() == indexChanged);
+                CHECK(!commandResult(controller,
+                                     controller.commands()->editResult(id, revisionOf(controller, "tracked.txt"), 0, 0,
+                                                                       QStringLiteral("edited\n"))));
+                CHECK(!controller.commands()->markResolved(id, revisionOf(controller, "tracked.txt"), true));
+                CHECK(controller.mergetool()->leave());
+                waitParent(*parent, 1, controller.feedback()->message());
+                CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
+                CHECK(repo.index() == indexChanged);
+                CHECK(!opened(controller, "tracked.txt").facts().resolved);
+            }
+        });
 
     // the restore after the choice validates the index and policy
     // itself, so the case above keeps its error even without the revalidation.
     // Here both change after the restore and while the revalidation that the
     // choice starts waits on its first index inspection, so only the
     // revalidation can see them.
-    suite.run("a path staged or a conversion policy changed while a recovery choice revalidates the launched path keeps its recovery error", [] {
-        for (const QByteArray &change : {QByteArray("staged"), QByteArray("autocrlf")}) {
-            ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n"),
-                                                   conflict("other.txt", "other launch bytes\n")});
-            ScopedEnvironment environment(repo.environment);
-            const auto session = twoEditedStores(repo);
-            // Open until close, so the load runs Git through it unchanged.
-            GitGate gate("tracked.txt");
-            ApplicationController controller(gate.executable());
-            // Runs before the controller goes, so its tasks never wait on a held call.
-            const auto releaseGate = qScopeGuard([&gate] { gate.open(); gate.releaseAll(); });
-            openController(controller, repo);
-            auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
-            waitForWaiter(controller, "tracked.txt");
-            gate.close(QStringLiteral("ls-files"));
-            CHECK(controller.loader()->chooseRecoverySession(session));
-            // Calls held while the load runs are the restore's. The load
-            // completes on this thread, so a call held after it is the
-            // revalidation's.
-            QString revalidation;
-            pump([&] {
-                for (const auto &call : gate.held()) {
-                    if (!controller.loader()->opening()) {
-                        revalidation = call;
-                        return true;
-                    }
-                    gate.release(call);
-                }
-                return false;
-            }, QString::fromLatin1(change) + QStringLiteral(": no revalidation after the choice | ") + controller.loader()->detail());
-            CHECK(gate.held() == QStringList{revalidation});
-            CHECK(gate.arguments(revalidation).contains("ls-files --stage -z -- tracked.txt"));
-            gate.open();
-            CHECK(controller.loader()->startupState() == "ready" && controller.loader()->recoveryChoices().isEmpty());
-            const auto id = select(controller, "tracked.txt");
-            CHECK(controller.files()->hasRecoveryFailure(id.toStdString()));
-            if (change == "staged") repo.git({"add", "--", "tracked.txt"});
-            else repo.git({"config", "core.autocrlf", "true"});
-            const auto indexChanged = repo.index();
-            gate.release(revalidation);
-            holdFor(800, [&] {
-                return controller.files()->hasRecoveryFailure(id.toStdString())
-                    && parentBlocked(*parent, controller, "tracked.txt") && repo.index() == indexChanged;
-            }, QString::fromLatin1(change) + QStringLiteral(": the recovery error cleared or the parent was released | ")
-                + controller.commandMessage());
-            CHECK(!controller.editResult(id, revisionOf(controller, "tracked.txt"), 0, 0, QStringLiteral("edited\n")));
-            CHECK(!controller.markResolved(id, revisionOf(controller, "tracked.txt"), true));
-            CHECK(controller.leaveMergetool());
-            waitParent(*parent, 1, controller.commandMessage());
-            CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
-            CHECK(repo.index() == indexChanged);
-            CHECK(!opened(controller, "tracked.txt").facts().resolved);
-        }
-    });
+    suite.run("a path staged or a conversion policy changed while a recovery choice revalidates the launched path "
+              "keeps its recovery error",
+              [] {
+                  for (const QByteArray &change : {QByteArray("staged"), QByteArray("autocrlf")}) {
+                      ParentRepository repo(
+                          launcherBinary,
+                          {conflict("tracked.txt", "launch bytes\n"), conflict("other.txt", "other launch bytes\n")});
+                      ScopedEnvironment environment(repo.environment);
+                      const auto session = twoEditedStores(repo);
+                      // Open until close, so the load runs Git through it unchanged.
+                      GitGate gate("tracked.txt");
+                      Application controller{test_support::windowConfig(gate.executable())};
+                      // Runs before the controller goes, so its tasks never wait on a held call.
+                      const auto releaseGate = qScopeGuard([&gate] {
+                          gate.open();
+                          gate.releaseAll();
+                      });
+                      openController(controller, repo);
+                      auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
+                      waitForWaiter(controller, "tracked.txt");
+                      gate.close(QStringLiteral("ls-files"));
+                      CHECK(controller.loader()->chooseRecoverySession(session));
+                      // Calls held while the load runs are the restore's. The load
+                      // completes on this thread, so a call held after it is the
+                      // revalidation's.
+                      QString revalidation;
+                      pump(
+                          [&] {
+                              for (const auto &call : gate.held()) {
+                                  if (!controller.loader()->opening()) {
+                                      revalidation = call;
+                                      return true;
+                                  }
+                                  gate.release(call);
+                              }
+                              return false;
+                          },
+                          QString::fromLatin1(change) + QStringLiteral(": no revalidation after the choice | ")
+                              + controller.loader()->detail());
+                      CHECK(gate.held() == QStringList{revalidation});
+                      CHECK(gate.arguments(revalidation).contains("ls-files --stage -z -- tracked.txt"));
+                      gate.open();
+                      CHECK(controller.loader()->startupState() == SessionLoader::StartupState::Ready
+                            && controller.loader()->recoveryChoices().isEmpty());
+                      const auto id = select(controller, "tracked.txt");
+                      CHECK(controller.store()->hasRecoveryFailure(id.toStdString()));
+                      if (change == "staged")
+                          repo.git({"add", "--", "tracked.txt"});
+                      else
+                          repo.git({"config", "core.autocrlf", "true"});
+                      const auto indexChanged = repo.index();
+                      gate.release(revalidation);
+                      // The released revalidation has finished and found the change.
+                      waitIdle(controller, QString::fromLatin1(change));
+                      CHECK(controller.store()->hasRecoveryFailure(id.toStdString()));
+                      CHECK(parentBlocked(*parent, controller, "tracked.txt") && repo.index() == indexChanged);
+                      CHECK(!commandResult(controller,
+                                           controller.commands()->editResult(id, revisionOf(controller, "tracked.txt"),
+                                                                             0, 0, QStringLiteral("edited\n"))));
+                      CHECK(!controller.commands()->markResolved(id, revisionOf(controller, "tracked.txt"), true));
+                      CHECK(controller.mergetool()->leave());
+                      waitParent(*parent, 1, controller.feedback()->message());
+                      CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
+                      CHECK(repo.index() == indexChanged);
+                      CHECK(!opened(controller, "tracked.txt").facts().resolved);
+                  }
+              });
 
     suite.run("bytes the parent stages after the launcher are not acknowledged as the reviewed result", [] {
         ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n")});
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller(gitOnPath());
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         auto parent = startParent(repo, ParentRepository::TamperTool, {"tracked.txt"});
         waitForWaiter(controller, "tracked.txt");
         editDraft(controller, "tracked.txt", QStringLiteral("reviewed in the app\n"));
         const auto id = select(controller, "tracked.txt");
-        CHECK(controller.markResolved(id, revisionOf(controller, "tracked.txt"), true));
-        waitParent(*parent, 0, controller.commandMessage());
+        CHECK(controller.commands()->markResolved(id, revisionOf(controller, "tracked.txt"), true));
+        waitParent(*parent, 0, controller.feedback()->message());
         CHECK(repo.git({"show", ":tracked.txt"}) == ParentRepository::TamperedBytes);
-        pump([&] {
-            return controller.commandMessage().contains(QStringLiteral("does not contain the reviewed result"));
-        }, controller.commandMessage());
+        pump(
+            [&] {
+                return controller.feedback()->message().contains(
+                    QStringLiteral("does not contain the reviewed result"));
+            },
+            controller.feedback()->message());
         CHECK(!opened(controller, "tracked.txt").facts().resolved);
-        CHECK(opened(controller, "tracked.txt").checkpoint());
+        CHECK(opened(controller, "tracked.txt").publication().checkpoint());
     });
 
     suite.run("leave restores the parent-visible file after an outside edit and keeps the saved draft", [] {
         ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n")});
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller(gitOnPath());
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         const auto indexBefore = repo.index();
         auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
         waitForWaiter(controller, "tracked.txt");
-        const auto intake = controller.mergetool()->intakes().front();
+        const auto intake = controller.mergetoolSession()->intake("tracked.txt");
+        CHECK(readFile(intake + "/merged") == "launch bytes\n");
         editDraft(controller, "tracked.txt", QStringLiteral("draft before leave\n"));
         const auto draft = draftOf(controller, "tracked.txt");
-        CHECK(controller.saveDraft(select(controller, "tracked.txt"), revisionOf(controller, "tracked.txt")));
+        CHECK(commandResult(controller,
+                            controller.commands()->saveDraft(select(controller, "tracked.txt"),
+                                                             revisionOf(controller, "tracked.txt"))));
         writeFile(repo.path("tracked.txt"), "written by another editor\n");
-        CHECK(controller.leaveMergetool());
-        waitParent(*parent, 1, controller.commandMessage());
+        CHECK(controller.mergetool()->leave());
+        waitParent(*parent, 1, controller.feedback()->message());
         CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
         CHECK(repo.index() == indexBefore);
         CHECK(repo.gitTemporaries("tracked.txt").isEmpty());
-        CHECK(opened(controller, "tracked.txt").checkpoint()->draft.text == draft);
+        CHECK(opened(controller, "tracked.txt")
+                  .revision(*opened(controller, "tracked.txt").publication().checkpoint())
+                  ->draft.text
+              == draft);
         CHECK(!opened(controller, "tracked.txt").facts().resolved);
-        CHECK(readFile(intake + "/merged") == "launch bytes\n");
+        // The launcher removed its copies when it exited.
+        CHECK(!QFileInfo::exists(intake));
     });
 
     suite.run("a hard quit that destroys the session fails the tool and a new session recovers the draft", [] {
@@ -480,218 +585,242 @@ int main(int argc, char **argv)
         ScopedEnvironment environment(repo.environment);
         const auto indexBefore = repo.index();
         std::string draft;
-        auto controller = std::make_unique<ApplicationController>(gitOnPath());
+        auto controller = std::make_unique<Application>(test_support::windowConfig());
         openController(*controller, repo);
         auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
         waitForWaiter(*controller, "tracked.txt");
         editDraft(*controller, "tracked.txt", QStringLiteral("draft across sessions\n"));
         draft = draftOf(*controller, "tracked.txt");
-        CHECK(controller->saveDraft(select(*controller, "tracked.txt"), revisionOf(*controller, "tracked.txt")));
+        CHECK(controller->commands()->saveDraft(select(*controller, "tracked.txt"),
+                                                revisionOf(*controller, "tracked.txt")));
         controller.reset();
         waitParent(*parent, 1, QStringLiteral("closed session"));
         // A dropped session, unlike an explicit leave, makes the launcher report the missing decision.
         CHECK(parent->readAllStandardError().contains("closed before an explicit decision"));
         CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
         CHECK(repo.index() == indexBefore);
-        ApplicationController reopened(gitOnPath());
+        Application reopened{test_support::windowConfig()};
         openController(reopened, repo);
-        CHECK(opened(reopened, "tracked.txt").checkpoint());
-        CHECK(opened(reopened, "tracked.txt").checkpoint()->draft.text == draft);
+        CHECK(opened(reopened, "tracked.txt").publication().checkpoint());
+        CHECK(opened(reopened, "tracked.txt")
+                  .revision(*opened(reopened, "tracked.txt").publication().checkpoint())
+                  ->draft.text
+              == draft);
         CHECK(!opened(reopened, "tracked.txt").facts().resolved);
     });
 
-    suite.run("leaveSession fails the launched tool without staging, restores MERGED and a new session restores the drafts", [] {
-        ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n"),
-                                               conflict("other.txt", "other launch bytes\n")});
-        ScopedEnvironment environment(repo.environment);
-        const auto indexBefore = repo.index();
-        auto controller = std::make_unique<ApplicationController>(gitOnPath());
-        openController(*controller, repo);
-        auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
-        waitForWaiter(*controller, "tracked.txt");
-        const auto intake = controller->mergetool()->intakes().front();
-        const auto drafts = saveDrafts(*controller, {"tracked.txt", "other.txt"});
-        writeFile(repo.path("tracked.txt"), "written by another editor\n");
-        SessionEnd end;
-        watchSessionEnd(*controller, end);
-        CHECK(controller->leaveSession());
-        CHECK(end.count == 1 && !end.clean);
-        CHECK(end.outcome.contains(QStringLiteral("1 launched path returned to Git unresolved.")));
-        // The session stays alive here, so only the explicit leave frame can release the launcher.
-        waitParent(*parent, 1, controller->commandMessage());
-        const auto errors = parent->readAllStandardError();
-        CHECK(errors.contains("merge of tracked.txt failed"));
-        CHECK(!errors.contains("closed before an explicit decision"));
-        CHECK(!controller->mergetool()->hasWaiter("tracked.txt"));
-        CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
-        CHECK(readFile(repo.path("other.txt")) == "other launch bytes\n");
-        CHECK(repo.index() == indexBefore);
-        CHECK(repo.gitTemporaries("tracked.txt").isEmpty());
-        CHECK(readFile(intake + "/merged") == "launch bytes\n");
-        CHECK(!controller->leaveSession() && end.count == 1);
-        controller.reset();
-        checkRecovered(repo, drafts);
-    });
+    suite.run(
+        "leaveSession fails the launched tool without staging, restores MERGED and a new session restores the drafts",
+        [] {
+            ParentRepository repo(
+                launcherBinary,
+                {conflict("tracked.txt", "launch bytes\n"), conflict("other.txt", "other launch bytes\n")});
+            ScopedEnvironment environment(repo.environment);
+            const auto indexBefore = repo.index();
+            auto controller = std::make_unique<Application>(test_support::windowConfig());
+            openController(*controller, repo);
+            auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
+            waitForWaiter(*controller, "tracked.txt");
+            const auto intake = controller->mergetoolSession()->intake("tracked.txt");
+            const auto drafts = saveDrafts(*controller, {"tracked.txt", "other.txt"});
+            writeFile(repo.path("tracked.txt"), "written by another editor\n");
+            SessionEnd end;
+            watchSessionEnd(*controller, end);
+            CHECK(controller->completion()->leave());
+            CHECK(end.count == 1 && !end.clean);
+            CHECK(end.outcome.contains(QStringLiteral("1 launched path returned to Git unresolved.")));
+            // The session stays alive here, so only the explicit leave frame can release the launcher.
+            waitParent(*parent, 1, controller->feedback()->message());
+            const auto errors = parent->readAllStandardError();
+            CHECK(errors.contains("merge of tracked.txt failed"));
+            CHECK(!errors.contains("closed before an explicit decision"));
+            CHECK(!controller->mergetoolSession()->hasWaiter("tracked.txt"));
+            CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
+            CHECK(readFile(repo.path("other.txt")) == "other launch bytes\n");
+            CHECK(repo.index() == indexBefore);
+            CHECK(repo.gitTemporaries("tracked.txt").isEmpty());
+            CHECK(!intake.isEmpty() && !QFileInfo::exists(intake));
+            CHECK(!controller->completion()->leave() && end.count == 1);
+            controller.reset();
+            checkRecovered(repo, drafts);
+        });
 
-    suite.run("leaveSession during a multi-path run sends the waiting launcher a leave and Git stages nothing more", [] {
-        ParentRepository repo(launcherBinary, {conflict("alpha.txt", "alpha launch\n"),
-                                               conflict("beta.txt", "beta launch\n"),
-                                               conflict("gamma.txt", "gamma launch\n")});
-        ScopedEnvironment environment(repo.environment);
-        auto controller = std::make_unique<ApplicationController>(gitOnPath());
-        openController(*controller, repo);
-        auto parent = startParent(repo, ParentRepository::GatedTool, {});
-        // Resolve alpha.txt first, so the leave must skip a launcher that already has its decision.
-        waitForWaiter(*controller, "alpha.txt");
-        editDraft(*controller, "alpha.txt", QStringLiteral("resolved before leaving\n"));
-        const auto alpha = QByteArray::fromStdString(draftOf(*controller, "alpha.txt"));
-        CHECK(controller->markResolved(select(*controller, "alpha.txt"), revisionOf(*controller, "alpha.txt"), true));
-        pump([&] { return repo.exits() == "alpha.txt 0\n"; }, controller->commandMessage());
-        repo.release();
-        pump([&] {
-            return opened(*controller, "alpha.txt").facts().resolved && controller->mergetool()->waitingPath() == "beta.txt";
-        }, controller->commandMessage() + " | waiting=" + QString::fromLatin1(controller->mergetool()->waitingPath()));
-        CHECK(repo.stagedObject("alpha.txt") == repo.objectOf(alpha));
-        const auto indexBefore = repo.index();
-        const auto drafts = saveDrafts(*controller, {"beta.txt", "gamma.txt"});
-        SessionEnd end;
-        watchSessionEnd(*controller, end);
-        CHECK(controller->leaveSession());
-        CHECK(end.count == 1 && !end.clean);
-        CHECK(end.outcome.contains(QStringLiteral("Left with 2 of 3 files outstanding.")));
-        CHECK(end.outcome.contains(QStringLiteral("1 launched path returned to Git unresolved.")));
-        // The gated parent records the launcher's status, then holds before Git restores or stages.
-        pump([&] { return repo.exits() == "alpha.txt 0\nbeta.txt 1\n"; }, controller->commandMessage());
-        CHECK(readFile(repo.path("beta.txt")) == "beta launch\n");
-        CHECK(repo.index() == indexBefore);
-        repo.release();
-        // Git asks whether to go on to gamma.txt. Answering no ends the run.
-        QByteArray output;
-        pump([&] {
-            output += parent->readAllStandardOutput();
-            return output.contains("Continue merging other unresolved paths");
-        }, QStringLiteral("Git did not ask to continue after the failed path"));
-        parent->write("n\n");
-        waitParent(*parent, 1, controller->commandMessage());
-        const auto errors = parent->readAllStandardError();
-        CHECK(errors.contains("merge of beta.txt failed"));
-        CHECK(!errors.contains("closed before an explicit decision"));
-        CHECK(repo.index() == indexBefore);
-        CHECK(repo.unmerged("beta.txt") && repo.unmerged("gamma.txt"));
-        CHECK(readFile(repo.path("beta.txt")) == "beta launch\n");
-        CHECK(readFile(repo.path("gamma.txt")) == "gamma launch\n");
-        CHECK(repo.gitTemporaries("beta.txt").isEmpty() && repo.gitTemporaries("gamma.txt").isEmpty());
-        // gamma.txt was never launched.
-        CHECK(controller->mergetool()->intakes().size() == 2);
-        controller.reset();
-        checkRecovered(repo, drafts);
-    });
+    suite.run("leaveSession during a multi-path run sends the waiting launcher a leave and Git stages nothing more",
+              [] {
+                  ParentRepository repo(launcherBinary,
+                                        {conflict("alpha.txt", "alpha launch\n"), conflict("beta.txt", "beta launch\n"),
+                                         conflict("gamma.txt", "gamma launch\n")});
+                  ScopedEnvironment environment(repo.environment);
+                  auto controller = std::make_unique<Application>(test_support::windowConfig());
+                  openController(*controller, repo);
+                  auto parent = startParent(repo, ParentRepository::GatedTool, {});
+                  // Resolve alpha.txt first, so the leave must skip a launcher that already has its decision.
+                  waitForWaiter(*controller, "alpha.txt");
+                  editDraft(*controller, "alpha.txt", QStringLiteral("resolved before leaving\n"));
+                  const auto alpha = QByteArray::fromStdString(draftOf(*controller, "alpha.txt"));
+                  CHECK(controller->commands()->markResolved(select(*controller, "alpha.txt"),
+                                                             revisionOf(*controller, "alpha.txt"), true));
+                  pump([&] { return repo.exits() == "alpha.txt 0\n"; }, controller->feedback()->message());
+                  repo.release();
+                  pump(
+                      [&] {
+                          return opened(*controller, "alpha.txt").facts().resolved
+                              && controller->mergetoolSession()->waitingPath() == "beta.txt";
+                      },
+                      controller->feedback()->message()
+                          + " | waiting=" + QString::fromLatin1(controller->mergetoolSession()->waitingPath()));
+                  CHECK(repo.stagedObject("alpha.txt") == repo.objectOf(alpha));
+                  const auto indexBefore = repo.index();
+                  const auto drafts = saveDrafts(*controller, {"beta.txt", "gamma.txt"});
+                  SessionEnd end;
+                  watchSessionEnd(*controller, end);
+                  CHECK(controller->completion()->leave());
+                  CHECK(end.count == 1 && !end.clean);
+                  CHECK(end.outcome.contains(QStringLiteral("Left with 2 of 3 files outstanding.")));
+                  CHECK(end.outcome.contains(QStringLiteral("1 launched path returned to Git unresolved.")));
+                  // The gated parent records the launcher's status, then holds before Git restores or stages.
+                  pump([&] { return repo.exits() == "alpha.txt 0\nbeta.txt 1\n"; }, controller->feedback()->message());
+                  CHECK(readFile(repo.path("beta.txt")) == "beta launch\n");
+                  CHECK(repo.index() == indexBefore);
+                  repo.release();
+                  // Git asks whether to go on to gamma.txt. Answering no ends the run.
+                  QByteArray output;
+                  pump(
+                      [&] {
+                          output += parent->readAllStandardOutput();
+                          return output.contains("Continue merging other unresolved paths");
+                      },
+                      QStringLiteral("Git did not ask to continue after the failed path"));
+                  parent->write("n\n");
+                  waitParent(*parent, 1, controller->feedback()->message());
+                  const auto errors = parent->readAllStandardError();
+                  CHECK(errors.contains("merge of beta.txt failed"));
+                  CHECK(!errors.contains("closed before an explicit decision"));
+                  CHECK(repo.index() == indexBefore);
+                  CHECK(repo.unmerged("beta.txt") && repo.unmerged("gamma.txt"));
+                  CHECK(readFile(repo.path("beta.txt")) == "beta launch\n");
+                  CHECK(readFile(repo.path("gamma.txt")) == "gamma launch\n");
+                  CHECK(repo.gitTemporaries("beta.txt").isEmpty() && repo.gitTemporaries("gamma.txt").isEmpty());
+                  // gamma.txt was never launched.
+                  CHECK(repo.exits() == "alpha.txt 0\nbeta.txt 1\n");
+                  controller.reset();
+                  checkRecovered(repo, drafts);
+              });
 
     suite.run("a terminal interrupt stops Git and the launcher without staging and keeps the saved draft", [] {
         ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n")});
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller(gitOnPath());
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         const auto indexBefore = repo.index();
         auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
         waitForWaiter(controller, "tracked.txt");
         editDraft(controller, "tracked.txt", QStringLiteral("draft before the interrupt\n"));
         const auto draft = draftOf(controller, "tracked.txt");
-        CHECK(controller.saveDraft(select(controller, "tracked.txt"), revisionOf(controller, "tracked.txt")));
+        CHECK(commandResult(controller,
+                            controller.commands()->saveDraft(select(controller, "tracked.txt"),
+                                                             revisionOf(controller, "tracked.txt"))));
         parent->signalGroup(SIGINT);
-        pump([&] { return parent->state() == QProcess::NotRunning; }, QStringLiteral("interrupted parent still running"));
+        pump([&] { return parent->state() == QProcess::NotRunning; },
+             QStringLiteral("interrupted parent still running"));
         CHECK(parent->exitStatus() == QProcess::CrashExit || parent->exitCode() != 0);
-        pump([&] { return !controller.mergetool()->hasWaiter("tracked.txt"); }, QStringLiteral("waiter kept after interrupt"));
+        pump([&] { return !controller.mergetoolSession()->hasWaiter("tracked.txt"); },
+             QStringLiteral("waiter kept after interrupt"));
         CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
         CHECK(repo.index() == indexBefore);
-        CHECK(opened(controller, "tracked.txt").checkpoint()->draft.text == draft);
+        CHECK(opened(controller, "tracked.txt")
+                  .revision(*opened(controller, "tracked.txt").publication().checkpoint())
+                  ->draft.text
+              == draft);
         CHECK(!opened(controller, "tracked.txt").facts().resolved);
         // Git 2.43 has no interrupt trap: its BACKUP, LOCAL, REMOTE and BASE files stay in the worktree.
         CHECK(repo.gitTemporaries("tracked.txt").size() == 4);
     });
 
-    suite.run("repeated invocations of one path keep each intake while Git removes its own temporaries", [] {
+    suite.run("repeated invocations of one path each get their own intake, removed with their launcher", [] {
         ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n")});
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller(gitOnPath());
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         auto first = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
         waitForWaiter(controller, "tracked.txt");
-        CHECK(controller.mergetool()->intakes().size() == 1);
-        const auto firstIntake = controller.mergetool()->intakes().front();
+        const auto firstIntake = controller.mergetoolSession()->intake("tracked.txt");
         checkIntakeMatchesGit(repo, firstIntake, "tracked.txt");
         const auto firstTemporaries = repo.gitTemporaries("tracked.txt");
         select(controller, "tracked.txt");
-        CHECK(controller.leaveMergetool());
-        waitParent(*first, 1, controller.commandMessage());
+        CHECK(controller.mergetool()->leave());
+        waitParent(*first, 1, controller.feedback()->message());
         CHECK(repo.gitTemporaries("tracked.txt").isEmpty());
+        CHECK(!QFileInfo::exists(firstIntake));
         CHECK(repo.unmerged("tracked.txt"));
 
         auto second = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
-        pump([&] {
-            return controller.mergetool()->intakes().size() == 2 && controller.mergetool()->waitingPath() == "tracked.txt";
-        }, controller.commandMessage());
-        const auto secondIntake = controller.mergetool()->intakes().at(1);
+        waitForWaiter(controller, "tracked.txt");
+        const auto secondIntake = controller.mergetoolSession()->intake("tracked.txt");
         CHECK(secondIntake != firstIntake);
         checkIntakeMatchesGit(repo, secondIntake, "tracked.txt");
         for (const auto &file : repo.gitTemporaries("tracked.txt")) CHECK(!firstTemporaries.contains(file));
         editDraft(controller, "tracked.txt", QStringLiteral("resolved on the second run\n"));
         const auto expected = QByteArray::fromStdString(draftOf(controller, "tracked.txt"));
-        CHECK(controller.markResolved(select(controller, "tracked.txt"), revisionOf(controller, "tracked.txt"), true));
-        waitParent(*second, 0, controller.commandMessage());
-        pump([&] { return opened(controller, "tracked.txt").facts().resolved; }, controller.commandMessage());
+        CHECK(controller.commands()->markResolved(select(controller, "tracked.txt"),
+                                                  revisionOf(controller, "tracked.txt"), true));
+        waitParent(*second, 0, controller.feedback()->message());
+        pump([&] { return opened(controller, "tracked.txt").facts().resolved; }, controller.feedback()->message());
         CHECK(repo.git({"show", ":tracked.txt"}) == expected);
         CHECK(repo.gitTemporaries("tracked.txt").isEmpty());
-        for (const auto &intake : {firstIntake, secondIntake}) {
-            CHECK(readFile(intake + "/merged") == "launch bytes\n");
-            CHECK(readFile(intake + "/local") == "main\n" && readFile(intake + "/base") == "base\n");
-        }
+        CHECK(!QFileInfo::exists(secondIntake));
     });
 
     suite.run("multi-file Git keeps the next path blocked until the previous one is acknowledged, per path", [] {
-        ParentRepository repo(launcherBinary, {conflict("alpha.txt", "same launch\n"),
-                                               conflict("beta.txt", "same launch\n")});
+        ParentRepository repo(launcherBinary,
+                              {conflict("alpha.txt", "same launch\n"), conflict("beta.txt", "same launch\n")});
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller(gitOnPath());
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         const auto betaEntries = repo.git({"ls-files", "--stage", "-z", "--", "beta.txt"});
         auto parent = startParent(repo, ParentRepository::GatedTool, {});
         // Git 2.43 visits unmerged paths in name order.
         waitForWaiter(controller, "alpha.txt");
+        IndexChecks alphaChecks(controller, "alpha.txt");
+        IndexChecks betaChecks(controller, "beta.txt");
         const auto beta = select(controller, "beta.txt");
-        CHECK(!controller.markResolved(beta, revisionOf(controller, "beta.txt"), true));
-        CHECK(controller.commandMessage().contains(QStringLiteral("Waiting for Git to launch this path")));
+        CHECK(!controller.commands()->markResolved(beta, revisionOf(controller, "beta.txt"), true));
+        CHECK(controller.feedback()->message().contains(QStringLiteral("Waiting for Git to launch this path")));
         editDraft(controller, "alpha.txt", QStringLiteral("identical result\n"));
         const auto expected = QByteArray::fromStdString(draftOf(controller, "alpha.txt"));
-        CHECK(controller.markResolved(select(controller, "alpha.txt"), revisionOf(controller, "alpha.txt"), true));
-        pump([&] { return repo.exits() == "alpha.txt 0\n"; }, controller.commandMessage());
-        holdFor(600, [&] {
-            return controller.mergetool()->intakes().size() == 1 && !opened(controller, "alpha.txt").facts().resolved
-                && repo.unmerged("alpha.txt") && repo.unmerged("beta.txt");
-        }, QStringLiteral("the next path or a resolution moved before Git staged alpha.txt"));
+        CHECK(controller.commands()->markResolved(select(controller, "alpha.txt"), revisionOf(controller, "alpha.txt"),
+                                                  true));
+        pump([&] { return repo.exits() == "alpha.txt 0\n"; }, controller.feedback()->message());
+        // The gate holds Git before it stages alpha.txt or launches beta.txt.
+        alphaChecks.waitForMore(controller.feedback()->message());
+        CHECK(!controller.mergetoolSession()->hasWaiter("beta.txt"));
+        CHECK(!opened(controller, "alpha.txt").facts().resolved && repo.unmerged("alpha.txt"));
+        CHECK(repo.unmerged("beta.txt"));
         repo.release();
-        pump([&] {
-            return opened(controller, "alpha.txt").facts().resolved && controller.mergetool()->waitingPath() == "beta.txt";
-        }, controller.commandMessage() + " | waiting=" + QString::fromLatin1(controller.mergetool()->waitingPath()));
+        pump(
+            [&] {
+                return opened(controller, "alpha.txt").facts().resolved
+                    && controller.mergetoolSession()->waitingPath() == "beta.txt";
+            },
+            controller.feedback()->message()
+                + " | waiting=" + QString::fromLatin1(controller.mergetoolSession()->waitingPath()));
         const auto object = repo.objectOf(expected);
         CHECK(repo.stagedObject("alpha.txt") == object);
-        holdFor(600, [&] {
-            return parentBlocked(*parent, controller, "beta.txt") && !opened(controller, "beta.txt").facts().resolved
-                && repo.git({"ls-files", "--stage", "-z", "--", "beta.txt"}) == betaEntries;
-        }, QStringLiteral("beta.txt was released or acknowledged by the alpha.txt staging"));
-        CHECK(controller.mergetool()->intakes().size() == 2);
-        CHECK(readFile(controller.mergetool()->intakes().at(1) + "/merged") == "same launch\n");
+        // beta.txt has no offer, and with nothing in flight nothing can release or acknowledge it.
+        waitIdle(controller, QStringLiteral("after the alpha.txt acknowledgment"));
+        CHECK(parentBlocked(*parent, controller, "beta.txt") && !opened(controller, "beta.txt").facts().resolved);
+        CHECK(repo.git({"ls-files", "--stage", "-z", "--", "beta.txt"}) == betaEntries);
+        CHECK(readFile(controller.mergetoolSession()->intake("beta.txt") + "/merged") == "same launch\n");
         editDraft(controller, "beta.txt", QStringLiteral("identical result\n"));
         CHECK(QByteArray::fromStdString(draftOf(controller, "beta.txt")) == expected);
-        CHECK(controller.markResolved(beta, revisionOf(controller, "beta.txt"), true));
-        pump([&] { return repo.exits() == "alpha.txt 0\nbeta.txt 0\n"; }, controller.commandMessage());
+        CHECK(controller.commands()->markResolved(beta, revisionOf(controller, "beta.txt"), true));
+        pump([&] { return repo.exits() == "alpha.txt 0\nbeta.txt 0\n"; }, controller.feedback()->message());
         // The object Git already holds for alpha.txt does not acknowledge beta.txt.
-        holdFor(600, [&] {
-            return !opened(controller, "beta.txt").facts().resolved && repo.unmerged("beta.txt");
-        }, QStringLiteral("beta.txt was acknowledged before Git staged it"));
+        betaChecks.waitForMore(controller.feedback()->message());
+        CHECK(!opened(controller, "beta.txt").facts().resolved && repo.unmerged("beta.txt"));
         repo.release();
-        waitParent(*parent, 0, controller.commandMessage());
-        pump([&] { return opened(controller, "beta.txt").facts().resolved; }, controller.commandMessage());
+        waitParent(*parent, 0, controller.feedback()->message());
+        pump([&] { return opened(controller, "beta.txt").facts().resolved; }, controller.feedback()->message());
         CHECK(repo.stagedObject("beta.txt") == object && repo.stagedObject("alpha.txt") == object);
         CHECK(repo.stagedObject("notes.txt") == repo.notesObject);
     });
@@ -699,7 +828,7 @@ int main(int argc, char **argv)
     suite.run("an external monitor configured during the wait keeps the parent blocked instead of releasing it", [] {
         ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n")});
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller(gitOnPath());
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         const auto indexBefore = repo.index();
         auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
@@ -710,16 +839,19 @@ int main(int argc, char **argv)
         CHECK(QFile::setPermissions(monitor, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
         repo.git({"config", "core.fsmonitor", monitor});
         editDraft(controller, "tracked.txt", QStringLiteral("must not reach the parent\n"));
-        controller.markResolved(select(controller, "tracked.txt"), revisionOf(controller, "tracked.txt"), true);
-        holdFor(1500, [&] {
-            return parentBlocked(*parent, controller, "tracked.txt") && !QFile::exists(sentinel)
-                && !opened(controller, "tracked.txt").facts().resolved;
-        }, controller.commandMessage() + QStringLiteral(" | the parent was released with a monitor configured"));
-        // The refusal comes from background Git inspections, which can take longer than the hold under load.
-        pump([&] { return controller.commandMessage().contains(QStringLiteral("filesystem monitor setting: core.fsmonitor")); },
-             QStringLiteral("Mark resolved was not refused for core.fsmonitor | message after the hold: ")
-                 + controller.commandMessage());
-        CHECK(controller.commandMessage().contains(QStringLiteral("filesystem monitor setting: core.fsmonitor")));
+        controller.commands()->markResolved(select(controller, "tracked.txt"), revisionOf(controller, "tracked.txt"),
+                                            true);
+        // The refusal comes from background Git inspections. Only a passed preflight releases the
+        // parent, so the state after the refusal is the state for good.
+        pump(
+            [&] {
+                return controller.feedback()->message().contains(
+                    QStringLiteral("filesystem monitor setting: core.fsmonitor"));
+            },
+            QStringLiteral("Mark resolved was not refused for core.fsmonitor | message: ")
+                + controller.feedback()->message());
+        waitIdle(controller, controller.feedback()->message());
+        CHECK(controller.feedback()->message().contains(QStringLiteral("filesystem monitor setting: core.fsmonitor")));
         CHECK(parentBlocked(*parent, controller, "tracked.txt") && !QFile::exists(sentinel)
               && !opened(controller, "tracked.txt").facts().resolved);
         // Fixture inspections below must not run the monitor either.
@@ -728,8 +860,8 @@ int main(int argc, char **argv)
         CHECK(repo.index() == indexBefore);
         // Mark resolved wrote the parent-owned file before the guard refused the release.
         CHECK(readFile(repo.path("tracked.txt")) == QByteArray::fromStdString(draftOf(controller, "tracked.txt")));
-        CHECK(controller.leaveMergetool());
-        waitParent(*parent, 1, controller.commandMessage());
+        CHECK(controller.mergetool()->leave());
+        waitParent(*parent, 1, controller.feedback()->message());
         CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
         CHECK(repo.index() == indexBefore);
         CHECK(!QFile::exists(sentinel));

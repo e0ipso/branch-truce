@@ -1,0 +1,51 @@
+# shellcheck shell=bash
+# Debian package manager adapter for packaging/scripts/check-package.sh and
+# packaging/scripts/package-identity.sh. Sourcing defines the pkg_* functions
+# of the adapter contract in pkg-adapters.md and runs nothing; names that start
+# with _pkg_ are private to this file.
+
+pkg_identity() {
+    local name version architecture
+    name=$(dpkg-deb -f "$1" Package) && version=$(dpkg-deb -f "$1" Version) \
+        && architecture=$(dpkg-deb -f "$1" Architecture) || return 1
+    printf '%s|%s|%s\n' "$name" "$version" "$architecture"
+}
+# The license text is the payload's copyright file; control has no license field.
+pkg_check_metadata() { :; }
+pkg_files() ( set -o pipefail; dpkg-deb --fsys-tarfile "$1" | tar -t | sed -n 's|^\./|/|p' | sed '/\/$/d' | LC_ALL=C sort; )
+pkg_extra_files() { printf '%s\n' /usr/share/doc/branch-truce/changelog.gz /usr/share/doc/branch-truce/copyright; }
+# The control listing is read whole, so grep -q cannot end the pipe early.
+pkg_has_scripts() ( set -o pipefail;
+    local members
+    members=$(dpkg-deb --ctrl-tarfile "$1" | tar -t) || return 2
+    grep -E '(^|/)(preinst|postinst|prerm|postrm|config|triggers|conffiles)$' <<<"$members" >/dev/null
+)
+pkg_depends() ( set -o pipefail;
+    dpkg-deb -f "$1" Depends | tr ',|' '\n\n' | sed 's/([^)]*)//; s/:any//; s/[[:space:]]//g; /^$/d' | LC_ALL=C sort -u
+)
+# pkg_recipe_depends ROOT: the names debian/control lists in Depends.
+pkg_recipe_depends() ( set -o pipefail;
+    awk '/^Depends:/ { on = 1; sub("^Depends:", "") } on { print } on && $0 !~ /,[ \t]*$/ { on = 0 }' \
+        "$1/packaging/debian/control" | sed 's/([^)]*)//g; s/\${[^}]*}//g' | tr ',' '\n' \
+        | awk 'NF { print $1 }' | LC_ALL=C sort -u
+)
+pkg_older() { dpkg --compare-versions "$1" lt "$2"; }
+pkg_target_ready() { command -v apt-get dpkg-query >/dev/null || { echo 'error: use a Debian-based target' >&2; return 1; }; }
+pkg_refresh() { DEBIAN_FRONTEND=noninteractive apt-get update -q; }
+pkg_install() { DEBIAN_FRONTEND=noninteractive apt-get install -y -q "$1"; }
+pkg_remove() { DEBIAN_FRONTEND=noninteractive apt-get purge -y -q branch-truce; }
+pkg_installed_version() {
+    local packages
+    packages=$(dpkg-query -W -f '${Package}|${Status}|${Version}\n') || return 2
+    awk -F '|' '$1 == "branch-truce" {
+        if (NF != 3 || !$3) bad=1
+        if ($2 == "install ok installed") { version=$3; found++ }
+    } END { if (bad || found > 1) exit 2; if (!found) exit 1; print version }' <<<"$packages"
+}
+pkg_verify_installed() {
+    local out
+    out=$(dpkg --verify branch-truce 2>&1) && [ -z "$out" ] || { printf '%s\n' "$out" >&2; return 1; }
+}
+pkg_runtime_versions() { dpkg-query -W libqt6core6t64 libkirigami6 libkf6syntaxhighlighting6 git; }
+pkg_qt_root() { echo /usr/lib/x86_64-linux-gnu/qt6; }
+pkg_leftover_suffixes() { echo .dpkg-old .dpkg-dist; }

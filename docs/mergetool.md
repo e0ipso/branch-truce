@@ -82,10 +82,17 @@ with `branch-truce /path/to/repository`, the launcher attaches to that
 window. The window shows "Git is waiting on this path." on the waiting file.
 
 A window the launcher starts writes nothing into the `git mergetool`
-terminal. Set `BRANCH_TRUCE_MERGETOOL_NO_SPAWN=1` to stop the launcher
-starting a window. It then
+terminal. The launcher waits 15 seconds for it to open; add
+`--session-wait <seconds>` after `--mergetool` in the tool command to wait
+longer on a slow machine. Add `--no-window` after `--mergetool` to stop the
+launcher starting a window. It then
 exits 1 with "No Branch Truce session is listening for this repository."
 when none is open, and Git restores the file.
+
+Start `git mergetool` from the same environment as the window, or let the
+launcher start the window. A window whose Git reads other configuration files
+(`HOME`, `XDG_CONFIG_HOME` or `GIT_CONFIG_*` differ) refuses the launch, since
+Git stages the result with its own configuration.
 
 ## Save and Mark resolved
 

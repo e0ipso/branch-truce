@@ -3,6 +3,10 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 bash "$root/tests/packaging/DesktopPreparation.sh"
+bash "$root/tests/packaging/PackageChecker.sh"
+bash "$root/tests/packaging/AtomicPublication.sh"
+bash "$root/tests/tools/FixtureSafety.sh"
+bash "$root/tests/packaging/CompilerCacheMounts.sh"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/repo/packaging" "$work/bin"
@@ -26,24 +30,30 @@ for format in kubuntu-deb fedora-rpm arch-pkg; do
     expect_failure 'cannot be packaged' bash "$root/packaging/scripts/package-release.sh" --format "$format" --version '1.2.3;true' --output "$work/out"
 done
 expect_failure 'usage:' bash "$root/packaging/scripts/package-info.sh" --format tuxedo-deb --version 1.2.3
-# Dispatch uses the native helper's actual output, and preserves its failure.
-for pair in fedora:rpm arch:pkg.tar.zst; do
-    helper="${pair%:*}"; extension="${pair#*:}"
-    cat > "$work/repo/packaging/scripts/package-$helper.sh" <<'STUB'
+# Dispatch runs the family builder that formats.tsv names, with the format,
+# version and absolute output directory, and preserves its output and failure.
+cp "$root/packaging/formats.tsv" "$work/repo/packaging/"
+for format in kubuntu-deb fedora-rpm arch-pkg; do
+    case "$format" in kubuntu-deb) family=deb ;; fedora-rpm) family=rpm ;; arch-pkg) family=arch ;; esac
+    cat > "$work/repo/packaging/scripts/build-$family.sh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$@" > "$NATIVE_DISPATCH_LOG"
 [ "${NATIVE_DISPATCH_FAIL:-0}" = 0 ] || exit 43
-mkdir -p "$4"
-touch "$4/native-result"
-echo "$4/native-result"
+touch "$3/native-result"
+echo "$3/native-result"
 STUB
-    chmod +x "$work/repo/packaging/scripts/package-$helper.sh"
+    chmod +x "$work/repo/packaging/scripts/build-$family.sh"
     export NATIVE_DISPATCH_LOG="$work/dispatch"
-    format="$helper-$extension"; [ "$helper" != arch ] || format=arch-pkg
-    [ "$(bash "$work/repo/packaging/scripts/package-release.sh" --format "$format" --version 1.2.3 --output "$work/out")" = "$work/out/native-result" ]
-    [ "$(cat "$work/dispatch")" = "$(printf '%s\n' --version 1.2.3 --output "$work/out")" ]
-    if NATIVE_DISPATCH_FAIL=1 bash "$work/repo/packaging/scripts/package-release.sh" --format "$format" --version 1.2.3 --output "$work/out"; then exit 1; else [ "$?" = 43 ]; fi
+    [ "$(bash "$work/repo/packaging/scripts/package-release.sh" --format "$format" --version 1.2.3 --output "$work/out")" = "$work/out/native-result" ] \
+        || { echo "FAIL: $format dispatch output" >&2; exit 1; }
+    [ "$(cat "$work/dispatch")" = "$(printf '%s\n' "$format" 1.2.3 "$work/out")" ] \
+        || { echo "FAIL: $format dispatch arguments: $(cat "$work/dispatch")" >&2; exit 1; }
+    if NATIVE_DISPATCH_FAIL=1 bash "$work/repo/packaging/scripts/package-release.sh" --format "$format" --version 1.2.3 --output "$work/out"; then
+        echo "FAIL: $format dispatch hid a builder failure" >&2; exit 1
+    else
+        [ "$?" = 43 ] || { echo "FAIL: $format dispatch changed the builder status" >&2; exit 1; }
+    fi
 done
 # The engine logs complete commands; no Docker, package manager or host mutation.
 cat > "$work/bin/engine" <<'STUB'
@@ -58,7 +68,7 @@ case "$1" in
         case "$*" in
             *test-desktop.sh*) stage=test ;;
             *package-release.sh*) stage=package ;;
-            *check-package.sh*|*check-fedora.sh*|*check-arch.sh*)
+            *check-package.sh*)
                 [[ "$*" != *':/src'* && "$*" != *':/out'* ]] || { echo 'source/output mounted into runtime'; exit 99; }
                 for ((i=1; i<=$#; i++)); do
                     argument="${!i}"
@@ -66,7 +76,8 @@ case "$1" in
                         *:/fixture:ro)
                             fixture="${argument%:/fixture:ro}"
                             [ -f "$fixture/assets/branding/platform/linux/hicolor/scalable/apps/com.canpicasoft.branch-truce.svg" ]
-                            [ -f "$fixture/packaging/scripts/check-fedora.sh" ]
+                            [ -f "$fixture/packaging/scripts/check-package.sh" ]
+                            [ -f "$fixture/packaging/formats.tsv" ] && [ -f "$fixture/tools/lib/fixture.sh" ] && [ -f "$fixture/tools/lib/report.sh" ]
                             [ ! -e "$fixture/src" ] && [ ! -e "$fixture/build" ] && [ ! -e "$fixture/cmake" ] ;;
                     esac
                 done
@@ -74,10 +85,23 @@ case "$1" in
         esac
         echo "$stage" ;;
     wait)
+        if [ "${NATIVE_WAIT_FAIL:-0}" = 1 ]; then
+            for _ in $(seq 100); do [ -s "$NATIVE_FOLLOW_PID" ] && break; sleep 0.01; done
+            exit 92
+        fi
+        if [ -n "${NATIVE_WAIT_SECONDS:-}" ]; then
+            trap 'kill "$sleeper"; exit 143' TERM
+            sleep "$NATIVE_WAIT_SECONDS" & sleeper=$!
+            wait "$sleeper"
+        fi
         if [ "${NATIVE_FAIL_STAGE:-}" = "$2" ]; then
             case "$2" in test) echo 42 ;; package) echo 43 ;; check) echo 44 ;; *) echo 0 ;; esac
         else echo 0; fi ;;
     logs)
+        if [ "${NATIVE_FOLLOW_WAIT:-0}" = 1 ] && [ "${2-}" = --follow ]; then
+            echo "$$" > "$NATIVE_FOLLOW_PID"
+            exec sleep 60
+        fi
         if [ "${NATIVE_FINAL_LOG_FAIL:-0}" = 1 ] && [ "${2-}" != --follow ]; then
             echo 'final log read failed' >&2; exit 90
         fi
@@ -85,7 +109,7 @@ case "$1" in
             echo 'follow connection ended' >&2; exit 91
         fi
         echo 'complete native container logs' ;;
-    inspect|rm) ;;
+    inspect|rm|stop) ;;
     *) exit 9 ;;
 esac
 STUB
@@ -129,14 +153,48 @@ unset NATIVE_FAIL_STAGE
 bash "$runner" --format all --version 1.2.3 --output "$work/all" > "$work/result"
 [ "$(grep -c ' check: ok' "$work/result")" = 3 ]
 expect_failure 'usage:' bash "$runner" --format tuxedo-deb --version 1.2.3 --output "$work/retired"
+# A previous version that is not older fails before any image or build.
+for previous in 1.2.3 1.2.4 1.10.0 1.2.3-rc.1; do
+    : > "$work/engine.log"
+    expect_failure 'must be older' bash "$runner" --format arch-pkg --version 1.2.3-rc.1 --previous-version "$previous" --output "$work/newer"
+    if [ -s "$work/engine.log" ]; then echo "FAIL: previous version $previous reached the engine" >&2; exit 1; fi
+done
+bash "$runner" --format arch-pkg --version 1.2.3 --previous-version 1.2.3-rc.1 --output "$work/older" > "$work/result"
+grep -qF 'arch-pkg check: ok' "$work/result"
+# Interrupting the run stops its running container.
+: > "$work/engine.log"
+NATIVE_WAIT_SECONDS=20 bash "$runner" --format arch-pkg --version 1.2.3 --output "$work/interrupted" > "$work/result" 2>&1 &
+runner_pid=$!
+for _ in $(seq 100); do grep -q '^wait ' "$work/engine.log" && break; sleep 0.1; done
+if ! grep -q '^wait ' "$work/engine.log"; then
+    echo 'FAIL: interruption readiness deadline exceeded before container wait' >&2
+    kill -TERM "$runner_pid" 2>/dev/null || true; wait "$runner_pid" || true; exit 1
+fi
+interrupted_at=$SECONDS
+kill -TERM "$runner_pid"
+status=0; wait "$runner_pid" || status=$?
+[ "$status" = 143 ] || { cat "$work/result"; echo "FAIL: interrupted run exited $status, not 143" >&2; exit 1; }
+[ "$((SECONDS - interrupted_at))" -lt 15 ] || { echo 'FAIL: the interruption waited for the container to end' >&2; exit 1; }
+grep -q '^stop baseline$' "$work/engine.log" || { echo 'FAIL: the interrupted run left its container running' >&2; exit 1; }
 NATIVE_FOLLOW_FAIL=1 bash "$runner" --format arch-pkg --version 1.2.3 --output "$work/log-recovery" > "$work/result"
 if ! grep -qF 'complete native container logs' "$work/log-recovery/containers/arch-pkg/baseline.log"; then
     echo 'FAIL: complete container logs lost after follow disconnect' >&2; exit 1
 fi
 : > "$work/engine.log"
+status=0
+NATIVE_WAIT_FAIL=1 NATIVE_FOLLOW_WAIT=1 NATIVE_FOLLOW_PID="$work/follower.pid" \
+    timeout -k 2 5 bash "$runner" --format arch-pkg --version 1.2.3 --output "$work/wait-failure" \
+    > "$work/result" 2>&1 || status=$?
+[ "$status" = 1 ] || { cat "$work/result"; echo "FAIL: wait disconnect returned $status instead of 1"; exit 1; }
+grep -qF 'container wait disconnected' "$work/result"
+if kill -0 "$(cat "$work/follower.pid")" 2>/dev/null; then
+    echo 'FAIL: wait disconnect left the log follower running' >&2; exit 1
+fi
+if grep -q '^rm ' "$work/engine.log"; then echo 'FAIL: wait disconnect removed the retained container' >&2; exit 1; fi
+: > "$work/engine.log"
 NATIVE_FINAL_LOG_FAIL=1 expect_failure 'FAILED' bash "$runner" --format arch-pkg --version 1.2.3 --output "$work/log-failure"
-[ "$(cat "$work/log-failure/containers/arch-pkg/baseline.exit")" = 0 ]
-! grep -q '^rm ' "$work/engine.log"
 # A log-collection failure must retain the successful container for diagnosis.
 # Its recorded native exit remains zero even though the stage fails.
+[ "$(cat "$work/log-failure/containers/arch-pkg/baseline.exit")" = 0 ]
+if grep -q '^rm ' "$work/engine.log"; then echo 'FAIL: a container was removed after its logs were lost' >&2; exit 1; fi
 echo 'all native integration contracts passed'

@@ -1,0 +1,13 @@
+# The oldest Qt, KDE Frameworks and Git versions the application supports.
+# CMakeLists.txt states the same floors as find_package versions, and each
+# recipe as dependency versions. packaging/ci/baseline.sh checks every CI
+# image against this table; tools/prepare-worktree.sh checks the host's Git.
+# There is one package column per formats.tsv family. A package column that
+# ends in .so names a library; the DEB image looks up the package that ships
+# it, because the package names change with the ABI. Columns are tab-separated
+# and named by the header line; packaging/scripts/tsv.sh reads them.
+component	minimum	deb	rpm	arch
+qt	6.6.0	libQt6Core.so	qt6-qtbase	qt6-base
+kirigami	6.0.0	libKirigami.so	kf6-kirigami	kirigami
+syntax-highlighting	6.0.0	libKF6SyntaxHighlighting.so	kf6-syntax-highlighting	syntax-highlighting
+git	2.43.0	git	git	git

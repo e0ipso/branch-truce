@@ -9,7 +9,7 @@ import org.kde.kirigami as Kirigami
 
 RowLayout {
     id: fileToolBar
-    required property ApplicationController controller
+    required property FileCommands commands
     required property SelectedFile selectedFile
     // True while an input method composes text that the result has not acknowledged.
     required property bool composing
@@ -34,7 +34,7 @@ RowLayout {
         icon.name: "document-save"
         displayHint: Kirigami.DisplayHint.KeepVisible
         enabled: !!fileToolBar.selectedFile.canEdit && !!fileToolBar.selectedFile.unsaved && !fileToolBar.composing
-        onTriggered: fileToolBar.controller.saveDraft(fileToolBar.controller.selectedFileId, fileToolBar.selectedFile.currentRevision)
+        onTriggered: fileToolBar.commands.saveDraft(fileToolBar.selectedFile.fileId, fileToolBar.selectedFile.currentRevision)
     }
     readonly property NamedAction resolveAction: NamedAction {
         controlName: "markResolved"
@@ -42,8 +42,8 @@ RowLayout {
         text: qsTr("Mark resolved…")
         icon.name: "dialog-ok-apply"
         displayHint: Kirigami.DisplayHint.KeepVisible
-        enabled: !!fileToolBar.selectedFile.canEdit && !fileToolBar.composing && !fileToolBar.controller.resolutionBusy
-        onTriggered: fileToolBar.controller.markResolved(fileToolBar.controller.selectedFileId, fileToolBar.selectedFile.currentRevision, false)
+        enabled: !!fileToolBar.selectedFile.canEdit && !fileToolBar.composing && !fileToolBar.commands.resolutionBusy
+        onTriggered: fileToolBar.commands.markResolved(fileToolBar.selectedFile.fileId, fileToolBar.selectedFile.currentRevision, false)
     }
     readonly property NamedAction discardAction: NamedAction {
         controlName: "discardUnsaved"
@@ -52,7 +52,7 @@ RowLayout {
         tooltip: qsTr("Discard unsaved edits")
         icon.name: "document-revert"
         enabled: !!fileToolBar.selectedFile.canEdit && !!fileToolBar.selectedFile.unsaved && !fileToolBar.composing
-        onTriggered: fileToolBar.controller.discardUnsaved(fileToolBar.controller.selectedFileId, fileToolBar.selectedFile.currentRevision)
+        onTriggered: fileToolBar.commands.discardUnsaved(fileToolBar.selectedFile.fileId, fileToolBar.selectedFile.currentRevision)
     }
     // Only while the draft is newer than the result staged in Git. It asks before the
     // draft is lost, so it stays in the overflow menu and the action carries the name.
@@ -63,7 +63,7 @@ RowLayout {
         icon.name: "document-revert"
         displayHint: Kirigami.DisplayHint.AlwaysHide
         visible: !!fileToolBar.selectedFile.progress && !!fileToolBar.selectedFile.progress.earlierResolved
-        enabled: !!fileToolBar.selectedFile.canEdit && !fileToolBar.composing && !fileToolBar.controller.resolutionBusy
+        enabled: !!fileToolBar.selectedFile.canEdit && !fileToolBar.composing && !fileToolBar.commands.resolutionBusy
         onTriggered: fileToolBar.discardToStagedChosen()
     }
     readonly property MenuAction choicesAction: MenuAction {
@@ -71,7 +71,7 @@ RowLayout {
         controlName: "sourceChoicesMenu"
         displayHint: Kirigami.DisplayHint.AlwaysHide
         text: qsTr("Source choices")
-        tooltip: qsTr("Preview non-conflicting changes or a whole side of %1 before applying")
+        literalToolTip: qsTr("Preview non-conflicting changes or a whole side of %1 before applying")
             .arg(fileToolBar.selectedFile.path || "")
         icon.name: "document-import"
         enabled: !!fileToolBar.selectedFile.canEdit && !fileToolBar.composing
@@ -116,7 +116,7 @@ RowLayout {
         id: sourceChoices
         controlName: "showSourceChoices"
         displayHint: Kirigami.DisplayHint.AlwaysHide
-        enabled: fileToolBar.selectedFile.support === "supported"
+        enabled: fileToolBar.selectedFile.supported
         text: checked ? qsTr("Hide source choices") : qsTr("Show source choices")
         icon.name: "view-list-details"
         iconOnly: true
@@ -125,7 +125,7 @@ RowLayout {
     }
     readonly property NamedAction searchAction: NamedAction {
         controlName: "openPassageSearch"
-        enabled: fileToolBar.selectedFile.support === "supported"
+        enabled: fileToolBar.selectedFile.supported
         text: qsTr("Find a passage")
         icon.name: "edit-find"
         iconOnly: true
@@ -135,7 +135,7 @@ RowLayout {
     readonly property NamedAction wrapLinesAction: NamedAction {
         id: wrapAction
         controlName: "wrapLines"
-        enabled: fileToolBar.selectedFile.support === "supported"
+        enabled: fileToolBar.selectedFile.supported
         text: qsTr("Wrap lines")
         icon.name: "format-justify-left"
         iconOnly: true
@@ -145,7 +145,7 @@ RowLayout {
     readonly property NamedAction whitespaceViewAction: NamedAction {
         id: whitespaceAction
         controlName: "showWhitespace"
-        enabled: fileToolBar.selectedFile.support === "supported"
+        enabled: fileToolBar.selectedFile.supported
         text: qsTr("Show spaces and tabs")
         icon.name: "view-visible"
         iconOnly: true
@@ -168,7 +168,7 @@ RowLayout {
     readonly property Kirigami.Action markersAction: Kirigami.Action {
         id: markersToggle
         objectName: "showConflictMarkers"
-        enabled: fileToolBar.selectedFile.support === "supported"
+        enabled: fileToolBar.selectedFile.supported
         text: qsTr("Show conflict markers")
         tooltip: qsTr("Show the conflict-marker lines that the result folds. The text keeps them either way.")
         icon.name: "view-visible"
