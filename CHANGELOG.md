@@ -1,3 +1,9 @@
+## [1.5.1](https://github.com/e0ipso/branch-truce/compare/v1.5.0...v1.5.1) (2026-11-11)
+
+### Bug Fixes
+
+* merge workflows and bound session work ([#10](https://github.com/e0ipso/branch-truce/issues/10)) ([760e280](https://github.com/e0ipso/branch-truce/commit/760e280cb63b331e746cfd1788dcc95e3addcf64))
+
 ## [1.5.0](https://github.com/e0ipso/branch-truce/compare/v1.4.0...v1.5.0) (2026-11-09)
 
 ### Features
