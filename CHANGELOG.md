@@ -1,3 +1,9 @@
+## [1.5.2](https://github.com/e0ipso/branch-truce/compare/v1.5.1...v1.5.2) (2026-11-18)
+
+### Bug Fixes
+
+* align long texts with few changed lines instead of holding them ([#13](https://github.com/e0ipso/branch-truce/issues/13)) ([c57a333](https://github.com/e0ipso/branch-truce/commit/c57a333ebb37cb1fe083e0e917e8c249dc868395)), closes [#12](https://github.com/e0ipso/branch-truce/issues/12)
+
 ## [1.5.1](https://github.com/e0ipso/branch-truce/compare/v1.5.0...v1.5.1) (2026-11-11)
 
 ### Bug Fixes
