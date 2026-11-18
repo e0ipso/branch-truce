@@ -40,6 +40,10 @@ struct Passage {
 // - compare is deterministic, keeps no state between calls and may run on
 //   several threads at once.
 // - It fails only by throwing std::bad_alloc.
+// - cost() is the work compare spends on the same texts, in line-pair cells,
+//   at most the product of their line counts. It takes time linear in the
+//   texts. Callers charge it to a budget several comparisons share before
+//   calling compare. The default is the product of the line counts.
 // - identity() names it. Choice and decision IDs come from the passages it
 //   returns, so recovery journals record the name and replay refuses a
 //   journal another algorithm wrote. Two implementations, or two versions of
@@ -49,6 +53,7 @@ class CorrespondenceAlgorithm {
 public:
     virtual ~CorrespondenceAlgorithm() = default;
     [[nodiscard]] virtual std::vector<Passage> compare(std::string_view source, std::string_view result) const = 0;
+    [[nodiscard]] virtual std::size_t cost(std::string_view source, std::string_view result) const;
     [[nodiscard]] virtual std::string_view identity() const noexcept = 0;
 };
 

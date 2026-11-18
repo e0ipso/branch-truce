@@ -50,9 +50,16 @@ does everything when a marker line is left over. Settling happens once, before
 the first revision, so undo, redo and recovery replay start from the same
 anchors.
 
-The algorithm uses O(source lines * result lines) time and O(source lines +
-result lines) memory for different buffers, including line, match and passage
-records. Each split releases its length rows before recursing. Binding keeps one
+The algorithm uses O(source lines + result lines) memory for different
+buffers, including line, match and passage records. Its time is at most
+O(source lines * result lines). The lines both texts share at their start and
+then at their end are a common subsequence, so their count `s` is a lower bound
+for the LCS length. An optimal alignment skips at most `source lines - s`
+source lines and `result lines - s` result lines, and only a skip moves it off
+its diagonal, so every optimal path stays inside that band of diagonals. The
+length rows visit only the band, which changes no boundary crossing. Each
+recursion level then costs at most source lines times band width, so a few
+changed lines in a long file align in about linear time. Each split releases its length rows before recursing. Binding keeps one
 line-start index per text and finds a paired line by binary search. Lines are
 interned, so long-line bytes are compared during interning rather than at each
 length calculation.
@@ -73,14 +80,17 @@ the contract checks against the default and a minimal implementation.
 The limits in ResourceLimits.h bound the input: no line over `kMaxLineBytes`
 and no text over `kMaxRecoveryPayloadBytes`. A file whose result or captured
 sources hold more than `kLargeFileLines` lines opens only after the user
-confirms it, because alignment time grows with the product of line counts.
+confirms it, because alignment time can grow with the product of line counts.
 Before allocating tokens or line records, `ExactLineCorrespondence` counts both
-texts. More than `kMaxIndexedLines` lines in either, or a product greater than
+texts and their shared edges. `cost()` is the smaller of the line-count product
+and source lines times band width times recursion depth. More than
+`kMaxIndexedLines` lines in either text, or a cost greater than
 `kMaxAlignmentCells`, yields one `Ambiguous` passage. Identical texts need no
-workspace. A map shares that cell budget across its different sources; a
-whole-buffer recomputation also charges its old-to-new comparison to it.
-The algorithm identity is `exact-line/2`; older journals are refused rather
-than replayed with different passages.
+workspace. A map charges each source's `cost()` to one cell budget shared
+across its sources; a whole-buffer recomputation also charges its old-to-new
+comparison to it. The algorithm identity is `exact-line/3`: version 2 returned
+one `Ambiguous` passage for every pair over the product limit, so older
+journals are refused rather than replayed with different passages.
 
 Metadata has independent limits of 65536 entries and a conservative 16 MiB byte
 estimate. Choice construction preflights each differing passage's line picks

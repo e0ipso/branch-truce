@@ -43,6 +43,10 @@ public:
         }
         return ExactLineCorrespondence{}.compare(source, result);
     }
+    [[nodiscard]] std::size_t cost(std::string_view source, std::string_view result) const override
+    {
+        return ExactLineCorrespondence{}.cost(source, result);
+    }
     [[nodiscard]] std::string_view identity() const noexcept override { return ExactLineCorrespondence{}.identity(); }
     mutable std::atomic<int> calls{0};
     std::atomic<int> failAt;
@@ -1224,6 +1228,46 @@ void aFileOverTheLineThresholdWaitsForConfirmation()
     CHECK(FileSession("plain", "plain.txt", {text, {}, 0}).support() == Support::Supported);
 }
 
+// A lockfile whose sides differ in one line among 12001. Over 8192 lines
+// against 8192, the line-count product is over the alignment budget, but the
+// shared lines narrow the work, so loading it offers the conflict's choices
+// instead of holding the file outside the app.
+void aLargeFileWithOneConflictingLineLoadsItsChoices()
+{
+    std::string head;
+    std::string tail;
+    for (std::size_t line = 0; line < 6000; ++line) {
+        head += "    \"head-package-" + std::to_string(line) + "\": \"1.0.0\",\n";
+        tail += "    \"tail-package-" + std::to_string(line) + "\": \"1.0.0\",\n";
+    }
+    const auto hash = [](const std::string &value) { return "    \"content-hash\": \"" + value + "\",\n"; };
+    const auto base = head + hash("base") + tail;
+    const auto ours = head + hash("ours") + tail;
+    const auto theirs = head + hash("theirs") + tail;
+    const auto result = head + "<<<<<<< ours\n" + hash("ours") + "||||||| base\n" + hash("base") + "=======\n"
+        + hash("theirs") + ">>>>>>> theirs\n" + tail;
+    CHECK(lineCount(ours) * lineCount(theirs) > kMaxAlignmentCells);
+    FileSnapshots sources;
+    sources.path = "composer.lock";
+    sources.provenance.sessionId = "lockfile";
+    sources.earlier = SourceSnapshot{"base-object", "100644", base, {base, base, {}}, "base-commit", "Base"};
+    sources.stage2 = SourceSnapshot{"ours-object", "100644", ours, {ours, ours, {}}, "ours-commit", "Ours"};
+    sources.stage3 = SourceSnapshot{"theirs-object", "100644", theirs, {theirs, theirs, {}}, "theirs-commit", "Theirs"};
+    sources.launchResult.text = {result, result, {}};
+    FileSession file("lock", sources.path, {result, {}, 0}, {.snapshots = sources});
+    CHECK(file.support() == Support::LargeFile);
+    CHECK(file.loadLargeFile() == Transition::Applied);
+    CHECK(file.support() == Support::Supported && !file.loadFailure());
+    // A section and a line pick on each side, both for the content-hash line.
+    CHECK(file.choices().size() == 4);
+    for (const auto &target : file.choices()) {
+        const auto &side = target.source.side == SourceSide::Stage2 ? ours : theirs;
+        CHECK(target.source.range.begin == head.size());
+        CHECK(side.substr(target.source.range.begin, target.source.range.end - target.source.range.begin)
+              == hash(target.source.side == SourceSide::Stage2 ? "ours" : "theirs"));
+    }
+}
+
 void textOutsideTheEnvelopeIsUnreadable()
 {
     const auto atLine = std::string(kMaxLineBytes, 'a');
@@ -1269,6 +1313,8 @@ int main()
     test_support::Suite suite("FileSessionTests");
     suite.run("multi-edit and marker cleanup align only final candidates",
               multiEditAndMarkerCleanupCommandsAlignOnlyTheirFinalText);
+    suite.run("a large file with one conflicting line loads its choices",
+              aLargeFileWithOneConflictingLineLoadsItsChoices);
     suite.run("discarding after loading a large file restores its launch text",
               discardAfterLoadingALargeFileRestoresItsLaunchText);
     suite.run("whole drafts and edits keep UTF-8 text with LF line endings", wholeDraftsKeepTheTextInvariant);

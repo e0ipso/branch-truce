@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -297,6 +299,12 @@ std::vector<Passage> shifted(const std::vector<Passage> &passages, std::string_v
 
 }
 
+std::size_t CorrespondenceAlgorithm::cost(std::string_view source, std::string_view result) const
+{
+    const auto product = std::uint64_t{lineCount(source)} * lineCount(result);
+    return static_cast<std::size_t>(std::min<std::uint64_t>(product, std::numeric_limits<std::size_t>::max()));
+}
+
 void requireComparable(std::string_view text)
 {
     if (!withinTextEnvelope(text)) throw std::invalid_argument("Correspondence text is outside the supported envelope");
@@ -328,10 +336,9 @@ void CorrespondenceMap::align(std::size_t cells)
     requireComparable(text_);
     resultLines_.reset();
     MetadataBudget work{cells, cells};
-    const auto count = lineCount(text_);
     for (const auto side : kSides)
         if (const auto *text = source(side)) {
-            if (*text == text_ || work.take(lineCount(*text), count))
+            if (*text == text_ || work.take(1, algorithm_->cost(*text, text_)))
                 passages_[side] = algorithm_->compare(*text, text_);
             else
                 passages_[side] = {{{0, text->size()}, {0, text_.size()}, PassageKind::Ambiguous}};
@@ -516,7 +523,7 @@ CorrespondenceMap CorrespondenceMap::recomputed(RevisionId revision, std::string
     }
     if (text_ == text) return result;
     MetadataBudget work{kMaxAlignmentCells, kMaxAlignmentCells};
-    const auto changes = work.take(lineCount(text_), lineCount(text))
+    const auto changes = work.take(1, algorithm_->cost(text_, text))
         ? algorithm_->compare(text_, text)
         : std::vector<Passage>{{{0, text_.size()}, {0, text.size()}, PassageKind::Ambiguous}};
     if (manual) result.handEditedRanges_ = recomputedRanges(handEditedRanges_, changes, text.size());

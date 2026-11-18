@@ -22,10 +22,12 @@ inline constexpr std::size_t kMaxRecoveryPayloadBytes = 8388608;
 // projects that change it with conflict-marker-size use a few dozen.
 inline constexpr std::size_t kMaxConflictMarkerSize = 1024;
 // Line pairs one alignment of a source with a result may compare: the
-// product of their line counts. The line alignment takes time in proportion
-// to it, so a larger pair is one Ambiguous passage instead: its anchors stay
-// unmapped and only direct editing applies there. This allows 8192 lines
-// against 8192, twice the representative size in each text.
+// algorithm's cost(), at most the product of their line counts. The line
+// alignment takes time in proportion to it, so a pair that costs more is one
+// Ambiguous passage instead: its anchors stay unmapped and only direct editing
+// applies there. Any pair up to 8192 lines against 8192, twice the
+// representative size in each text, fits. Longer texts fit when the lines they
+// share at their start and end leave only a few lines that differ.
 inline constexpr std::size_t kMaxAlignmentCells = 67108864;
 inline constexpr std::size_t kMaxIndexedLines = 65536;
 // Derived choices, anchors and decision identifiers have their own admission
