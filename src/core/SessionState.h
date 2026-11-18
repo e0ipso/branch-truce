@@ -70,8 +70,8 @@ struct EditOptions {
 // not synchronized: one thread at a time may use it, and a session built on a
 // worker thread may be handed to another thread once.
 //
-// Aligning the sources with an edited result costs time in proportion to the
-// product of their line counts, so an editor can defer it. The owning thread
+// Aligning the sources with an edited result can cost time in proportion to
+// the product of their line counts, so an editor can defer it. The owning thread
 // edits with Realignment::Deferred and hands pendingAlignment() to a worker.
 // That map is immutable and shared, so the worker may call realigned() on it
 // while the owner keeps editing; the worker touches no session. The owner then

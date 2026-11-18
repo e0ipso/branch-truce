@@ -24,7 +24,7 @@ is not recovered work.
 | Revision history | 1024 undo entries, 268435456 retained bytes | oldest undo entries are pruned; current, launch and publication-held revisions remain protected |
 | Metadata | 65536 entries, 16777216 bytes | derived decisions, ranges or command candidates are refused before exceeding admission |
 | Destination read | 16908291 raw bytes | publication refuses the changed or oversized destination before reading it into memory |
-| Line alignment | 67108864 line pairs (source lines times result lines) | that source and result are one ambiguous passage: no choice in it is mapped and only direct editing applies |
+| Line alignment | 67108864 line pairs: source lines times result lines, or less when the texts share their first and last lines (see `src/core/Correspondence.md`) | that source and result are one ambiguous passage: no choice in it is mapped and only direct editing applies |
 
 Each Git phase, including the canonical blob read and the checkout read, gets
 its own 4194304-byte budget. Stdout and stderr share the budget of that phase.

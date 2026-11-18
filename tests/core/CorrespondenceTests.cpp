@@ -3,11 +3,15 @@
 #include "core/Correspondence.h"
 #include "core/ExactLineCorrespondence.h"
 #include "core/ResourceLimits.h"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <functional>
 #include <future>
+#include <limits>
+#include <map>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -173,19 +177,159 @@ void aLongUniqueTextAlignsAsOneEqualPassage()
               {{source.size(), source.size()}, {14 + source.size(), result.size()}, PassageKind::ResultOnly}});
 }
 
+std::string uniqueLines(std::string_view prefix, std::size_t count)
+{
+    std::string text;
+    for (std::size_t line = 0; line < count; ++line) {
+        text += prefix;
+        text += std::to_string(line);
+        text += '\n';
+    }
+    return text;
+}
+
 void textsOverTheCellBudgetAreOneAmbiguousPassage()
 {
-    // 8193 lines against 8193 is just over kMaxAlignmentCells.
-    std::string source;
-    for (int line = 0; line < 8193; ++line) source += "unique line " + std::to_string(line) + '\n';
+    // 8193 lines against 8193 is just over kMaxAlignmentCells, and no line is
+    // shared, so no band narrows the work.
+    const auto source = uniqueLines("unique line ", 8193);
+    const auto result = uniqueLines("other line ", 8193);
     CHECK(8193UL * 8193UL > kMaxAlignmentCells && 8192UL * 8192UL <= kMaxAlignmentCells);
-    auto result = source;
-    result.replace(0, 14, "changed line\n");
+    CHECK(ExactLineCorrespondence{}.cost(source, result) == 8193UL * 8193UL);
     CHECK(ExactLineCorrespondence{}.compare(source, result)
           == std::vector<Passage>{{{0, source.size()}, {0, result.size()}, PassageKind::Ambiguous}});
     // Identical texts need no alignment, whatever their size.
+    CHECK(ExactLineCorrespondence{}.cost(source, source) == 0);
     CHECK(ExactLineCorrespondence{}.compare(source, source)
           == std::vector<Passage>{{{0, source.size()}, {0, source.size()}, PassageKind::Equal}});
+    // Over the index limit nothing is aligned.
+    const auto longest = std::string(kMaxIndexedLines + 1, '\n');
+    CHECK(ExactLineCorrespondence{}.cost(longest, "x\n") == std::numeric_limits<std::size_t>::max());
+}
+
+void sharedEdgesAlignLongTextsWithFewChanges()
+{
+    // A lockfile-sized pair that differs in one line: every optimal alignment
+    // stays within one line of the diagonal, so it costs a narrow band.
+    const auto head = uniqueLines("head line ", 12000);
+    const auto tail = uniqueLines("tail line ", 12000);
+    const auto source = head + "ours\n" + tail;
+    const auto result = head + "theirs\n" + tail;
+    CHECK(lineCount(source) * lineCount(result) > kMaxAlignmentCells);
+    CHECK(ExactLineCorrespondence{}.cost(source, result) <= kMaxAlignmentCells);
+    expectPassages(source, result,
+                   {{{0, head.size()}, {0, head.size()}, PassageKind::Equal},
+                    {{head.size(), head.size() + 5}, {head.size(), head.size() + 7}, PassageKind::Changed},
+                    {{head.size() + 5, source.size()}, {head.size() + 7, result.size()}, PassageKind::Equal}});
+    // An inserted block between the shared edges aligns the same way.
+    const auto inserted = head + uniqueLines("inserted line ", 50) + tail;
+    expectPassages(head + tail, inserted,
+                   {{{0, head.size()}, {0, head.size()}, PassageKind::Equal},
+                    {{head.size(), head.size()}, {head.size(), inserted.size() - tail.size()}, PassageKind::ResultOnly},
+                    {{head.size(), head.size() + tail.size()},
+                     {inserted.size() - tail.size(), inserted.size()},
+                     PassageKind::Equal}});
+}
+
+// Line pairs every optimal alignment of `source` and `result` matches, found
+// without Hirschberg or a band. A match with rank k (k matches before it) is
+// in every optimal alignment exactly when no other match can take rank k in
+// an optimal alignment.
+std::set<std::pair<std::size_t, std::size_t>> sharedMatches(const std::vector<std::string> &source,
+                                                            const std::vector<std::string> &result)
+{
+    const auto n = source.size();
+    const auto m = result.size();
+    std::vector<std::vector<std::size_t>> before(n + 1, std::vector<std::size_t>(m + 1));
+    std::vector<std::vector<std::size_t>> after(n + 2, std::vector<std::size_t>(m + 2));
+    for (std::size_t i = 1; i <= n; ++i)
+        for (std::size_t j = 1; j <= m; ++j)
+            before[i][j] = source[i - 1] == result[j - 1] ? before[i - 1][j - 1] + 1
+                                                          : std::max(before[i - 1][j], before[i][j - 1]);
+    for (auto i = n; i-- > 0;)
+        for (auto j = m; j-- > 0;)
+            after[i][j] = source[i] == result[j] ? after[i + 1][j + 1] + 1 : std::max(after[i + 1][j], after[i][j + 1]);
+    std::map<std::size_t, std::vector<std::pair<std::size_t, std::size_t>>> byRank;
+    for (std::size_t i = 0; i < n; ++i)
+        for (std::size_t j = 0; j < m; ++j)
+            if (source[i] == result[j] && before[i][j] + 1 + after[i + 1][j + 1] == before[n][m])
+                byRank[before[i][j]].emplace_back(i, j);
+    std::set<std::pair<std::size_t, std::size_t>> shared;
+    for (const auto &[rank, candidates] : byRank)
+        if (candidates.size() == 1) shared.insert(candidates.front());
+    return shared;
+}
+
+std::set<std::pair<std::size_t, std::size_t>> equalLinePairs(std::string_view source, std::string_view result,
+                                                             const std::vector<Passage> &passages)
+{
+    const auto sourceStarts = lineStarts(source);
+    const auto resultStarts = lineStarts(result);
+    const auto index = [](const std::vector<std::size_t> &starts, std::size_t offset) {
+        return static_cast<std::size_t>(std::lower_bound(starts.begin(), starts.end(), offset) - starts.begin());
+    };
+    std::set<std::pair<std::size_t, std::size_t>> pairs;
+    for (const auto &passage : passages) {
+        if (passage.kind != PassageKind::Equal) continue;
+        auto i = index(sourceStarts, passage.source.begin);
+        auto j = index(resultStarts, passage.result.begin);
+        for (; i < index(sourceStarts, passage.source.end); ++i, ++j) pairs.emplace(i, j);
+    }
+    return pairs;
+}
+
+// Every text of up to `most` lines over "a" and "b", in a fixed order.
+std::vector<std::vector<std::string>> allTexts(std::size_t most)
+{
+    std::vector<std::vector<std::string>> texts{{}};
+    for (std::size_t from = 0; from < texts.size(); ++from)
+        if (texts[from].size() < most)
+            for (const auto *line : {"a\n", "b\n"}) {
+                auto longer = texts[from];
+                longer.emplace_back(line);
+                texts.push_back(std::move(longer));
+            }
+    return texts;
+}
+
+std::string joined(const std::vector<std::string> &lines)
+{
+    std::string text;
+    for (const auto &line : lines) text += line;
+    return text;
+}
+
+void equalPassagesAreTheMatchesEveryOptimalAlignmentShares()
+{
+    // Two distinct lines make repeats, ties and ambiguity that reaches into
+    // the shared edges common, which is where a band could go wrong. Every
+    // pair of short middles between every short shared start and end.
+    const auto edges = allTexts(2);
+    const auto middles = allTexts(4);
+    for (const auto &prefix : edges)
+        for (const auto &suffix : edges)
+            for (const auto &sourceMiddle : middles)
+                for (const auto &resultMiddle : middles) {
+                    auto source = prefix;
+                    auto result = prefix;
+                    source.insert(source.end(), sourceMiddle.begin(), sourceMiddle.end());
+                    result.insert(result.end(), resultMiddle.begin(), resultMiddle.end());
+                    source.insert(source.end(), suffix.begin(), suffix.end());
+                    result.insert(result.end(), suffix.begin(), suffix.end());
+                    const auto sourceText = joined(source);
+                    const auto resultText = joined(result);
+                    const auto passages = ExactLineCorrespondence{}.compare(sourceText, resultText);
+                    if (equalLinePairs(sourceText, resultText, passages) != sharedMatches(source, result)) {
+                        std::string message = "equal passages differ from the shared matches\nsource\n";
+                        message += sourceText;
+                        message += "result\n";
+                        message += resultText;
+                        message += "actual\n";
+                        message += show(passages);
+                        throw std::runtime_error(message);
+                    }
+                    CHECK(ExactLineCorrespondence{}.cost(sourceText, resultText) <= source.size() * result.size());
+                }
 }
 
 std::shared_ptr<const FileSnapshots> sources(const std::string &text, const std::string &result)
@@ -410,6 +554,9 @@ int main()
     suite.run("a long unique text aligns as one equal passage between inserted lines",
               aLongUniqueTextAlignsAsOneEqualPassage);
     suite.run("texts over the cell budget are one ambiguous passage", textsOverTheCellBudgetAreOneAmbiguousPassage);
+    suite.run("shared edges align long texts with few changes", sharedEdgesAlignLongTextsWithFewChanges);
+    suite.run("equal passages are the matches every optimal alignment shares",
+              equalPassagesAreTheMatchesEveryOptimalAlignmentShares);
     suite.run("the map checks every text before the algorithm sees it", theMapChecksEveryTextBeforeTheAlgorithmSeesIt);
     suite.run("a deferred edit keeps the passages around the edited lines",
               aDeferredEditKeepsThePassagesAroundTheEditedLines);
