@@ -51,6 +51,9 @@ public:
         // Builds every Git runner the session uses: classification, conversion,
         // queued tasks and recovery checks. Empty runs GitAdapters for git.
         git::GitRunners gitRunners = {};
+        // Whether git mergetool started this window, with --mergetool-path.
+        // Such a window never opens another repository.
+        bool launchedByMergetool = false;
     };
     explicit Application(Config config, QObject *parent = nullptr);
     // Stops every running Git process of the session at once, so they end

@@ -49,15 +49,25 @@ bool captureWorkingFiles(const QList<git::Conflict> &files, const git::Repositor
 
 SessionLoader::SessionLoader(Session session, git::GitRunners git, QObject *parent,
                              std::shared_ptr<const CorrespondenceAlgorithm> correspondence,
-                             std::shared_ptr<const storage::FileSystem> files)
+                             std::shared_ptr<const storage::FileSystem> files, bool launchedByMergetool)
     : QObject(parent),
       session_(session),
       git_(std::move(git)),
       correspondence_(std::move(correspondence)),
       files_(std::move(files)),
+      launchedByMergetool_(launchedByMergetool),
       classifier_(git_, this)
 {
     connect(&classifier_, &git::ConflictClassifier::finished, this, &SessionLoader::classified);
+    // Each state that openAnotherRefusal reads reports its changes here. An
+    // extra emission costs nothing, and openAnotherRepository checks again.
+    // A store's fileStored is always followed by fileChanged.
+    connect(this, &SessionLoader::launchChanged, this, &SessionLoader::openAnotherChanged);
+    connect(&session_.completion, &SessionCompletion::changed, this, &SessionLoader::openAnotherChanged);
+    connect(&session_.publisher, &ResolutionPublisher::changed, this, &SessionLoader::openAnotherChanged);
+    connect(&session_.mergetool, &MergetoolSession::changed, this, &SessionLoader::openAnotherChanged);
+    connect(&session_.store, &SessionStore::fileChanged, this, &SessionLoader::openAnotherChanged);
+    connect(&session_.store, &SessionStore::replaced, this, &SessionLoader::openAnotherChanged);
     // The fences drop a choice's read when work changes or the session is
     // replaced, so its completion never runs; the choice ends here instead.
     connect(&session_.coordinator, &SessionCoordinator::taskFinished, this, [this](const TaskCompletion &completion) {
@@ -177,7 +187,7 @@ QString SessionLoader::choiceRefusal(const QString &session, StartupState state)
     if (std::none_of(recoveryChoices_.cbegin(), recoveryChoices_.cend(),
                      [&](const auto &choice) { return choice.session == session; }))
         return tr("That recovery session is not one of the choices for this session.");
-    if (session_.completion.ended() || session_.publisher.busy() || session_.store.hasPendingRecovery())
+    if (sessionWorkRunning())
         return tr("Choose a recovery session after the running resolution or pending recovery input finishes.");
     // The reload replaces this window's files. Edits already recorded here
     // would be left in a store nobody chose, so they refuse the choice.
@@ -252,6 +262,58 @@ void SessionLoader::ownStoreRead(const QString &session, const QString &director
     Q_EMIT notice({});
     state_ = StartupState::Idle;
     openRepository(repository_.worktreeRoot, session_.selection.fileId(), session);
+}
+
+bool SessionLoader::sessionWorkRunning() const
+{
+    return session_.completion.ended() || session_.publisher.busy() || session_.store.hasPendingRecovery();
+}
+
+QString SessionLoader::sessionWorkOpenRefusal()
+{
+    return tr("Open another repository after the running resolution or pending recovery input finishes.");
+}
+
+QString SessionLoader::openAnotherRefusal() const
+{
+    // Reasons that last for the whole session come first, so the view never
+    // asks the user to wait for something that does not unblock the switch.
+    if (launchedByMergetool_)
+        return tr("A git mergetool launch started this window, so it cannot open another repository. "
+                  "Start Branch Truce again to open one.");
+    // The socket is named after the current operation and cannot stop
+    // listening, so a switch would leave it bound to the wrong operation.
+    if (session_.mergetool.listening())
+        return tr("This window receives git mergetool launches for the current operation, "
+                  "so it cannot open another repository. Start Branch Truce again to open one.");
+    if (session_.mergetool.unreleasedLaunches() > 0 || session_.mergetool.parentSessionActive())
+        return tr("A git mergetool session uses this window, so it cannot open another repository. "
+                  "Start Branch Truce again to open one.");
+    if (state_ == StartupState::Idle || state_ == StartupState::Opening || choiceTask_ != 0)
+        return tr("Open another repository after the current one finishes loading.");
+    if (sessionWorkRunning()) return sessionWorkOpenRefusal();
+    return {};
+}
+
+bool SessionLoader::openAnotherRepository(const QString &directory)
+{
+    const auto refuse = [this](const QString &message) {
+        Q_EMIT notice(message);
+        return false;
+    };
+    if (const auto refusal = openAnotherRefusal(); !refusal.isEmpty()) return refuse(refusal);
+    // The current files leave the window first. A directory that does not
+    // open then shows no files from the old repository, and nothing records
+    // them in the new store, which has none of their launch captures. The
+    // replacement refuses, and changes nothing, while recovery input still
+    // waits for the old store.
+    if (session_.store.size() > 0
+        && !session_.coordinator.replaceSession(repository_.worktreeRoot, QStringLiteral("closed"), {}))
+        return refuse(sessionWorkOpenRefusal());
+    if (!session_.store.startNewRecoveryStore()) return refuse(sessionWorkOpenRefusal());
+    Q_EMIT notice({});
+    state_ = StartupState::Idle;
+    return openRepository(directory);
 }
 
 void SessionLoader::refuseChoice(const QString &message)

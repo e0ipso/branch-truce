@@ -130,7 +130,8 @@ int main(int argc, char *argv[])
     branch_truce::Application session(
         {.git = git,
          .recoveryDirectory = branch_truce::newRecoveryDirectory(),
-         .mergetoolDirectory = branch_truce::mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"))});
+         .mergetoolDirectory = branch_truce::mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR")),
+         .launchedByMergetool = parser.isSet(launchedPath)});
     QQmlApplicationEngine engine;
     branch_truce::selectControlsStyle(engine);
     engine.setInitialProperties(session.windowProperties());

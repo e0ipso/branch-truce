@@ -1,0 +1,132 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="icon" href="../../assets/branding/web/favicon.svg" type="image/svg+xml"><link rel="icon" href="../../assets/branding/web/favicon.ico" sizes="16x16 32x32 48x48"><style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1280px;height:720px;overflow:hidden}
+body{font:13.33px/1.35 "Noto Sans",sans-serif;color:var(--text);background:var(--win)}
+.mono,.code-area{font-family:"Hack","Noto Sans Mono",monospace}
+.frame{width:1280px;height:720px;display:grid;grid-template-rows:46px 1fr 28px}
+.line{background:color-mix(in srgb,var(--text) var(--linepct),var(--win))}
+.ColorScheme-Text{color:var(--text)} .ColorScheme-NeutralText{color:var(--neu)}
+.ColorScheme-NegativeText{color:var(--neg)} .ColorScheme-PositiveText{color:var(--pos)}
+.ColorScheme-Highlight{color:var(--act)}
+.ic{flex:none;display:block}
+.muted{color:var(--muted)}
+.spacer{flex:1}
+.bar{display:flex;align-items:center;background:var(--hdr)}
+.hdr{gap:2px;padding:0 8px;border-bottom:1px solid var(--hair)}
+.ftr{gap:12px;padding:0 12px;border-top:1px solid var(--hair);font-size:12px;color:var(--muted)}
+.title{display:flex;align-items:baseline;gap:10px;margin-left:6px}
+.title b{font-weight:600;font-size:14px}
+.tb{height:32px;display:flex;align-items:center;gap:6px;padding:0 8px;border-radius:5px}
+.tb.checked{background:color-mix(in srgb,var(--act) 22%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--act) 55%,transparent)}
+.sep{width:1px;height:20px;background:var(--hair);margin:0 6px}
+.seg{display:flex;align-items:center;height:32px;border:1px solid var(--hair);border-radius:5px;background:var(--btn)}
+.seg .tb{height:30px;padding:0 6px}
+.segmid{display:flex;align-items:center;gap:6px;padding:0 8px;height:30px;border-left:1px solid var(--hair);border-right:1px solid var(--hair)}
+.disabled{opacity:.45}
+.body{display:grid;grid-template-columns:262px 1px 1fr;min-height:0}
+.vline{background:var(--hair)}
+.side{background:var(--view);display:flex;flex-direction:column}
+.phdr{height:38px;display:flex;align-items:center;padding:0 10px 0 14px;border-bottom:1px solid var(--hair)}
+.phdr b{font-weight:600;flex:1}
+.pill{font-size:11px;padding:0 7px;border-radius:9px;color:var(--muted);background:color-mix(in srgb,var(--muted) 14%,transparent);border:1px solid color-mix(in srgb,var(--muted) 40%,transparent)}
+.list{padding:4px 0}
+.file{padding:2px 5px}
+.plate{display:flex;gap:10px;align-items:center;padding:6px 9px;border-radius:5px}
+.file.sel .plate{background:var(--sel);color:var(--seltext)}
+.file.sel .ColorScheme-Text{color:var(--seltext)}
+.ft{min-width:0}
+.fn{display:flex;gap:8px;align-items:baseline}
+.dir{font-size:11.5px;color:var(--muted)}
+.fs{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fs.ok{color:var(--pos)}
+.fs.warn{color:var(--neu)}
+.fwarn{display:flex;align-items:center;gap:5px;color:var(--neu)}
+.file.sel .dir,.file.sel .fs{color:color-mix(in srgb,var(--seltext) 82%,transparent)}
+.ok.ic .ColorScheme-Text{color:var(--pos)}
+.work{display:grid;grid-template-rows:40px 1fr;min-height:0}
+.fhdr{display:flex;align-items:center;gap:8px;padding:0 6px 0 14px;background:var(--win);border-bottom:1px solid var(--hair)}
+.fpath{font-size:14px}.fpath b{font-weight:600}
+.tools{display:flex;align-items:center;gap:2px}
+.btn{height:30px;display:flex;align-items:center;gap:6px;padding:0 10px;border-radius:5px;margin:0 4px;
+ background:var(--btn);border:1px solid color-mix(in srgb,var(--text) 22%,var(--btn));box-shadow:0 1px 0 rgba(0,0,0,.08)}
+.panes{display:grid;grid-template-columns:1fr 22px 1fr 22px 1fr;background:var(--view);min-height:0}
+.gapcol{background:var(--win);border-left:1px solid var(--hair);border-right:1px solid var(--hair)}
+.gap{display:block;margin-top:31px}
+.pane{min-width:0;overflow:hidden}
+.ph{height:30px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--hair);background:var(--viewalt);white-space:nowrap}
+.ph b{font-weight:600}.ph .muted{font-size:12px}
+.code-area{padding-top:6px;font-size:12px}
+.row{height:20px;display:flex;align-items:center;white-space:pre;position:relative}
+.row .num{width:34px;text-align:right;color:var(--muted);font-size:11px;padding-right:4px;flex:none;opacity:.8}
+.row .glyph{width:16px;text-align:center;flex:none;font-weight:700}
+.row .code{padding-left:8px;flex:1;overflow:hidden}
+.row.added,.row.accepted{background:color-mix(in srgb,var(--pos) var(--tintpct),var(--view))}
+.row.changed{background:color-mix(in srgb,var(--act) var(--tintpct),var(--view))}
+.row.conflict{background:color-mix(in srgb,var(--neg) var(--tintpct),var(--view))}
+.glyph.added,.glyph.accepted{color:var(--pos)} .glyph.changed{color:var(--act)} .glyph.conflict{color:var(--neg)}
+.glyph.ignored{color:var(--muted)}
+.row.ignored .code,.row.ignored .code span{color:var(--muted)!important;font-weight:400}
+.actions{width:46px;flex:none;display:flex;gap:3px;justify-content:center}
+.act{width:18px;height:18px;border-radius:4px;display:flex;align-items:center;justify-content:center;background:var(--view);
+ border:1px solid color-mix(in srgb,var(--text) 22%,var(--view))}
+.act.accept .ColorScheme-Text{color:var(--act)}
+.res .row.conflict .code{display:flex;gap:10px;align-items:center;font-family:"Noto Sans",sans-serif;font-size:12px}
+.fold{color:var(--neg);font-weight:600}
+.foldact{display:flex;align-items:center;gap:4px;color:var(--text);padding:0 6px;border-radius:4px;
+ border:1px solid color-mix(in srgb,var(--text) 22%,transparent);height:17px;font-weight:400}
+.kw{color:var(--kw);font-weight:700}.pre{color:var(--pre)}.str{color:var(--str)}.num{}.com{color:var(--com)}
+.code .nm{color:var(--numc)}
+path.band{stroke:none}
+path.band.added,path.band.accepted{fill:color-mix(in srgb,var(--pos) 38%,transparent)}
+path.band.changed{fill:color-mix(in srgb,var(--act) 38%,transparent)}
+path.band.conflict{fill:color-mix(in srgb,var(--neg) 42%,transparent)}
+path.band.ignored{fill:color-mix(in srgb,var(--muted) 30%,transparent)}
+.empty{background:var(--view);display:flex;align-items:center;justify-content:center}
+.ph-msg{display:flex;flex-direction:column;align-items:center;gap:12px;max-width:470px;text-align:center}
+.ph-msg .big{opacity:.55;margin-bottom:6px}
+.ph-title{font-size:17px;font-weight:600;color:var(--text);opacity:.85}
+.ph-text{color:var(--muted)}
+.ph-text .mono{font-size:12px;color:var(--text)}
+.prog{width:90px;height:4px;border-radius:2px;background:color-mix(in srgb,var(--muted) 25%,transparent)}
+.prog div{height:4px;border-radius:2px;background:var(--act)}
+
+.frame.bare{grid-template-rows:46px 1fr}
+.ph-msg .btn{margin:6px 0 0}
+body{--win:#202326;--view:#141618;--viewalt:#1d1f22;--hdr:#292c30;--text:#fcfcfc;--muted:#a1a9b1;--neg:#da4453;--neu:#f67400;--pos:#27ae60;--act:#3daee9;--sel:#3daee9;--seltext:#fcfcfc;--tintpct:24%;--tintn:24;--hair:color-mix(in srgb,#fcfcfc 16%,#202326);--btn:#292c30;--kw:#cfcfc2;--pre:#27ae60;--str:#f44f4f;--numc:#f67400;--com:#7a7c7d}
+</style></head>
+<body><div class="frame bare">
+<header class="bar hdr">
+  <div class="tb "><svg width="16" height="16" class="ic " viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+    
+    <g class="ColorScheme-Text" fill="currentColor">
+        <path d="m2 2v12h12v-12zm4 1h7v10h-7z"/>
+        <path d="m8.3530312 4.6464844-.7070312.7070312 2.646484 2.6464844-2.646484 2.646484.7070312.707032 3.3535158-3.353516z"/>
+    </g>
+</svg>
+</div>
+  <div class="tb "><svg width="16" height="16" class="ic " viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+    <path class="ColorScheme-Text" fill="currentColor" d="M 2 2 L 2 3 L 2 6 L 2 7 L 2 13 L 2 14 L 14 14 L 14 13 L 14 6 L 14 5 L 14 4 L 9.0078125 4 L 7.0078125 2 L 7 2.0078125 L 7 2 L 3 2 L 2 2 z M 3 3 L 6.5917969 3 L 7.59375 4 L 7 4 L 7 4.0078125 L 6.9921875 4 L 4.9921875 6 L 3 6 L 3 3 z M 3 7 L 13 7 L 13 13 L 3 13 L 3 7 z "/>
+</svg><span>Open repository…</span></div>
+  <div class="sep"></div>
+  <div class="title"><b>Open conflict session</b></div>
+  <div class="spacer"></div>
+  <div class="tb "><svg width="16" height="16" class="ic " xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  
+ <path style="fill:currentColor;fill-opacity:1;stroke:none" 
+     d="M 2 3 L 2 5 L 14 5 L 14 3 L 2 3 z M 2 7 L 2 9 L 14 9 L 14 7 L 2 7 z M 2 11 L 2 13 L 14 13 L 14 11 L 2 11 z "
+     class="ColorScheme-Text"
+     />
+</svg>
+</div>
+</header>
+<div class="empty"><div class="ph-msg">
+<svg width="64" height="64" class="ic big" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+    <rect class="ColorScheme-NegativeText" x="2" y="2" width="12" height="12" rx="2" fill="currentColor"/>
+    <path d="M 5.414,4 4,5.414 6.586,8 4,10.586 5.414,12 8,9.414 10.586,12 12,10.586 9.414,8 12,5.414 10.586,4 8,6.586 Z" fill="#fff"/>
+</svg>
+<div class="ph-title">Could not open the conflicts</div>
+<div class="ph-text">Could not open the selected work: <span class="mono">/home/alex</span> is not a Git repository.</div>
+<div class="btn"><svg width="16" height="16" class="ic " viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+    <path class="ColorScheme-Text" fill="currentColor" d="M 2 2 L 2 3 L 2 6 L 2 7 L 2 13 L 2 14 L 14 14 L 14 13 L 14 6 L 14 5 L 14 4 L 9.0078125 4 L 7.0078125 2 L 7 2.0078125 L 7 2 L 3 2 L 2 2 z M 3 3 L 6.5917969 3 L 7.59375 4 L 7 4 L 7 4.0078125 L 6.9921875 4 L 4.9921875 6 L 3 6 L 3 3 z M 3 7 L 13 7 L 13 13 L 3 13 L 3 7 z "/>
+</svg><span>Open repository…</span></div>
+</div></div></div></body></html>

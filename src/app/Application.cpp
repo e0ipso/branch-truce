@@ -36,7 +36,7 @@ Application::Application(Config config, QObject *parent)
       completion_(store_, publisher_, mergetool_, feedback_, this),
       mergetoolStatus_(mergetool_, publisher_, files_, selection_, this),
       loader_({store_, coordinator_, selection_, publisher_, mergetool_, completion_}, runnersOf(config, gitProcesses_),
-              this, std::move(config.correspondence), config.files)
+              this, std::move(config.correspondence), config.files, config.launchedByMergetool)
 {
     // The editor shows the selected file, and reloads it after any change.
     const auto show = [this] { editor_.show(selection_.fileId()); };
