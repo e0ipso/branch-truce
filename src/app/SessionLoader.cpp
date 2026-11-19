@@ -310,9 +310,16 @@ bool SessionLoader::openAnotherRepository(const QString &directory)
     // them in the new store, which has none of their launch captures. The
     // replacement refuses, and changes nothing, while recovery input still
     // waits for the old store.
-    if (session_.store.size() > 0
-        && !session_.coordinator.replaceSession(repository_.worktreeRoot, QStringLiteral("closed"), {}))
-        return refuse(sessionWorkOpenRefusal());
+    if (session_.store.size() > 0) {
+        // The closed session has no files, so no work runs in its directory.
+        // The directory being opened stands in for a worktree that was moved
+        // or deleted after it opened.
+        const auto closedRoot = QFileInfo(directory).isDir() ? directory : repository_.worktreeRoot;
+        if (!QFileInfo(closedRoot).isDir())
+            return refuse(tr("%1 is not a folder that can be opened.").arg(QDir::toNativeSeparators(directory)));
+        if (!session_.coordinator.replaceSession(closedRoot, QStringLiteral("closed"), {}))
+            return refuse(sessionWorkOpenRefusal());
+    }
     if (!session_.store.startNewRecoveryStore()) return refuse(sessionWorkOpenRefusal());
     Q_EMIT notice({});
     state_ = StartupState::Idle;
@@ -325,6 +332,12 @@ void SessionLoader::chooseAnotherRepository()
 {
     if (const auto refusal = openAnotherRefusal(); !refusal.isEmpty()) {
         Q_EMIT notice(refusal);
+        return;
+    }
+    // Typing or a command that recovery still writes would refuse the switch
+    // only after the user picked a folder, so the picker waits for it.
+    if (session_.store.recording()) {
+        Q_EMIT notice(sessionWorkOpenRefusal());
         return;
     }
     if (!chooseDirectory_) {

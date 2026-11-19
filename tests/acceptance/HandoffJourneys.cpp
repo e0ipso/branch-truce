@@ -12,6 +12,7 @@
 #include <QFileInfo>
 #include <QMap>
 #include <QProcess>
+#include <QScopeGuard>
 
 #include <csignal>
 
@@ -601,6 +602,69 @@ void confirmOpensAnotherAndKeepsTheDraft(Sandbox &sandbox)
     CHECK(scene.progress().saved);
     checkOffline(scene);
 }
+
+// Typing that recovery still writes keeps the picker closed, so a switch is never refused after
+// the user picked a folder. The picker shows once the write finishes.
+void recordingTypingKeepsThePickerClosed(Sandbox &sandbox)
+{
+    Repository repo({chosenByHand("typed.txt")});
+    Repository other({chosenByHand("other.txt")});
+    Scene scene(sandbox, repo, {.directory = {}, .listen = false});
+    auto *loader = scene.app().loader();
+    auto *store = scene.app().store();
+    clickFile(scene, "typed.txt");
+    appendToResult(scene, "typed");
+    scene.setPickedDirectory(other.root);
+    // As the action does, the open burst goes to the journal first. Its write is not yet done.
+    scene.app().commands()->recordTyping();
+    CHECK(store->recording());
+    loader->chooseAnotherRepository();
+    expectText(scene.app().feedback()->message(),
+               "Open another repository after the running resolution or pending recovery input finishes.",
+               "the refusal notice for the picker");
+    CHECK(scene.pickerCalls() == 0);
+    CHECK(loader->repositoryRoot() == repo.root);
+    test_support::awaitRecovery(*store);
+    CHECK(!store->recording());
+    loader->chooseAnotherRepository();
+    waitFor(
+        "the picked repository to open",
+        [&] {
+            return loader->startupState() == SessionLoader::StartupState::ReadyWithoutMergetool
+                && loader->repositoryRoot() == other.root;
+        },
+        [&] { return loaderState(*loader); });
+    CHECK(scene.pickerCalls() == 1);
+    checkOffline(scene);
+}
+
+// A worktree moved after it opened does not keep the window from opening another repository.
+void movedWorktreeStillOpensAnother(Sandbox &sandbox)
+{
+    Repository repo({chosenByHand("moved.txt")});
+    Repository other({chosenByHand("other.txt")});
+    Scene scene(sandbox, repo, {.directory = {}, .listen = false});
+    auto *loader = scene.app().loader();
+    // The launch captures finish recording, so the switch shows the picker without asking.
+    test_support::awaitRecovery(*scene.app().store());
+    CHECK(loader->canOpenAnother() && !loader->holdsUserWork() && scene.app().store()->size() > 0);
+    const auto moved = repo.root + QStringLiteral("-moved");
+    CHECK(QDir().rename(repo.root, moved));
+    const auto moveBack = qScopeGuard([&] { QDir().rename(moved, repo.root); });
+    scene.setPickedDirectory(other.root);
+    scene.click("openRepository");
+    waitFor(
+        "the picked repository to open",
+        [&] {
+            return loader->startupState() == SessionLoader::StartupState::ReadyWithoutMergetool
+                && loader->repositoryRoot() == other.root;
+        },
+        [&] { return loaderState(*loader); });
+    CHECK(scene.pickerCalls() == 1);
+    clickFile(scene, "other.txt");
+    expectText(scene.text("resultText"), "other chosen by hand\n", "the picked repository's result");
+    checkOffline(scene);
+}
 } // namespace
 
 void addHandoffJourneys(JourneySuite &suite)
@@ -631,6 +695,9 @@ void addHandoffJourneys(JourneySuite &suite)
         keepSessionKeepsTheDraft);
     add("confirming Open repository opens the picked repository and the old recovery store keeps the draft",
         confirmOpensAnotherAndKeepsTheDraft);
+    add("Open repository waits for typing that recovery still writes before it shows the picker",
+        recordingTypingKeepsThePickerClosed);
+    add("a window whose worktree moved after it opened still opens another repository", movedWorktreeStillOpensAnother);
 }
 
 } // namespace journey
