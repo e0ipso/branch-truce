@@ -8,6 +8,7 @@
 #include <QString>
 #include <QVariantList>
 #include <QtQml/qqmlregistration.h>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -65,15 +66,19 @@ public:
         MergetoolSession &mergetool;
         const SessionCompletion &completion;
     };
+    // Asks the user for a directory, starting at startDirectory. It returns
+    // the chosen absolute directory, or empty when the user cancels.
+    using DirectoryPicker = std::function<QString(const QString &startDirectory)>;
     // git builds the runners that classify the conflicts and reconcile
     // recovery. Loaded files align their sources with `correspondence`, or
     // with the engine's default when it is null. launchedByMergetool is true
     // when git mergetool started this window; such a window never opens
-    // another repository.
+    // another repository. chooseDirectory is the picker that
+    // chooseAnotherRepository shows; when it is empty, that call refuses.
     SessionLoader(Session session, git::GitRunners git, QObject *parent = nullptr,
                   std::shared_ptr<const CorrespondenceAlgorithm> correspondence = {},
                   std::shared_ptr<const storage::FileSystem> files = storage::systemFileSystem(),
-                  bool launchedByMergetool = false);
+                  bool launchedByMergetool = false, DirectoryPicker chooseDirectory = {});
 
     [[nodiscard]] StartupState startupState() const { return state_; }
     [[nodiscard]] bool opening() const { return state_ == StartupState::Opening; }
@@ -126,6 +131,13 @@ public:
     // session moves to a new recovery store. The old store stays on disk
     // with its drafts, for the next time its repository opens.
     Q_INVOKABLE bool openAnotherRepository(const QString &directory);
+    // Whether the store holds, or is recording, work other than a launch
+    // capture. A switch to another repository leaves it in the old store.
+    Q_INVOKABLE bool holdsUserWork() const;
+    // Asks the user for a directory with the picker, then opens it with
+    // openAnotherRepository. A refusal, or a missing picker, goes to notice
+    // before the picker shows. A cancelled picker changes nothing.
+    Q_INVOKABLE void chooseAnotherRepository();
 
 Q_SIGNALS:
     void launchChanged();
@@ -161,6 +173,7 @@ private:
     std::shared_ptr<const CorrespondenceAlgorithm> correspondence_;
     std::shared_ptr<const storage::FileSystem> files_;
     const bool launchedByMergetool_;
+    const DirectoryPicker chooseDirectory_;
     git::ConflictClassifier classifier_;
     git::RepositoryContext repository_;
     QHash<QString, qint64> launchSizes_;

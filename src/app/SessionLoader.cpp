@@ -9,6 +9,7 @@
 #include "session/SessionCoordinator.h"
 #include "session/SessionStore.h"
 #include <QDateTime>
+#include <QDir>
 #include <QFileInfo>
 #include <QLocale>
 #include <QUuid>
@@ -49,13 +50,15 @@ bool captureWorkingFiles(const QList<git::Conflict> &files, const git::Repositor
 
 SessionLoader::SessionLoader(Session session, git::GitRunners git, QObject *parent,
                              std::shared_ptr<const CorrespondenceAlgorithm> correspondence,
-                             std::shared_ptr<const storage::FileSystem> files, bool launchedByMergetool)
+                             std::shared_ptr<const storage::FileSystem> files, bool launchedByMergetool,
+                             DirectoryPicker chooseDirectory)
     : QObject(parent),
       session_(session),
       git_(std::move(git)),
       correspondence_(std::move(correspondence)),
       files_(std::move(files)),
       launchedByMergetool_(launchedByMergetool),
+      chooseDirectory_(std::move(chooseDirectory)),
       classifier_(git_, this)
 {
     connect(&classifier_, &git::ConflictClassifier::finished, this, &SessionLoader::classified);
@@ -314,6 +317,26 @@ bool SessionLoader::openAnotherRepository(const QString &directory)
     Q_EMIT notice({});
     state_ = StartupState::Idle;
     return openRepository(directory);
+}
+
+bool SessionLoader::holdsUserWork() const { return session_.store.holdsUserWork(); }
+
+void SessionLoader::chooseAnotherRepository()
+{
+    if (const auto refusal = openAnotherRefusal(); !refusal.isEmpty()) {
+        Q_EMIT notice(refusal);
+        return;
+    }
+    if (!chooseDirectory_) {
+        Q_EMIT notice(tr("No folder picker is available."));
+        return;
+    }
+    const auto root = repositoryRoot();
+    const auto chosen = chooseDirectory_(root.isEmpty() ? QDir::homePath() : root);
+    if (chosen.isEmpty()) return;
+    // The picker is modal, so the session can change while it shows.
+    // openAnotherRepository checks the refusals again.
+    openAnotherRepository(QDir(chosen).absolutePath());
 }
 
 void SessionLoader::refuseChoice(const QString &message)

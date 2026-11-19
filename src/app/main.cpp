@@ -9,6 +9,7 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QIcon>
 #include <QJsonDocument>
@@ -131,7 +132,11 @@ int main(int argc, char *argv[])
         {.git = git,
          .recoveryDirectory = branch_truce::newRecoveryDirectory(),
          .mergetoolDirectory = branch_truce::mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR")),
-         .launchedByMergetool = parser.isSet(launchedPath)});
+         .launchedByMergetool = parser.isSet(launchedPath),
+         .chooseDirectory = [](const QString &startDirectory) {
+             return QFileDialog::getExistingDirectory(nullptr, QCoreApplication::translate("main", "Open Repository"),
+                                                      startDirectory, QFileDialog::ShowDirsOnly);
+         }});
     QQmlApplicationEngine engine;
     branch_truce::selectControlsStyle(engine);
     engine.setInitialProperties(session.windowProperties());
