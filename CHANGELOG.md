@@ -1,3 +1,9 @@
+## [1.6.0](https://github.com/e0ipso/branch-truce/compare/v1.5.2...v1.6.0) (2026-11-19)
+
+### Features
+
+* add an Open repository action to the header and placeholders ([#19](https://github.com/e0ipso/branch-truce/issues/19)) ([977e028](https://github.com/e0ipso/branch-truce/commit/977e028b5f2904a8fce850367b3681b45a30dd33))
+
 ## [1.5.2](https://github.com/e0ipso/branch-truce/compare/v1.5.1...v1.5.2) (2026-11-18)
 
 ### Bug Fixes
