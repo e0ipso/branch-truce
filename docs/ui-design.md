@@ -8,6 +8,8 @@ The approved mockups in [ui-mockup/](ui-mockup/README.md) are the target:
 | --- | --- |
 | [light-text.png](ui-mockup/light-text.png), [dark-text.png](ui-mockup/dark-text.png) | A text conflict in the three panes, with one conflict undecided, one changed passage, one accepted line and one ignored line |
 | [light-binary.png](ui-mockup/light-binary.png), [dark-binary.png](ui-mockup/dark-binary.png) | A binary file selected; it has to be resolved outside the app |
+| [light-ready.png](ui-mockup/light-ready.png), [dark-ready.png](ui-mockup/dark-ready.png) | The text conflict with the Open repository… button and its separator in the header |
+| [light-error.png](ui-mockup/light-error.png), [dark-error.png](ui-mockup/dark-error.png) | The window opened on a folder that is not a repository: the error placeholder with its Open repository… button |
 
 Each PNG is rendered from the HTML file beside it at 1280x720. Pixel sizes quoted from the mockups below are CSS pixels in that HTML. They show what the `Kirigami.Units` values look like with Noto Sans 10 pt; the units are the rule. Section 10 records implemented reference elements and the kept rule that differs from the mockups.
 
