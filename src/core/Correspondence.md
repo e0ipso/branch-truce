@@ -116,10 +116,17 @@ budget shared across its sources; a whole-buffer recomputation also charges its
 old-to-new comparison to it.
 
 The charge is an estimate, so the work ceiling is per compare, not per budget.
-One admitted compare can spend a Myers run of up to 2 * `kMaxAlignmentCells`
-work units, and then, if Myers fails, a Hirschberg run of up to
-`kMaxAlignmentCells` cells: about 3 * `kMaxAlignmentCells` in all. A map with
-three sources, or a recomputation, can run that many compares.
+Myers stops within its budget of 2 * `kMaxAlignmentCells` work units. When
+Myers fails, the fallback runs if the version 3 band cost estimate,
+`alignmentCost`, is at most `kMaxAlignmentCells`. That estimate counts the
+cells of one boundary pass per recursion level, not all the cell updates. The
+two boundary passes, for the first and the last path, can update up to about
+four times as many cells. Without a band, each pass updates about
+2 * N * M cells over all its levels. This is the same as in version 3. So one
+compare can do up to about 6 * `kMaxAlignmentCells` units of work. No combined
+limit is enforced, because a lower limit would make some pairs that version 3
+aligns into one `Ambiguous` passage. A map with three sources, or a
+recomputation, can run that many compares.
 
 The algorithm identity is `exact-line/4`. Version 3 used the banded
 Hirschberg alone, so a pair over its cost was one `Ambiguous` passage. Version 4

@@ -238,7 +238,8 @@ std::size_t sizeOf(Offset offset) noexcept { return static_cast<std::size_t>(off
 // diagonal a search extends and each line pair it compares. Under the D cap,
 // D * D is at most kMaxAlignmentCells, and the searches extend about
 // 1.25 * D * D diagonals. Long repetitive shared edges can add many compared
-// pairs outside the changed lines, and the budget stops those searches.
+// pairs outside the changed lines, and the budget stops those searches. Each
+// unit is charged before its work, so the searches never pass the budget.
 struct WorkBudget {
     std::uint64_t left = 2 * std::uint64_t{kMaxAlignmentCells};
     bool spend(std::uint64_t cells) noexcept
@@ -301,10 +302,15 @@ public:
                 if (right != kUnreached) row = std::max(row, std::min(right, columns - diagonal));
                 if (row == kUnreached) continue; // Never: a diagonal in range has a reached neighbour.
             }
-            const auto start = row;
-            while (row < rows && row + diagonal < columns && same(row, row + diagonal)) ++row;
+            // The extension and each pair compared, the unequal pair that
+            // ends the snake too, cost one unit each, charged before the work.
+            if (!budget.spend(1)) return false;
+            while (row < rows && row + diagonal < columns) {
+                if (!budget.spend(1)) return false;
+                if (!same(row, row + diagonal)) break;
+                ++row;
+            }
             reach_[index(diagonal)] = row;
-            if (!budget.spend(static_cast<std::uint64_t>(row - start) + 1)) return false;
         }
         return true;
     }
@@ -346,13 +352,15 @@ std::optional<Offset> changedLines(std::span<const Line> source, std::span<const
         const auto behind = backward.reach(delta - diagonal);
         return ahead != kUnreached && behind != kUnreached && ahead + behind >= rows;
     };
+    // Each advance is for the next D the searches can find, so the cap is
+    // checked before it, not after.
     for (Offset skips = 0;; ++skips) {
-        if (odd && 2 * skips - 1 > cap) return std::nullopt;
+        if (2 * skips - (odd ? 1 : 0) > cap) return std::nullopt;
         if (!forward.advance(budget)) return std::nullopt;
         if (odd)
             for (auto diagonal = -skips; diagonal <= skips; diagonal += 2)
                 if (meet(diagonal)) return 2 * skips - 1;
-        if (!odd && 2 * skips > cap) return std::nullopt;
+        if (odd && 2 * skips + 1 > cap) return std::nullopt;
         if (!backward.advance(budget)) return std::nullopt;
         if (!odd)
             for (auto diagonal = -skips; diagonal <= skips; diagonal += 2)
