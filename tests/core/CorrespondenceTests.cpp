@@ -190,12 +190,14 @@ std::string uniqueLines(std::string_view prefix, std::size_t count)
 
 void textsOverTheCellBudgetAreOneAmbiguousPassage()
 {
-    // 8193 lines against 8193 is just over kMaxAlignmentCells, and no line is
-    // shared, so no band narrows the work.
+    // No line of 8193 against 8193 is shared, so every line is changed: far
+    // over the changed-line cap, and the banded fallback's 8193 squared cells
+    // are just over kMaxAlignmentCells. cost() only estimates admission: the
+    // changed lines times the difference of their counts, at least one.
     const auto source = uniqueLines("unique line ", 8193);
     const auto result = uniqueLines("other line ", 8193);
     CHECK(8193UL * 8193UL > kMaxAlignmentCells && 8192UL * 8192UL <= kMaxAlignmentCells);
-    CHECK(ExactLineCorrespondence{}.cost(source, result) == 8193UL * 8193UL);
+    CHECK_EQ(ExactLineCorrespondence{}.cost(source, result), 8193UL + 8193UL);
     CHECK(ExactLineCorrespondence{}.compare(source, result)
           == std::vector<Passage>{{{0, source.size()}, {0, result.size()}, PassageKind::Ambiguous}});
     // Identical texts need no alignment, whatever their size.
@@ -229,6 +231,35 @@ void sharedEdgesAlignLongTextsWithFewChanges()
                     {{head.size(), head.size() + tail.size()},
                      {inserted.size() - tail.size(), inserted.size()},
                      PassageKind::Equal}});
+}
+
+void farApartChangesInALongTextAlignAroundEachChange()
+{
+    // A lockfile-sized pair that differs in line 7 and line 12,001. The
+    // shared edges leave almost every line between the two changes, so only
+    // the changed-line count keeps this alignment small.
+    const auto lines = [](std::size_t from, std::size_t to) {
+        std::string text;
+        for (auto line = from; line < to; ++line) text += "line " + std::to_string(line) + '\n';
+        return text;
+    };
+    const auto head = lines(0, 6);
+    const auto middle = lines(7, 12000);
+    const auto tail = lines(12001, 24000);
+    const auto source = head + "line 6\n" + middle + "line 12000\n" + tail;
+    const auto result = head + "changed line 6\n" + middle + "changed line 12000\n" + tail;
+    CHECK(lineCount(source) == 24000 && lineCount(result) == 24000);
+    CHECK(ExactLineCorrespondence{}.cost(source, result) <= kMaxAlignmentCells);
+    const auto second = head.size() + 7 + middle.size();
+    expectPassages(source, result,
+                   {{{0, head.size()}, {0, head.size()}, PassageKind::Equal},
+                    {{head.size(), head.size() + 7}, {head.size(), head.size() + 15}, PassageKind::Changed},
+                    {{head.size() + 7, second}, {head.size() + 15, second + 8}, PassageKind::Equal},
+                    {{second, second + 11}, {second + 8, second + 27}, PassageKind::Changed},
+                    {{second + 11, source.size()}, {second + 27, result.size()}, PassageKind::Equal}});
+    // Version 3 made this pair one Ambiguous passage, so the passages a
+    // journal recorded can differ and the name changes.
+    CHECK_EQ(ExactLineCorrespondence{}.identity(), std::string_view{"exact-line/4"});
 }
 
 // Line pairs every optimal alignment of `source` and `result` matches, found
@@ -555,6 +586,8 @@ int main()
               aLongUniqueTextAlignsAsOneEqualPassage);
     suite.run("texts over the cell budget are one ambiguous passage", textsOverTheCellBudgetAreOneAmbiguousPassage);
     suite.run("shared edges align long texts with few changes", sharedEdgesAlignLongTextsWithFewChanges);
+    suite.run("far apart changes in a long text align around each change",
+              farApartChangesInALongTextAlignAroundEachChange);
     suite.run("equal passages are the matches every optimal alignment shares",
               equalPassagesAreTheMatchesEveryOptimalAlignmentShares);
     suite.run("the map checks every text before the algorithm sees it", theMapChecksEveryTextBeforeTheAlgorithmSeesIt);

@@ -20,7 +20,7 @@ class ExactLineCorrespondence final : public CorrespondenceAlgorithm {
 public:
     [[nodiscard]] std::vector<Passage> compare(std::string_view source, std::string_view result) const override;
     [[nodiscard]] std::size_t cost(std::string_view source, std::string_view result) const override;
-    [[nodiscard]] std::string_view identity() const noexcept override { return "exact-line/3"; }
+    [[nodiscard]] std::string_view identity() const noexcept override { return "exact-line/4"; }
 };
 
 }
