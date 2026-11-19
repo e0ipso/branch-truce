@@ -26,6 +26,8 @@ Kirigami.ApplicationWindow {
     readonly property bool supportedSelection: selectedFile.supported
     readonly property bool binarySelection: selectedFile.binaryExcluded
     readonly property string selectedAddCommand: OutsideAppText.gitAddCommand(selectedFile.pathBytes)
+    // The last part of the repository path, or empty when no repository is open.
+    readonly property string repositoryName: loader.repositoryRoot.replace(/\/$/, "").split("/").pop()
     // Fills %1, %2 and so on in one pass, so repository text in a value is never
     // read as another placeholder.
     function fill(template: string, values: list<string>): string {
@@ -209,6 +211,49 @@ Kirigami.ApplicationWindow {
         selectedFile: window.selectedFile
         composing: comparison.inputMethodComposing
     }
+    // The header button and the session placeholder share this action. It is disabled while
+    // the loader refuses a switch; the header tooltip then gives the reason.
+    Kirigami.Action {
+        id: openRepositoryAction
+        objectName: "openRepositoryAction"
+        text: qsTr("Open repository…")
+        icon.name: "document-open-folder"
+        enabled: window.loader.canOpenAnother
+        onTriggered: {
+            // Queue typing first, as a close does, so the session store has it before the switch.
+            window.commands.recordTyping();
+            if (window.loader.holdsUserWork())
+                openRepositoryDialog.open();
+            else
+                window.loader.chooseAnotherRepository();
+        }
+    }
+    // The drafts and decisions stay in this repository's recovery store, so the switch
+    // loses nothing. The dialog says so before the folder picker opens.
+    Kirigami.PromptDialog {
+        id: openRepositoryDialog
+        objectName: "openRepositoryDialog"
+        title: qsTr("Open another repository?")
+        subtitle: window.fill(qsTr("The drafts and decisions for %1 stay saved. They come back when you open %1 again."),
+            [window.repositoryName])
+        dialogType: Kirigami.PromptDialog.Information
+        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+        // The subtitle names the repository.
+        onAboutToShow: window.showPlainText(contentItem)
+        onAccepted: {
+            close();
+            window.loader.chooseAnotherRepository();
+        }
+        Component.onCompleted: {
+            const confirm = standardButton(Kirigami.Dialog.Ok);
+            confirm.objectName = "confirmOpenRepository";
+            confirm.text = qsTr("Open Another Repository…");
+            confirm.icon.name = "document-open-folder";
+            const keep = standardButton(Kirigami.Dialog.Cancel);
+            keep.objectName = "keepSession";
+            keep.text = qsTr("Keep This Session");
+        }
+    }
     Kirigami.Action {
         id: selectedDetailsAction
         objectName: "selectedProblemDetailsAction"
@@ -259,15 +304,28 @@ Kirigami.ApplicationWindow {
     visible: true
     title: qsTr("Branch Truce")
     pageStack.initialPage: Kirigami.Page {
+        id: sessionPage
         padding: 0
         title: window.loader.operation || qsTr("Open conflict session")
         // Every attached tooltip uses one shared popup, and some name a path or a branch.
         Component.onCompleted: window.showPlainText(ToolTip.toolTip.contentItem)
         // The header names the repository and operation; progress stays in the footer.
         titleDelegate: RowLayout {
+            id: headerRow
+            // The row takes only the width its items ask for, so the room comes from the page.
+            // The page header keeps a medium spacing at each side.
+            readonly property real available: sessionPage.width - 2 * Kirigami.Units.mediumSpacing
+            // What the toggle, the separator, the heading, the session toolbar and the spaces
+            // between all items take. The open button and the operation text share the rest.
+            readonly property real fixedWidth: fileListToggle.implicitWidth + openRepositorySeparator.implicitWidth
+                + Math.max(repositoryHeading.Layout.minimumWidth,
+                    Math.min(repositoryHeading.implicitWidth, repositoryHeading.Layout.maximumWidth))
+                + (sessionToolBar.visible ? sessionToolBar.implicitWidth + spacing : 0)
+                + spacing * 4
             spacing: Kirigami.Units.smallSpacing
             Kirigami.Theme.colorSet: Kirigami.Theme.Header
             ToolButton {
+                id: fileListToggle
                 objectName: "toggleFileList"
                 text: window.fileListVisible ? qsTr("Hide file list") : qsTr("Show file list")
                 Accessible.name: qsTr("Show file list")
@@ -278,14 +336,42 @@ Kirigami.ApplicationWindow {
                 checked: window.fileListVisible
                 onClicked: window.toggleFileList()
             }
+            ToolButton {
+                id: openRepositoryButton
+                objectName: "openRepository"
+                action: openRepositoryAction
+                Accessible.name: qsTr("Open repository…")
+                // The label shows only when it fits beside the other items and the full operation
+                // text. Otherwise the icon stands alone, and then the operation text gives way.
+                readonly property bool compact: headerRow.available - headerRow.fixedWidth
+                    - Math.min(repositorySubtitle.implicitWidth, repositorySubtitle.Layout.maximumWidth)
+                    < labelledOpen.implicitWidth
+                display: compact ? AbstractButton.IconOnly : AbstractButton.TextBesideIcon
+                Layout.minimumWidth: implicitWidth
+                // A disabled button reports no hover, so the handler shows the reason.
+                HoverHandler { id: openRepositoryHover }
+                ToolTip.text: enabled ? text : text + "\n" + window.loader.openAnotherRefusal
+                ToolTip.visible: openRepositoryHover.hovered && (compact || !enabled)
+                ToolTip.delay: Kirigami.Units.toolTipDelay
+                // Measures the labelled form, which the button takes when it fits.
+                ToolButton {
+                    id: labelledOpen
+                    visible: false
+                    text: openRepositoryAction.text
+                    icon.name: openRepositoryAction.icon.name
+                    display: AbstractButton.TextBesideIcon
+                }
+            }
+            Kirigami.Separator {
+                id: openRepositorySeparator
+                Layout.fillHeight: true
+            }
             PlainLabel {
+                id: repositoryHeading
                 objectName: "repositoryHeading"
                 Layout.minimumWidth: Kirigami.Units.gridUnit * 5
                 Layout.maximumWidth: Kirigami.Units.gridUnit * 12
-                text: {
-                    const path = window.loader.repositoryRoot
-                    return path.length ? path.replace(/\/$/, "").split("/").pop() : qsTr("Open conflict session")
-                }
+                text: window.repositoryName || qsTr("Open conflict session")
                 font.weight: Font.DemiBold
                 elide: Text.ElideMiddle
                 ToolTip.text: window.loader.repositoryRoot
@@ -293,8 +379,12 @@ Kirigami.ApplicationWindow {
                 ToolTip.visible: repositoryHover.hovered && ToolTip.text.length > 0
             }
             PlainLabel {
+                id: repositorySubtitle
                 objectName: "repositorySubtitle"
-                Layout.preferredWidth: Math.min(implicitWidth, Kirigami.Units.gridUnit * 12)
+                // It takes the room the open button leaves, and elides or hides when there is none.
+                Layout.preferredWidth: Math.max(0, Math.min(implicitWidth, Layout.maximumWidth,
+                    headerRow.available - headerRow.fixedWidth - openRepositoryButton.implicitWidth))
+                Layout.maximumWidth: Kirigami.Units.gridUnit * 12
                 Layout.minimumWidth: 0
                 text: window.loader.operationDescription
                 font: Kirigami.Theme.smallFont
@@ -302,6 +392,7 @@ Kirigami.ApplicationWindow {
                 elide: Text.ElideRight
             }
             MainToolBar {
+                id: sessionToolBar
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
                 visible: !window.loader.opening && window.files.totalFiles > 0
@@ -350,6 +441,10 @@ Kirigami.ApplicationWindow {
                     text: window.loader.opening ? qsTr("Opening the repository")
                         : window.sessionPlaceholderText(window.loader.startupState)
                     explanation: window.loader.detail
+                    // A window that opened nothing still has a way forward.
+                    helpfulAction: !window.loader.opening && [SessionLoader.StartupState.Error,
+                        SessionLoader.StartupState.NoSession, SessionLoader.StartupState.Unsupported]
+                        .includes(window.loader.startupState) ? openRepositoryAction : null
                     BusyIndicator {
                         Layout.alignment: Qt.AlignHCenter
                         running: window.loader.opening
