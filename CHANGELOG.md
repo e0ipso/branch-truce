@@ -1,3 +1,9 @@
+## [1.6.1](https://github.com/e0ipso/branch-truce/compare/v1.6.0...v1.6.1) (2026-11-19)
+
+### Bug Fixes
+
+* show the navigation position in the session footer ([#20](https://github.com/e0ipso/branch-truce/issues/20)) ([71f267e](https://github.com/e0ipso/branch-truce/commit/71f267eff44c2ade31757b79e0c08c8519bd9b14)), closes [#17](https://github.com/e0ipso/branch-truce/issues/17)
+
 ## [1.6.0](https://github.com/e0ipso/branch-truce/compare/v1.5.2...v1.6.0) (2026-11-19)
 
 ### Features
