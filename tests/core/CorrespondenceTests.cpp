@@ -2,8 +2,8 @@
 #include "TestHarness.h"
 #include "core/Correspondence.h"
 #include "core/ExactLineCorrespondence.h"
+#include "core/PassageTestText.h"
 #include "core/ResourceLimits.h"
-#include "core/internal/LineAlignment.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -13,7 +13,6 @@
 #include <limits>
 #include <map>
 #include <memory>
-#include <random>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -85,36 +84,6 @@ void implementationsKeepTheAlgorithmContract()
     CHECK(whole.calls == 30);
 }
 
-const char *name(PassageKind kind)
-{
-    switch (kind) {
-    case PassageKind::Equal: return "equal";
-    case PassageKind::Changed: return "changed";
-    case PassageKind::SourceOnly: return "source only";
-    case PassageKind::ResultOnly: return "result only";
-    case PassageKind::Ambiguous: break;
-    }
-    return "ambiguous";
-}
-
-std::string show(const std::vector<Passage> &passages)
-{
-    std::string text;
-    for (const auto &passage : passages) {
-        text += name(passage.kind);
-        text += ' ';
-        text += std::to_string(passage.source.begin);
-        text += '-';
-        text += std::to_string(passage.source.end);
-        text += ' ';
-        text += std::to_string(passage.result.begin);
-        text += '-';
-        text += std::to_string(passage.result.end);
-        text += '\n';
-    }
-    return text;
-}
-
 // ExactLineCorrespondence gives exactly `expected`, every time, as a partition
 // of both texts whose equal passages cover identical bytes.
 void expectPassages(std::string_view source, std::string_view result, const std::vector<Passage> &expected)
@@ -178,17 +147,6 @@ void aLongUniqueTextAlignsAsOneEqualPassage()
               {{0, 0}, {0, 14}, PassageKind::ResultOnly},
               {{0, source.size()}, {14, 14 + source.size()}, PassageKind::Equal},
               {{source.size(), source.size()}, {14 + source.size(), result.size()}, PassageKind::ResultOnly}});
-}
-
-std::string uniqueLines(std::string_view prefix, std::size_t count)
-{
-    std::string text;
-    for (std::size_t line = 0; line < count; ++line) {
-        text += prefix;
-        text += std::to_string(line);
-        text += '\n';
-    }
-    return text;
 }
 
 void textsOverTheCellBudgetAreOneAmbiguousPassage()
@@ -265,78 +223,6 @@ void farApartChangesInALongTextAlignAroundEachChange()
     CHECK_EQ(ExactLineCorrespondence{}.identity(), std::string_view{"exact-line/4"});
 }
 
-std::vector<Passage> oneAmbiguousPassage(std::string_view source, std::string_view result)
-{
-    return {{{0, source.size()}, {0, result.size()}, PassageKind::Ambiguous}};
-}
-
-void pairsOverTheChangedLineCapFallBackToTheBandedAlignment()
-{
-    // 8000 fully different lines against 8000 are 16,000 changed lines, far
-    // over Myers' cap of kMaxAlignmentCells / 16,000. The banded alignment's
-    // 8000 squared cells fit, so it aligns the pair as before.
-    const auto source = uniqueLines("source line ", 8000);
-    const auto result = uniqueLines("result line ", 8000);
-    CHECK(kMaxAlignmentCells / 16000 < 16000 && 8000UL * 8000UL <= kMaxAlignmentCells);
-    CHECK(!detail::myersPassages(source, result));
-    const auto banded = detail::hirschbergPassages(source, result);
-    CHECK(banded == std::vector<Passage>{{{0, source.size()}, {0, result.size()}, PassageKind::Changed}});
-    CHECK(ExactLineCorrespondence{}.compare(source, result) == banded);
-    CHECK_EQ(ExactLineCorrespondence{}.cost(source, result), 16000UL);
-}
-
-void pairsOverBothLimitsAreOneAmbiguousPassage()
-{
-    // A shared first and last line around 8193 different lines against 8193
-    // do not narrow the band. Its cells are still the 8195 squared line
-    // pairs, over kMaxAlignmentCells, and the 16,386 changed lines are over
-    // Myers' cap too.
-    const auto source = "first\n" + uniqueLines("unique line ", 8193) + "last\n";
-    const auto result = "first\n" + uniqueLines("other line ", 8193) + "last\n";
-    CHECK(8195UL * 8195UL > kMaxAlignmentCells);
-    CHECK(!detail::myersPassages(source, result));
-    CHECK(ExactLineCorrespondence{}.compare(source, result) == oneAmbiguousPassage(source, result));
-    CHECK_EQ(ExactLineCorrespondence{}.cost(source, result), 8193UL + 8193UL);
-}
-
-void myersAlignsUpToItsChangedLineCap()
-{
-    // 8192 lines against 8192 between a shared "head" and "tail": 2048 lines
-    // only in the source, then 6144 in both, then 2048 only in the result.
-    // The 4096 changed lines are exactly the cap.
-    const auto sourceOnly = uniqueLines("source line ", 2048);
-    const auto common = uniqueLines("common line ", 6144);
-    const auto resultOnly = uniqueLines("result line ", 2048);
-    const auto source = "head\n" + sourceOnly + common + "tail\n";
-    const auto result = "head\n" + common + resultOnly + "tail\n";
-    CHECK_EQ(kMaxAlignmentCells / (8192 + 8192), 4096UL);
-    const auto middle = 5 + sourceOnly.size();
-    const std::vector<Passage> expected{
-        {{0, 5}, {0, 5}, PassageKind::Equal},
-        {{5, middle}, {5, 5}, PassageKind::SourceOnly},
-        {{middle, source.size() - 5}, {5, 5 + common.size()}, PassageKind::Equal},
-        {{source.size() - 5, source.size() - 5}, {5 + common.size(), result.size() - 5}, PassageKind::ResultOnly},
-        {{source.size() - 5, source.size()}, {result.size() - 5, result.size()}, PassageKind::Equal}};
-    const auto atCap = detail::myersPassages(source, result);
-    CHECK(atCap && *atCap == expected);
-    // The banded fallback is over its limit for this pair, so these passages
-    // come from Myers.
-    CHECK(8194UL * 8194UL > kMaxAlignmentCells);
-    CHECK(ExactLineCorrespondence{}.compare(source, result) == expected);
-    // Without the last common line in the result, that line is changed too.
-    // That makes 4097 changed lines, and 8192 against 8191 lines keep the
-    // cap at 4096.
-    // The search above went as deep and then traced both paths, so Myers'
-    // work budget is not what stops this one. The banded fallback's 8194 by
-    // 8193 cells are still over its limit, so the pair is one Ambiguous
-    // passage.
-    const auto shorter = "head\n" + uniqueLines("common line ", 6143) + resultOnly + "tail\n";
-    CHECK_EQ(kMaxAlignmentCells / (8192 + 8191), 4096UL);
-    CHECK(!detail::myersPassages(source, shorter));
-    CHECK(8194UL * 8193UL > kMaxAlignmentCells);
-    CHECK(ExactLineCorrespondence{}.compare(source, shorter) == oneAmbiguousPassage(source, shorter));
-}
-
 // Line pairs every optimal alignment of `source` and `result` matches, found
 // without Hirschberg or a band. A match with rank k (k matches before it) is
 // in every optimal alignment exactly when no other match can take rank k in
@@ -384,27 +270,6 @@ std::set<std::pair<std::size_t, std::size_t>> equalLinePairs(std::string_view so
     return pairs;
 }
 
-// Every text of up to `most` lines over "a" and "b", in a fixed order.
-std::vector<std::vector<std::string>> allTexts(std::size_t most)
-{
-    std::vector<std::vector<std::string>> texts{{}};
-    for (std::size_t from = 0; from < texts.size(); ++from)
-        if (texts[from].size() < most)
-            for (const auto *line : {"a\n", "b\n"}) {
-                auto longer = texts[from];
-                longer.emplace_back(line);
-                texts.push_back(std::move(longer));
-            }
-    return texts;
-}
-
-std::string joined(const std::vector<std::string> &lines)
-{
-    std::string text;
-    for (const auto &line : lines) text += line;
-    return text;
-}
-
 void equalPassagesAreTheMatchesEveryOptimalAlignmentShares()
 {
     // Two distinct lines make repeats, ties and ambiguity that reaches into
@@ -436,67 +301,6 @@ void equalPassagesAreTheMatchesEveryOptimalAlignmentShares()
                     }
                     CHECK(ExactLineCorrespondence{}.cost(sourceText, resultText) <= source.size() * result.size());
                 }
-}
-
-// The passages of Myers' path for a pair within its cap, after checking that
-// the banded path gives the same kinds and byte ranges. A difference fails
-// with both texts and both passage lists.
-std::vector<Passage> passagesOfBothPaths(const std::string &source, const std::string &result)
-{
-    const auto banded = detail::hirschbergPassages(source, result);
-    const auto myers = detail::myersPassages(source, result);
-    if (myers && *myers == banded) return *myers;
-    throw std::runtime_error("Myers and the banded alignment differ\nsource\n" + source + "result\n" + result
-                             + "banded\n" + show(banded) + "myers\n" + (myers ? show(*myers) : "over its cap\n"));
-}
-
-void myersAndTheBandedAlignmentGiveTheSamePassages()
-{
-    // Every pair of the brute-force corpus above.
-    const auto edges = allTexts(2);
-    const auto middles = allTexts(4);
-    for (const auto &prefix : edges)
-        for (const auto &suffix : edges)
-            for (const auto &sourceMiddle : middles)
-                for (const auto &resultMiddle : middles) {
-                    auto source = prefix;
-                    auto result = prefix;
-                    source.insert(source.end(), sourceMiddle.begin(), sourceMiddle.end());
-                    result.insert(result.end(), resultMiddle.begin(), resultMiddle.end());
-                    source.insert(source.end(), suffix.begin(), suffix.end());
-                    result.insert(result.end(), suffix.begin(), suffix.end());
-                    (void)passagesOfBothPaths(joined(source), joined(result));
-                }
-    // Long texts of two to four distinct lines, the result with edits spread
-    // over the whole text, so ties and ambiguous gaps are everywhere and the
-    // shared edges do not narrow the band. mt19937 gives the same numbers on
-    // every platform, so the pairs are the same on every run.
-    std::mt19937 random(20261119);
-    const std::array<std::string, 4> alphabet{"a\n", "b\n", "c\n", "d\n"};
-    for (int pair = 0; pair < 12; ++pair) {
-        const auto letters = 2 + random() % 3;
-        std::vector<std::string> source(1000 + random() % 2001);
-        for (auto &line : source) line = alphabet[random() % letters];
-        auto result = source;
-        for (auto edits = 1 + random() % 200; edits > 0; --edits) {
-            const auto at = random() % (result.size() + 1);
-            const auto &line = alphabet[random() % letters];
-            const auto position = result.begin() + static_cast<std::ptrdiff_t>(at);
-            switch (random() % 3) {
-            case 0: result.insert(position, line); break;
-            case 1:
-                if (at < result.size()) result.erase(position);
-                break;
-            default:
-                if (at < result.size()) result[at] = line;
-            }
-        }
-        // Within the banded alignment's limit whatever its band.
-        CHECK(source.size() * result.size() <= kMaxAlignmentCells);
-        const auto passages = passagesOfBothPaths(joined(source), joined(result));
-        CHECK(std::any_of(passages.begin(), passages.end(),
-                          [](const auto &passage) { return passage.kind == PassageKind::Ambiguous; }));
-    }
 }
 
 std::shared_ptr<const FileSnapshots> sources(const std::string &text, const std::string &result)
@@ -724,13 +528,8 @@ int main()
     suite.run("shared edges align long texts with few changes", sharedEdgesAlignLongTextsWithFewChanges);
     suite.run("far apart changes in a long text align around each change",
               farApartChangesInALongTextAlignAroundEachChange);
-    suite.run("pairs over the changed-line cap fall back to the banded alignment",
-              pairsOverTheChangedLineCapFallBackToTheBandedAlignment);
-    suite.run("pairs over both limits are one ambiguous passage", pairsOverBothLimitsAreOneAmbiguousPassage);
-    suite.run("myers aligns up to its changed-line cap", myersAlignsUpToItsChangedLineCap);
     suite.run("equal passages are the matches every optimal alignment shares",
               equalPassagesAreTheMatchesEveryOptimalAlignmentShares);
-    suite.run("myers and the banded alignment give the same passages", myersAndTheBandedAlignmentGiveTheSamePassages);
     suite.run("the map checks every text before the algorithm sees it", theMapChecksEveryTextBeforeTheAlgorithmSeesIt);
     suite.run("a deferred edit keeps the passages around the edited lines",
               aDeferredEditKeepsThePassagesAroundTheEditedLines);
