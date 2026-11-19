@@ -405,6 +405,7 @@ Kirigami.ApplicationWindow {
             visible: !window.loader.opening && window.files.totalFiles > 0
             files: window.files
             loader: window.loader
+            navigator: window.navigator
             selectedFile: window.selectedFile
         }
         // Keep the panes' reading height when the work area needs vertical scrolling.
@@ -497,13 +498,6 @@ Kirigami.ApplicationWindow {
                     type: Kirigami.MessageType.Warning
                     text: qsTr("Supported text work is complete. %n file(s) remain to handle outside the app.", "",
                         window.files.outsideAppFiles)
-                }
-                PlainLabel {
-                    objectName: "navigationTarget"
-                    Layout.fillWidth: true
-                    visible: !window.loader.opening && (window.navigator.target.label || "").length > 0
-                    text: window.navigator.target.label || ""
-                    wrapMode: Text.Wrap
                 }
                 SplitView {
                     id: workSplit
