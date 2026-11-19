@@ -119,31 +119,47 @@ bool buttonRole(QAccessible::Role role)
         || role == QAccessible::ButtonMenu || role == QAccessible::ButtonDropDown;
 }
 
+// The named control has an accessible role and, when it is an enabled button, takes keyboard focus.
+void checkRoleAndKeyboardFocus(Scene &scene, const char *name)
+{
+    const bool overflow = test_support::fileOverflowControl(name);
+    auto *control = overflow ? test_support::fileToolbarControl(scene.window(), name) : scene.item(name);
+    const auto *face = test_support::requireAccessible(control, name);
+    CHECK(control->isVisible());
+    if (control->inherits("QQuickAbstractButton")) {
+        if (!buttonRole(face->role()) && (!overflow || face->role() != QAccessible::MenuItem))
+            throw std::runtime_error(std::string(name) + " has an unexpected accessible button role");
+        if (control->isEnabled()) {
+            if (!overflow && !focusChain(scene.window()).contains(control))
+                throw std::runtime_error(std::string(name) + " is not in the keyboard focus chain");
+            // Popup entries use the menu's keyboard navigation rather than the window Tab chain.
+            control->forceActiveFocus(Qt::TabFocusReason);
+            test_support::settleFor(std::string(name) + " accessible keyboard focus",
+                                    [&] { return control->hasActiveFocus() && face->state().focused; });
+        }
+    }
+    if (overflow) test_support::closeFileToolbarMenu(scene.window());
+}
+
 void controlsHaveRolesAndTakeKeyboardFocus(Sandbox &sandbox)
 {
     const AccessibilityActive accessibility;
     Repository repo(journeyPaths());
     Scene scene(sandbox, repo);
     clickFile(scene, "story.txt");
-    for (const auto *name : mainControls) {
-        const bool overflow = test_support::fileOverflowControl(name);
-        auto *control = overflow ? test_support::fileToolbarControl(scene.window(), name) : scene.item(name);
-        const auto *face = test_support::requireAccessible(control, name);
-        CHECK(control->isVisible());
-        if (control->inherits("QQuickAbstractButton")) {
-            if (!buttonRole(face->role()) && (!overflow || face->role() != QAccessible::MenuItem))
-                throw std::runtime_error(std::string(name) + " has an unexpected accessible button role");
-            if (control->isEnabled()) {
-                if (!overflow && !focusChain(scene.window()).contains(control))
-                    throw std::runtime_error(std::string(name) + " is not in the keyboard focus chain");
-                // Popup entries use the menu's keyboard navigation rather than the window Tab chain.
-                control->forceActiveFocus(Qt::TabFocusReason);
-                test_support::settleFor(std::string(name) + " accessible keyboard focus",
-                                        [&] { return control->hasActiveFocus() && face->state().focused; });
-            }
-        }
-        if (overflow) test_support::closeFileToolbarMenu(scene.window());
-    }
+    for (const auto *name : mainControls) checkRoleAndKeyboardFocus(scene, name);
+    checkOffline(scene);
+}
+
+// Open repository is disabled while the window listens for git mergetool launches, so the journey
+// above cannot reach it with the keyboard. A window that cannot listen enables it.
+void enabledOpenRepositoryTakesKeyboardFocus(Sandbox &sandbox)
+{
+    const AccessibilityActive accessibility;
+    Repository repo(journeyPaths());
+    Scene scene(sandbox, repo, {.directory = {}, .listen = false});
+    CHECK(scene.item("openRepository")->isEnabled());
+    checkRoleAndKeyboardFocus(scene, "openRepository");
     checkOffline(scene);
 }
 } // namespace
@@ -159,6 +175,8 @@ void addPlatformJourneys(JourneySuite &suite)
         scaledWindowKeepsEveryControlReachable);
     add("every named control has an accessible role and each enabled button takes keyboard focus",
         controlsHaveRolesAndTakeKeyboardFocus);
+    add("an enabled Open repository button is in the keyboard focus chain and takes keyboard focus",
+        enabledOpenRepositoryTakesKeyboardFocus);
 }
 
 } // namespace journey
