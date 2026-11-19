@@ -53,43 +53,43 @@
       "source": "e0ipso/strikethroo",
       "sourceType": "github",
       "skillPath": "skills/st-code-review/SKILL.md",
-      "computedHash": "a888826df26b64d932952c7bfc3eeaace2b6dddabe685b24f1a542b1a00cd7b0"
+      "computedHash": "2c5101d3406ea959f6b4d2e001b7d4744f1e5001ade1801d5913caeaa6e7de18"
     },
     "st-create-plan": {
       "source": "e0ipso/strikethroo",
       "sourceType": "github",
       "skillPath": "skills/st-create-plan/SKILL.md",
-      "computedHash": "7ea222b7576e5fab9ffe54661d85c1f919cdf67f303e3d5caf14b65b282aacb9"
+      "computedHash": "442702c771c74a23904670a0aa73fecdbd7aebebdbce5dd28f406814f91f5a1e"
     },
     "st-execute-blueprint": {
       "source": "e0ipso/strikethroo",
       "sourceType": "github",
       "skillPath": "skills/st-execute-blueprint/SKILL.md",
-      "computedHash": "220be781e82ca60ddc7cd935787a4f34a8de726949646498d7ee1c15d4238664"
+      "computedHash": "0e3800e7fc8c57b7203707aa26b0536489ee43bee7e12653a3d0b7cec37ce39c"
     },
     "st-execute-task": {
       "source": "e0ipso/strikethroo",
       "sourceType": "github",
       "skillPath": "skills/st-execute-task/SKILL.md",
-      "computedHash": "8520979734b6ab682f944bec5656ff3924e40ea60330a5f1f81613eb5a7ceadf"
+      "computedHash": "f204f152342d200491e0e65f8fe95b1d78039f9f9f908db527a750a99d97f093"
     },
     "st-full-workflow": {
       "source": "e0ipso/strikethroo",
       "sourceType": "github",
       "skillPath": "skills/st-full-workflow/SKILL.md",
-      "computedHash": "0988ed20a650c8e03af99a550a04dfc9f787fa6c6f9e6bd187d3488dfc5d4904"
+      "computedHash": "ef37502fd7cd33a2e7f6b0a984e1776d867f7e80120cbf9d21aa977d5b173a2b"
     },
     "st-generate-tasks": {
       "source": "e0ipso/strikethroo",
       "sourceType": "github",
       "skillPath": "skills/st-generate-tasks/SKILL.md",
-      "computedHash": "4a3357c971c37ec38e2b3b62647343ccd27a5e6804b9a3775117ce99a4f6e34f"
+      "computedHash": "2ef50bf44aab9b0d38171992bbeaccc184262e94e8d767f58f27a4100560284d"
     },
     "st-refine-plan": {
       "source": "e0ipso/strikethroo",
       "sourceType": "github",
       "skillPath": "skills/st-refine-plan/SKILL.md",
-      "computedHash": "9681f5de33640cc8020d7a27fa5f09aac18e503b528e0a860c0bcb7a02bd7431"
+      "computedHash": "9d06300a158097c002885b03c22af54c8d9969992f3462fedb92f43a87834cd4"
     },
     "verification-before-completion": {
       "source": "e0ipso/sift",
