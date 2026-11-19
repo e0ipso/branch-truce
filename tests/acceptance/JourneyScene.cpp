@@ -4,6 +4,7 @@
 #include "fixtures/QmlWarnings.h"
 
 #include "fixtures/EventLoop.h"
+#include "fixtures/Files.h"
 #include "fixtures/QuickScene.h"
 #include "mergetool/MergetoolSocket.h"
 
@@ -126,6 +127,10 @@ Scene::Scene(Sandbox &sandbox, const test_support::ConflictedRepository &reposit
     auto config = sandbox.config(repository);
     config.files = std::move(files);
     config.launchedByMergetool = options.launchedByMergetool;
+    if (!options.listen) {
+        config.mergetoolDirectory = sandbox.runtimeDirectory() + QStringLiteral("/not-a-directory");
+        test_support::writeFile(config.mergetoolDirectory, "not a directory\n");
+    }
     config.chooseDirectory = [this](const QString &) {
         ++pickerCalls_;
         return pickedDirectory_;
@@ -148,12 +153,18 @@ Scene::Scene(Sandbox &sandbox, const test_support::ConflictedRepository &reposit
     waitFor(
         "the repository to open", [&] { return !loader->opening(); },
         [&] { return QVariant::fromValue(loader->startupState()).toString().toStdString(); });
-    if (options.requireReady && loader->startupState() != SessionLoader::StartupState::Ready)
+    const auto ready =
+        options.listen ? SessionLoader::StartupState::Ready : SessionLoader::StartupState::ReadyWithoutMergetool;
+    if (options.requireReady && loader->startupState() != ready)
         throw std::runtime_error("startup " + QVariant::fromValue(loader->startupState()).toString().toStdString()
                                  + ": " + loader->detail().toStdString());
     // Opening a session inspects Git and never mutates the repository.
     CHECK(repository.snapshot() == before);
     if (!options.requireReady) return;
+    if (!options.listen) {
+        CHECK(!controller_->mergetoolSession()->listening());
+        return;
+    }
     // The session listens in the journey's private runtime directory, not a fallback.
     const auto socket = sandbox.socketDirectory();
     if (socket != sandbox.runtimeDirectory() + QStringLiteral("/branch-truce"))

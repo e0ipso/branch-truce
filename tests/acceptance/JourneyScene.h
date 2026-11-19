@@ -167,6 +167,9 @@ struct SceneOptions {
     bool requireReady = true;
     // Opens the window as git mergetool would start it.
     bool launchedByMergetool = false;
+    // When false, a regular file is where the socket directory belongs, so the session cannot
+    // listen for git mergetool launches and is ready as ReadyWithoutMergetool.
+    bool listen = true;
 };
 
 // The real Main scene over a controller that opened the repository itself. Its folder picker is a
