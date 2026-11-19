@@ -16,6 +16,27 @@ using namespace comparison_scene;
 namespace {
 void addFileListNavigationCases(Group &scenes)
 {
+    scenes.run("a long navigation position elides inside a narrow footer", [] {
+        const std::string result = "same\nAAA\nmid\nBBB\n";
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::choiceFile("same\nleftA\nmid\nleftB\n", result, result));
+        select(fixture, 0, 0);
+        clickMenuEntry(fixture, "navigateMenu", "nextDifference");
+        auto *position = fixture.item("navigationTarget");
+        CHECK(position->isVisible());
+        fixture.window->resize(960, 540);
+        CHECK(position->setProperty("text", QStringLiteral("Difference 1 of 2 · ") + QString(200, QLatin1Char('x'))));
+        settleFor("the long position elided", [&] { return position->property("truncated").toBool(); });
+        auto *footer = fixture.item("sessionFooter");
+        const auto bounds = footer->mapRectToScene(footer->boundingRect());
+        auto *progress = fixture.item("workflowStatus");
+        const auto progressBounds = progress->mapRectToScene(progress->boundingRect());
+        const auto positionBounds = position->mapRectToScene(position->boundingRect());
+        CHECK(bounds.contains(positionBounds));
+        CHECK(bounds.contains(progressBounds));
+        CHECK(!progress->property("truncated").toBool());
+        CHECK(!positionBounds.intersects(progressBounds));
+    });
     scenes.run("revision progress, within-file navigation, unfinished files and file-list location", [] {
         const std::string result = "same\nAAA\nmid\nBBB\n";
         const std::string left = "same\nleftA\nmid\nleftB\n";
@@ -26,6 +47,7 @@ void addFileListNavigationCases(Group &scenes)
         CHECK(fixture.file().facts().undecided == 4);
         expectProgress(*controller.selection(), *controller.selectedFile(), false, false, false, false,
                        QStringLiteral("1"), {}, {}, {}, 4);
+        expectFooterPosition(fixture, {});
 
         select(fixture, 0, 0);
         clickMenuEntry(fixture, "navigateMenu", "nextDifference");

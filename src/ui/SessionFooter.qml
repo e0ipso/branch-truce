@@ -1,4 +1,5 @@
-// The session footer shows resolved-file progress, outside-app work and captured file facts.
+// The session footer shows resolved-file progress, outside-app work, the navigation position
+// and captured file facts.
 pragma ComponentBehavior: Bound
 import QtQuick
 import BranchTruce.App
@@ -8,8 +9,10 @@ import org.kde.kirigami as Kirigami
 
 Rectangle {
     id: sessionFooter
+    objectName: "sessionFooter"
     required property SessionModel files
     required property SessionLoader loader
+    required property FileNavigator navigator
     required property SelectedFile selectedFile
     Layout.fillWidth: true
     implicitHeight: contents.implicitHeight
@@ -62,7 +65,21 @@ Rectangle {
                 font: Kirigami.Theme.smallFont
                 color: Kirigami.Theme.neutralTextColor
             }
-            Item { Layout.fillWidth: true }
+            PlainLabel {
+                id: navigationTarget
+                objectName: "navigationTarget"
+                // The position takes the free space and elides first, so it never pushes other items out.
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                visible: !sessionFooter.loader.opening && text.length > 0
+                text: sessionFooter.navigator.target.label || ""
+                font: Kirigami.Theme.smallFont
+                color: Kirigami.Theme.disabledTextColor
+            }
+            Item {
+                visible: !navigationTarget.visible
+                Layout.fillWidth: true
+            }
             PlainLabel {
                 objectName: "fileFacts"
                 Layout.maximumWidth: sessionFooter.width / 3
