@@ -8,12 +8,14 @@
 namespace branch_truce {
 
 // Exact line LCS, retaining only matches shared by every optimal alignment.
-// Lines the texts share at their start and end bound how far any optimal
-// alignment strays from the diagonal, so a few changed lines in a long file
-// cost about one band of cells per line rather than the product of the line
-// counts. Texts over kMaxIndexedLines, or whose cost() is over
-// kMaxAlignmentCells, are one Ambiguous passage. See Correspondence.md for the
-// cost, conservative range policy and evidence.
+// Linear-space Myers runs first. Its work grows with the lines the texts
+// change, so a few changed lines in a long file align at any length up to
+// kMaxIndexedLines. When the changed-line count passes its cap or its work
+// budget, a banded Hirschberg runs if its band cost is within
+// kMaxAlignmentCells. Both give the same passages. Texts over
+// kMaxIndexedLines, and texts that neither path can align within its limit,
+// are one Ambiguous passage. See Correspondence.md for the cost, conservative
+// range policy and evidence.
 // Called directly, it also rejects text outside the contract's inputs with
 // std::invalid_argument.
 class ExactLineCorrespondence final : public CorrespondenceAlgorithm {

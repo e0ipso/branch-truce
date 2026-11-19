@@ -18,8 +18,9 @@ Each unit depends only on the ones listed before it.
   aligns source and result text through one and maps source anchors into one
   result revision. `AnchorRebuild.h` holds how a choice that drops or
   rebuilds text moves those anchors.
-- `ExactLineCorrespondence`: the default algorithm, an exact line LCS within
-  the `kMaxAlignmentCells` budget.
+- `ExactLineCorrespondence`: the default algorithm, an exact line LCS by
+  Myers, with a banded Hirschberg fallback, within the `kMaxAlignmentCells`
+  budget.
 - `ConflictMarkers`: recognizes marker lines of a given marker size and
   assembles blocks.
 - `ChoiceCatalogue`: the source scopes a user can accept or ignore, indexed by

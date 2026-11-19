@@ -51,15 +51,36 @@ the first revision, so undo, redo and recovery replay start from the same
 anchors.
 
 The algorithm uses O(source lines + result lines) memory for different
-buffers, including line, match and passage records. Its time is at most
-O(source lines * result lines). The lines both texts share at their start and
-then at their end are a common subsequence, so their count `s` is a lower bound
-for the LCS length. An optimal alignment skips at most `source lines - s`
-source lines and `result lines - s` result lines, and only a skip moves it off
-its diagonal, so every optimal path stays inside that band of diagonals. The
-length rows visit only the band, which changes no boundary crossing. Each
-recursion level then costs at most source lines times band width, so a few
-changed lines in a long file align in about linear time. Each split releases its length rows before recursing. Binding keeps one
+buffers, including line, match and passage records. It runs linear-space Myers
+first. D is the changed-line count: the source and result lines an alignment
+skips, which is the same for every optimal alignment. A forward and a backward
+search meet in the middle to find D. Then each splits the grid at the middle
+skip of the first or last optimal path and recurses on both halves, so the
+work is about the line count times D and no source-lines by result-lines matrix
+exists. The first path is the lowest-left optimal path, and the last path
+mirrors it. They are the paths the banded Hirschberg traces:
+- After every h skips the first path is on the lowest diagonal any optimal path
+  uses, and the last path is on the highest.
+- Between the diagonals after h - 1 and h skips, the first path skips a source
+  line at the first row that allows one and a result line at the last row. The
+  last path skips a result line at the first row and a source line at the last.
+- The extreme paths are searched on the whole texts, not only between the
+  shared edges, because optimal paths can slide into the shared lines. D itself
+  is the same for the whole texts and for their changed lines.
+
+Myers is capped at D <= `kMaxAlignmentCells / (N' + M')`, where N' and M' are
+the line counts between the shared start and end lines. It also stops after
+2 * `kMaxAlignmentCells` work units, one for each diagonal step and each line
+comparison, so long repetitive shared edges cannot run it for long. A pair over
+either limit falls back to the banded Hirschberg. The lines both texts share at
+their start and then at their end are a common subsequence, so their count `s`
+is a lower bound for the LCS length. An optimal alignment skips at most
+`source lines - s` source lines and `result lines - s` result lines, and only a
+skip moves it off its diagonal, so every optimal path stays inside that band of
+diagonals. The length rows visit only the band, which changes no boundary
+crossing. Each recursion level then costs at most source lines times band width,
+and the fallback runs when that cost is at most `kMaxAlignmentCells`. Each
+split releases its length rows before recursing. Binding keeps one
 line-start index per text and finds a paired line by binary search. Lines are
 interned, so long-line bytes are compared during interning rather than at each
 length calculation.
@@ -82,15 +103,29 @@ and no text over `kMaxRecoveryPayloadBytes`. A file whose result or captured
 sources hold more than `kLargeFileLines` lines opens only after the user
 confirms it, because alignment time can grow with the product of line counts.
 Before allocating tokens or line records, `ExactLineCorrespondence` counts both
-texts and their shared edges. `cost()` is the smaller of the line-count product
-and source lines times band width times recursion depth. More than
-`kMaxIndexedLines` lines in either text, or a cost greater than
-`kMaxAlignmentCells`, yields one `Ambiguous` passage. Identical texts need no
-workspace. A map charges each source's `cost()` to one cell budget shared
-across its sources; a whole-buffer recomputation also charges its old-to-new
-comparison to it. The algorithm identity is `exact-line/3`: version 2 returned
-one `Ambiguous` passage for every pair over the product limit, so older
-journals are refused rather than replayed with different passages.
+texts and their shared edges. `cost()` is 0 for identical texts and
+`SIZE_MAX` when either text has more than `kMaxIndexedLines` lines. Otherwise it
+is `min(old alignmentCost, (N' + M') * max(|N' - M'|, 1))`: the smaller of the
+banded Hirschberg cost and a lower bound on Myers' work. It is an admission
+estimate that takes time linear in the texts. It is never above the old band
+cost, and `compare` limits its own work as described above. More than
+`kMaxIndexedLines` lines in either text, or a pair that neither Myers nor the
+fallback can align within its limit, yields one `Ambiguous` passage. Identical
+texts need no workspace. A map charges each source's `cost()` to one cell
+budget shared across its sources; a whole-buffer recomputation also charges its
+old-to-new comparison to it.
+
+The charge is an estimate, so the work ceiling is per compare, not per budget.
+One admitted compare can spend a Myers run of up to 2 * `kMaxAlignmentCells`
+work units, and then, if Myers fails, a Hirschberg run of up to
+`kMaxAlignmentCells` cells: about 3 * `kMaxAlignmentCells` in all. A map with
+three sources, or a recomputation, can run that many compares.
+
+The algorithm identity is `exact-line/4`. Version 3 used the banded
+Hirschberg alone, so a pair over its cost was one `Ambiguous` passage. Version 4
+adds Myers, so some of those pairs now align. Version 2 returned one
+`Ambiguous` passage for every pair over the product limit. Journals written by
+version 3 or earlier are refused rather than replayed with different passages.
 
 Metadata has independent limits of 65536 entries and a conservative 16 MiB byte
 estimate. Choice construction preflights each differing passage's line picks
