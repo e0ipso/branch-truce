@@ -304,9 +304,14 @@ void expectContains(const QString &actual, const QString &expected, const char *
 
 void checkOffline(Scene &scene)
 {
+    checkOfflineWithoutFiles(scene);
+    CHECK(scene.gitCalls().contains("cat-file\n"));
+}
+
+void checkOfflineWithoutFiles(Scene &scene)
+{
     CHECK(!scene.sandbox().git().networkAttempted());
-    const auto trace = scene.gitCalls();
-    CHECK(trace.contains("rev-parse\n") && trace.contains("cat-file\n"));
+    CHECK(scene.gitCalls().contains("rev-parse\n"));
     QStringList texts;
     collectTexts(scene.window()->contentItem(), texts);
     CHECK(!texts.isEmpty());

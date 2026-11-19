@@ -20,6 +20,7 @@
 #include <QObject>
 #include <QString>
 #include <QVariantMap>
+#include <functional>
 #include <memory>
 
 namespace branch_truce {
@@ -51,6 +52,13 @@ public:
         // Builds every Git runner the session uses: classification, conversion,
         // queued tasks and recovery checks. Empty runs GitAdapters for git.
         git::GitRunners gitRunners = {};
+        // Whether git mergetool started this window, with --mergetool-path.
+        // Such a window never opens another repository.
+        bool launchedByMergetool = false;
+        // Asks the user for a directory to open in place of the session. It
+        // returns the chosen absolute directory, or empty on cancel. Empty
+        // makes the Open repository action refuse.
+        std::function<QString(const QString &startDirectory)> chooseDirectory = {};
     };
     explicit Application(Config config, QObject *parent = nullptr);
     // Stops every running Git process of the session at once, so they end

@@ -4,6 +4,7 @@
 #include "fixtures/QmlWarnings.h"
 
 #include "fixtures/EventLoop.h"
+#include "fixtures/Files.h"
 #include "fixtures/QuickScene.h"
 #include "mergetool/MergetoolSocket.h"
 
@@ -95,7 +96,7 @@ QByteArray Repository::stageText(int stage, const QString &relative) const
 
 Sandbox::Sandbox() { CHECK(recovery_.isValid()); }
 
-Application::Config Sandbox::config(const Repository &repository) const
+Application::Config Sandbox::config(const test_support::ConflictedRepository &repository) const
 {
     Application::Config config;
     config.git = {git_.executable(), git::GitEnvironment::from(repository.environment)};
@@ -114,11 +115,26 @@ QProcessEnvironment Sandbox::mergetoolEnvironment(const Repository &repository) 
     return environment;
 }
 
-Scene::Scene(Sandbox &sandbox, const Repository &repository, std::shared_ptr<const storage::FileSystem> files)
+Scene::Scene(Sandbox &sandbox, const test_support::ConflictedRepository &repository,
+             std::shared_ptr<const storage::FileSystem> files)
+    : Scene(sandbox, repository, SceneOptions{}, std::move(files))
+{}
+
+Scene::Scene(Sandbox &sandbox, const test_support::ConflictedRepository &repository, const SceneOptions &options,
+             std::shared_ptr<const storage::FileSystem> files)
     : sandbox_(sandbox), gitCallsBefore_(sandbox.git().calls().size())
 {
     auto config = sandbox.config(repository);
     config.files = std::move(files);
+    config.launchedByMergetool = options.launchedByMergetool;
+    if (!options.listen) {
+        config.mergetoolDirectory = sandbox.runtimeDirectory() + QStringLiteral("/not-a-directory");
+        test_support::writeFile(config.mergetoolDirectory, "not a directory\n");
+    }
+    config.chooseDirectory = [this](const QString &) {
+        ++pickerCalls_;
+        return pickedDirectory_;
+    };
     controller_ = std::make_unique<Application>(std::move(config));
     engine_ = std::make_unique<QQmlApplicationEngine>();
     test_support::failOnQmlWarnings(*engine_);
@@ -131,17 +147,24 @@ Scene::Scene(Sandbox &sandbox, const Repository &repository, std::shared_ptr<con
     window_->show();
     const auto before = repository.snapshot();
     auto *loader = controller_->loader();
-    CHECK(loader->openRepository(repository.root));
+    CHECK(loader->openRepository(options.directory.isEmpty() ? repository.root : options.directory));
     // The load runs Git and the recovery restore off the GUI thread, so it gets the deadline of a
     // process, not the layout deadline of settleFor.
     waitFor(
         "the repository to open", [&] { return !loader->opening(); },
         [&] { return QVariant::fromValue(loader->startupState()).toString().toStdString(); });
-    if (loader->startupState() != SessionLoader::StartupState::Ready)
+    const auto ready =
+        options.listen ? SessionLoader::StartupState::Ready : SessionLoader::StartupState::ReadyWithoutMergetool;
+    if (options.requireReady && loader->startupState() != ready)
         throw std::runtime_error("startup " + QVariant::fromValue(loader->startupState()).toString().toStdString()
                                  + ": " + loader->detail().toStdString());
     // Opening a session inspects Git and never mutates the repository.
     CHECK(repository.snapshot() == before);
+    if (!options.requireReady) return;
+    if (!options.listen) {
+        CHECK(!controller_->mergetoolSession()->listening());
+        return;
+    }
     // The session listens in the journey's private runtime directory, not a fallback.
     const auto socket = sandbox.socketDirectory();
     if (socket != sandbox.runtimeDirectory() + QStringLiteral("/branch-truce"))

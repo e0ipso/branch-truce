@@ -17,6 +17,7 @@
 #include <QQmlComponent>
 #include <QQmlExpression>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 
 #include <algorithm>
 #include <cmath>
@@ -688,6 +689,107 @@ void closeGuardAsksToRetry(Sandbox &sandbox)
     expectText(reopened.text("resultText"), "kept by hand\n!", "restored input");
     checkOffline(reopened);
 }
+
+// --- Open repository -----------------------------------------------------------------------
+
+// The session placeholder's button for the Open repository action, once laid out.
+QQuickItem *placeholderOpenButton(Scene &scene)
+{
+    auto *action = scene.object("openRepositoryAction");
+    return stable(scene, "the placeholder's Open repository button", [&] {
+        return descendant(scene.item("sessionPlaceholder"), [&](QQuickItem *item) {
+            return item->inherits("QQuickAbstractButton") && item->property("action").value<QObject *>() == action;
+        });
+    });
+}
+
+// The header button is inside the window and keeps the action's accessible name. It shows only
+// its icon when iconOnly, else its label beside the icon.
+void expectHeaderOpenButton(Scene &scene, bool iconOnly)
+{
+    auto *button = test_support::waitForLayout(scene.window(), QStringLiteral("openRepository"), Scene::settleMs);
+    const auto display = button->metaObject()->property(button->metaObject()->indexOfProperty("display"));
+    const auto iconOnlyValue = display.enumerator().keyToValue("IconOnly");
+    settleFor(std::string("the header button ") + (iconOnly ? "icon-only" : "labelled"),
+              [&] { return (display.read(button).toInt() == iconOnlyValue) == iconOnly; });
+    CHECK(test_support::reachable(scene.window(), button));
+    expectText(test_support::accessibleName(button), QStringLiteral("Open repository…"),
+               "the header button's accessible name");
+}
+
+void resizeTo(Scene &scene, const QSize &screen)
+{
+    scene.window()->resize(screen);
+    settleFor("window at " + size(screen), [&] { return scene.window()->size() == screen; });
+}
+
+// A directory that is not a repository shows Error. The placeholder and the header both offer
+// Open repository, and the picked repository opens in the same window.
+void notARepositoryOpensAnotherInPlace(Sandbox &sandbox)
+{
+    Repository repo(journeyPaths());
+    const auto repository = repo.snapshot();
+    QTemporaryDir notARepository;
+    CHECK(notARepository.isValid());
+    Scene scene(sandbox, repo, {.directory = notARepository.path(), .requireReady = false});
+    auto *loader = scene.app().loader();
+    if (loader->startupState() != SessionLoader::StartupState::Error)
+        throw std::runtime_error("not a repository: " + loaderState(*loader));
+    // The session toolbar is hidden, so the header has room for the label even at 960x540.
+    for (const auto &screen : {QSize(1280, 720), QSize(960, 540)}) {
+        resizeTo(scene, screen);
+        auto *offered = placeholderOpenButton(scene);
+        CHECK(offered->isEnabled() && test_support::reachable(scene.window(), offered));
+        expectHeaderOpenButton(scene, false);
+        CHECK(scene.item("openRepository")->isEnabled());
+    }
+    scene.setPickedDirectory(repo.root);
+    test_support::clickItem(scene.window(), placeholderOpenButton(scene));
+    waitFor(
+        "the picked repository to open", [&] { return loader->startupState() == SessionLoader::StartupState::Ready; },
+        [&] { return loaderState(*loader); });
+    CHECK(scene.pickerCalls() == 1);
+    CHECK(loader->repositoryRoot() == repo.root);
+    clickFile(scene, "story.txt");
+    CHECK(repo.snapshot() == repository);
+    // The window now listens for git mergetool launches, so it refuses another switch. At 960x540
+    // the session toolbar leaves the header button only its icon.
+    CHECK(!loader->canOpenAnother());
+    resizeTo(scene, QSize(960, 540));
+    expectHeaderOpenButton(scene, true);
+    CHECK(!scene.item("openRepository")->isEnabled());
+    checkOffline(scene);
+}
+
+// A repository with no merge in progress shows NoSession with Open repository. A cancelled picker
+// leaves the state, the detail and the command message as they were.
+void noMergeOffersOpenAndCancelKeepsTheWindow(Sandbox &sandbox)
+{
+    test_support::ConflictedRepository repo;
+    repo.commit({{QStringLiteral("README"), "no merge in progress\n"}}, QStringLiteral("base"));
+    Scene scene(sandbox, repo, {.directory = {}, .requireReady = false});
+    auto *loader = scene.app().loader();
+    if (loader->startupState() != SessionLoader::StartupState::NoSession)
+        throw std::runtime_error("no merge in progress: " + loaderState(*loader));
+    CHECK(placeholderOpenButton(scene)->isEnabled());
+    CHECK(scene.item("openRepository")->isEnabled());
+    const auto detail = loader->detail();
+    const auto message = scene.app().feedback()->message();
+    const auto gitCalls = scene.gitCalls();
+    CHECK(!detail.isEmpty());
+    scene.setPickedDirectory({});
+    scene.click("openRepository");
+    waitFor("the folder picker", [&] { return scene.pickerCalls() == 1; });
+    test_support::waitForFrames(scene.window(), "the window after a cancelled picker");
+    CHECK(!loader->opening() && loader->startupState() == SessionLoader::StartupState::NoSession);
+    expectText(loader->detail(), detail, "the detail after a cancelled picker");
+    expectText(scene.app().feedback()->message(), message, "the command message after a cancelled picker");
+    CHECK(loader->repositoryRoot() == repo.root);
+    // Nothing opened again, so Git did not run.
+    CHECK(scene.gitCalls() == gitCalls);
+    CHECK(placeholderOpenButton(scene)->isEnabled());
+    checkOfflineWithoutFiles(scene);
+}
 } // namespace
 
 void addWindowJourneys(JourneySuite &suite)
@@ -706,6 +808,10 @@ void addWindowJourneys(JourneySuite &suite)
         linesFromBothSidesKeepTheirDecisions);
     add("closing with input recovery could not keep asks to retry, and cancel keeps the window open",
         closeGuardAsksToRetry);
+    add("a directory that is not a repository offers Open repository, and the picked repository opens in place",
+        notARepositoryOpensAnotherInPlace);
+    add("a repository with no merge in progress offers Open repository, and a cancelled picker changes nothing",
+        noMergeOffersOpenAndCancelKeepsTheWindow);
 }
 
 } // namespace journey

@@ -8,6 +8,7 @@
 #include <QString>
 #include <QVariantList>
 #include <QtQml/qqmlregistration.h>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -26,7 +27,9 @@ class SessionStore;
 // until the session is ready. A finished load ends the previous load's copied
 // launches, replaces the session, reassigns waiting launchers and then, for a
 // supported operation with files, captures the publication baselines, adopts
-// this load's copied launches and starts listening for launchers.
+// this load's copied launches and starts listening for launchers. A window
+// that is not tied to git mergetool can also open another directory in place
+// of its session; see openAnotherRepository.
 class SessionLoader : public QObject {
     Q_OBJECT
     QML_ELEMENT
@@ -47,6 +50,8 @@ class SessionLoader : public QObject {
     Q_PROPERTY(QString stage2ShortCommitId READ stage2ShortCommitId NOTIFY launchChanged)
     Q_PROPERTY(QString stage3ShortCommitId READ stage3ShortCommitId NOTIFY launchChanged)
     Q_PROPERTY(QString workflow READ workflow CONSTANT)
+    Q_PROPERTY(bool canOpenAnother READ canOpenAnother NOTIFY openAnotherChanged)
+    Q_PROPERTY(QString openAnotherRefusal READ openAnotherRefusal NOTIFY openAnotherChanged)
 public:
     // Where opening the launched repository stands. ReadyWithoutMergetool is
     // ready, but no git mergetool launcher can attach.
@@ -61,12 +66,19 @@ public:
         MergetoolSession &mergetool;
         const SessionCompletion &completion;
     };
+    // Asks the user for a directory, starting at startDirectory. It returns
+    // the chosen absolute directory, or empty when the user cancels.
+    using DirectoryPicker = std::function<QString(const QString &startDirectory)>;
     // git builds the runners that classify the conflicts and reconcile
     // recovery. Loaded files align their sources with `correspondence`, or
-    // with the engine's default when it is null.
+    // with the engine's default when it is null. launchedByMergetool is true
+    // when git mergetool started this window; such a window never opens
+    // another repository. chooseDirectory is the picker that
+    // chooseAnotherRepository shows; when it is empty, that call refuses.
     SessionLoader(Session session, git::GitRunners git, QObject *parent = nullptr,
                   std::shared_ptr<const CorrespondenceAlgorithm> correspondence = {},
-                  std::shared_ptr<const storage::FileSystem> files = storage::systemFileSystem());
+                  std::shared_ptr<const storage::FileSystem> files = storage::systemFileSystem(),
+                  bool launchedByMergetool = false, DirectoryPicker chooseDirectory = {});
 
     [[nodiscard]] StartupState startupState() const { return state_; }
     [[nodiscard]] bool opening() const { return state_ == StartupState::Opening; }
@@ -108,11 +120,32 @@ public:
     // cannot be read, the window returns to its files and notice refuses the
     // choice then.
     Q_INVOKABLE bool chooseRecoverySession(const QString &session);
+    // Why openAnotherRepository refuses now, translated, or empty when it
+    // accepts. canOpenAnother is true exactly when this is empty.
+    [[nodiscard]] QString openAnotherRefusal() const;
+    [[nodiscard]] bool canOpenAnother() const { return openAnotherRefusal().isEmpty(); }
+    // Opens directory in place of the current session, as openRepository
+    // does at launch. It checks openAnotherRefusal again, so a stale view
+    // cannot skip it. A refusal goes to notice, returns false and changes
+    // nothing. When accepted, the current files leave this window and the
+    // session moves to a new recovery store. The old store stays on disk
+    // with its drafts, for the next time its repository opens.
+    Q_INVOKABLE bool openAnotherRepository(const QString &directory);
+    // Whether the store holds, or is recording, work other than a launch
+    // capture. A switch to another repository leaves it in the old store.
+    Q_INVOKABLE bool holdsUserWork() const;
+    // Asks the user for a directory with the picker, then opens it with
+    // openAnotherRepository. A refusal, or a missing picker, goes to notice
+    // before the picker shows. A cancelled picker changes nothing.
+    Q_INVOKABLE void chooseAnotherRepository();
 
 Q_SIGNALS:
     void launchChanged();
-    // Shown as the command message: a refused recovery choice, or empty when
-    // an accepted choice clears the previous message.
+    // canOpenAnother and openAnotherRefusal may have changed.
+    void openAnotherChanged();
+    // Shown as the command message: a refused recovery choice or switch to
+    // another repository, or empty when an accepted one clears the previous
+    // message.
     void notice(const QString &message);
 
 private:
@@ -127,6 +160,10 @@ private:
     // it shows state, or empty.
     [[nodiscard]] QString choiceRefusal(const QString &session, StartupState state);
     [[nodiscard]] static QString appEditsRefusal();
+    // Whether the session has ended, or a resolution or recovery input is
+    // still in progress. A reload or a switch would leave that work behind.
+    [[nodiscard]] bool sessionWorkRunning() const;
+    [[nodiscard]] static QString sessionWorkOpenRefusal();
     // The worker read this window's store at directory for a choice of session.
     void ownStoreRead(const QString &session, const QString &directory, const RecoveryReplay &own);
     // Leaves a choice that will not reload: the window shows its files again.
@@ -135,6 +172,8 @@ private:
     const git::GitRunners git_;
     std::shared_ptr<const CorrespondenceAlgorithm> correspondence_;
     std::shared_ptr<const storage::FileSystem> files_;
+    const bool launchedByMergetool_;
+    const DirectoryPicker chooseDirectory_;
     git::ConflictClassifier classifier_;
     git::RepositoryContext repository_;
     QHash<QString, qint64> launchSizes_;

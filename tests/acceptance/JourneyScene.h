@@ -76,7 +76,7 @@ public:
 
     // A window's services for `repository`: the guard as its Git, a new session under this
     // journey's recovery root, the repository's Git configuration and the private socket directory.
-    branch_truce::Application::Config config(const Repository &repository) const;
+    branch_truce::Application::Config config(const test_support::ConflictedRepository &repository) const;
     QString runtimeDirectory() const { return runtime_.path(); }
     QString socketDirectory() const;
     const test_support::OfflineGit &git() const { return git_; }
@@ -156,10 +156,29 @@ struct HandoffEntry {
     QStringList blockers;
 };
 
-// The real Main scene over a controller that opened the repository itself.
+// How a Scene opens. The defaults open the repository and require a Ready session that listens
+// for git mergetool launches.
+struct SceneOptions {
+    // The directory to open in place of the repository's worktree, such as one that is not a
+    // repository. The window still uses the repository's Git configuration.
+    QString directory;
+    // When false, any state the open settles in is accepted, such as Error, NoSession or
+    // Unsupported, and the socket is not checked.
+    bool requireReady = true;
+    // Opens the window as git mergetool would start it.
+    bool launchedByMergetool = false;
+    // When false, a regular file is where the socket directory belongs, so the session cannot
+    // listen for git mergetool launches and is ready as ReadyWithoutMergetool.
+    bool listen = true;
+};
+
+// The real Main scene over a controller that opened the repository itself. Its folder picker is a
+// stub: it returns the directory a journey sets with setPickedDirectory and counts its calls.
 class Scene {
 public:
-    Scene(Sandbox &sandbox, const Repository &repository,
+    Scene(Sandbox &sandbox, const test_support::ConflictedRepository &repository,
+          std::shared_ptr<const branch_truce::storage::FileSystem> files = branch_truce::storage::systemFileSystem());
+    Scene(Sandbox &sandbox, const test_support::ConflictedRepository &repository, const SceneOptions &options,
           std::shared_ptr<const branch_truce::storage::FileSystem> files = branch_truce::storage::systemFileSystem());
     ~Scene();
     Scene(const Scene &) = delete;
@@ -199,9 +218,16 @@ public:
     // The Git calls this window ran: the journey's log after what it held when the window opened.
     QByteArray gitCalls() const;
 
+    // What the folder picker returns from now on. Empty is a cancelled picker.
+    void setPickedDirectory(const QString &directory) { pickedDirectory_ = directory; }
+    // How many times the window showed the folder picker.
+    int pickerCalls() const { return pickerCalls_; }
+
 private:
     Sandbox &sandbox_;
     const qsizetype gitCallsBefore_;
+    QString pickedDirectory_;
+    int pickerCalls_ = 0;
     std::unique_ptr<branch_truce::Application> controller_;
     std::unique_ptr<QQmlApplicationEngine> engine_;
     QQuickWindow *window_ = nullptr;

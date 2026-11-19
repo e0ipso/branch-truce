@@ -7,8 +7,12 @@
 #include "fixtures/SyncFaults.h"
 
 #include <QDialogButtonBox>
+#include <QDir>
+#include <QDirIterator>
 #include <QFileInfo>
+#include <QMap>
 #include <QProcess>
+#include <QScopeGuard>
 
 #include <csignal>
 
@@ -419,6 +423,248 @@ void interruptedMergetoolKeepsTheSavedDraft(Sandbox &sandbox)
     CHECK(reopened.progress().saved && !reopened.progress().resolved);
     checkOffline(reopened);
 }
+
+// --- Open repository -----------------------------------------------------------------------
+
+// Every file under a recovery store by relative path, session.lock included.
+QMap<QString, QByteArray> recoveryRecords(const QString &store)
+{
+    QMap<QString, QByteArray> records;
+    QDirIterator files(store, QDir::Files | QDir::Hidden, QDirIterator::Subdirectories);
+    while (files.hasNext()) {
+        const auto path = files.next();
+        records.insert(QDir(store).relativeFilePath(path), readFile(path));
+    }
+    return records;
+}
+
+// The window refuses to open `other` with `reason`. The header button is disabled, and a direct
+// loader call or a stale picker request shows the reason, changes nothing and shows no picker.
+void expectOpenAnotherRefused(Scene &scene, const QString &other, const QString &reason)
+{
+    auto *loader = scene.app().loader();
+    auto *store = scene.app().store();
+    const auto state = loader->startupState();
+    const auto root = loader->repositoryRoot();
+    const auto recovery = store->recoveryDirectory();
+    const auto files = store->size();
+    CHECK(files > 0);
+    auto *button = test_support::waitForLayout(scene.window(), QStringLiteral("openRepository"), Scene::settleMs);
+    CHECK(button->isVisible() && !button->isEnabled());
+    CHECK(!loader->canOpenAnother());
+    expectText(loader->openAnotherRefusal(), reason, "the refusal");
+    scene.setPickedDirectory(other);
+    CHECK(!loader->openAnotherRepository(other));
+    expectText(scene.app().feedback()->message(), reason, "the refusal notice");
+    scene.app().feedback()->show({});
+    loader->chooseAnotherRepository();
+    expectText(scene.app().feedback()->message(), reason, "the refusal notice for the picker");
+    test_support::waitForFrames(scene.window(), "the window after the refused switch");
+    CHECK(scene.pickerCalls() == 0);
+    CHECK(loader->startupState() == state && !loader->opening());
+    CHECK(loader->repositoryRoot() == root);
+    CHECK(store->recoveryDirectory() == recovery && store->size() == files);
+}
+
+// A Ready window listens for git mergetool launches on a socket named after its operation, so it
+// cannot open another repository.
+void listeningWindowRefusesToOpenAnother(Sandbox &sandbox)
+{
+    Repository repo({chosenByHand("listening.txt")});
+    Repository other({chosenByHand("other.txt")});
+    const auto repository = repo.snapshot();
+    Scene scene(sandbox, repo);
+    CHECK(scene.app().mergetoolSession()->listening());
+    expectOpenAnotherRefused(scene, other.root,
+                             QStringLiteral("This window receives git mergetool launches for the current operation, "
+                                            "so it cannot open another repository. Start Branch Truce again to open "
+                                            "one."));
+    CHECK(repo.snapshot() == repository);
+    checkOffline(scene);
+}
+
+// A window that git mergetool started belongs to that launch, so it cannot open another repository.
+void mergetoolWindowRefusesToOpenAnother(Sandbox &sandbox)
+{
+    Repository repo({chosenByHand("launched.txt")});
+    Repository other({chosenByHand("other.txt")});
+    const auto repository = repo.snapshot();
+    Scene scene(sandbox, repo, {.directory = {}, .launchedByMergetool = true});
+    expectOpenAnotherRefused(scene, other.root,
+                             QStringLiteral("A git mergetool launch started this window, so it cannot open another "
+                                            "repository. Start Branch Truce again to open one."));
+    CHECK(repo.snapshot() == repository);
+    checkOffline(scene);
+}
+
+// A saved draft in a window that cannot listen for git mergetool launches, and its recovery store.
+struct KeptWork {
+    QString draft;
+    QString store;
+    QMap<QString, QByteArray> records;
+};
+
+KeptWork saveDraftWithoutMergetool(Scene &scene, const char *path)
+{
+    auto *loader = scene.app().loader();
+    expectContains(loader->detail(), "Mergetool attach is unavailable", "the session detail");
+    clickFile(scene, path);
+    appendToResult(scene, "kept");
+    scene.click("saveDraft");
+    settleFor("saved draft", [&] { return scene.progress().saved; });
+    test_support::awaitRecovery(*scene.app().store());
+    CHECK(loader->holdsUserWork() && loader->canOpenAnother());
+    CHECK(scene.item("openRepository")->isEnabled());
+    KeptWork kept{scene.text("resultText"), scene.app().store()->recoveryDirectory(), {}};
+    kept.records = recoveryRecords(kept.store);
+    CHECK(kept.records.contains(QStringLiteral("session.lock")));
+    return kept;
+}
+
+// Open repository asks first when the session holds user work, and names what happens to it.
+void openRepositoryAsksFirst(Scene &scene)
+{
+    scene.click("openRepository");
+    auto *dialog = scene.object("openRepositoryDialog");
+    settleFor("the Open repository prompt", [&] { return dialog->property("opened").toBool(); });
+    expectContains(dialog->property("subtitle").toString(), "drafts and decisions", "the Open repository prompt");
+    expectText(dialogButton(scene, "openRepositoryDialog", "confirmOpenRepository")->property("text").toString(),
+               "Open Another Repository…", "the confirm button");
+    expectText(dialogButton(scene, "openRepositoryDialog", "keepSession")->property("text").toString(),
+               "Keep This Session", "the cancel button");
+    CHECK(scene.pickerCalls() == 0);
+}
+
+// Keep This Session closes the prompt, shows no picker and keeps the session and its draft.
+void keepSessionKeepsTheDraft(Sandbox &sandbox)
+{
+    Repository repo({chosenByHand("kept.txt")});
+    Repository other({chosenByHand("other.txt")});
+    Scene scene(sandbox, repo, {.directory = {}, .listen = false});
+    auto *loader = scene.app().loader();
+    const auto kept = saveDraftWithoutMergetool(scene, "kept.txt");
+    scene.setPickedDirectory(other.root);
+    openRepositoryAsksFirst(scene);
+    clickDialogButton(scene, "openRepositoryDialog", "keepSession");
+    test_support::waitForFrames(scene.window(), "the window after Keep This Session");
+    CHECK(scene.pickerCalls() == 0);
+    CHECK(loader->startupState() == SessionLoader::StartupState::ReadyWithoutMergetool && !loader->opening());
+    CHECK(loader->repositoryRoot() == repo.root);
+    CHECK(scene.app().store()->recoveryDirectory() == kept.store);
+    expectText(scene.text("resultText"), kept.draft, "the draft after Keep This Session");
+    CHECK(scene.progress().saved);
+    CHECK(recoveryRecords(kept.store) == kept.records);
+    checkOffline(scene);
+}
+
+// Confirm shows the picker and opens the picked repository with a new recovery store. The old
+// store keeps its records, and the draft comes back when the first repository opens again.
+void confirmOpensAnotherAndKeepsTheDraft(Sandbox &sandbox)
+{
+    Repository repo({chosenByHand("kept.txt")});
+    Repository other({chosenByHand("other.txt")});
+    const auto otherRepository = other.snapshot();
+    Scene scene(sandbox, repo, {.directory = {}, .listen = false});
+    auto *loader = scene.app().loader();
+    auto *store = scene.app().store();
+    const auto kept = saveDraftWithoutMergetool(scene, "kept.txt");
+    const auto repository = repo.snapshot();
+    const auto openedOn = [&](const Repository &opened) {
+        return [&] {
+            return loader->startupState() == SessionLoader::StartupState::ReadyWithoutMergetool
+                && loader->repositoryRoot() == opened.root;
+        };
+    };
+    scene.setPickedDirectory(other.root);
+    openRepositoryAsksFirst(scene);
+    clickDialogButton(scene, "openRepositoryDialog", "confirmOpenRepository");
+    waitFor("the picked repository to open", openedOn(other), [&] { return loaderState(*loader); });
+    CHECK(scene.pickerCalls() == 1);
+    clickFile(scene, "other.txt");
+    expectText(scene.text("resultText"), "other chosen by hand\n", "the picked repository's result");
+    CHECK(store->recoveryDirectory() != kept.store);
+    // The old store keeps every record. Only its lease went with the session.
+    auto records = kept.records;
+    records.remove(QStringLiteral("session.lock"));
+    CHECK(QFileInfo(kept.store).isDir() && recoveryRecords(kept.store) == records);
+    CHECK(repo.snapshot() == repository && other.snapshot() == otherRepository);
+
+    // The new session holds no user work, so the picker shows at once.
+    test_support::awaitRecovery(*store);
+    CHECK(!loader->holdsUserWork());
+    scene.setPickedDirectory(repo.root);
+    scene.click("openRepository");
+    waitFor("the first repository to open again", openedOn(repo), [&] { return loaderState(*loader); });
+    CHECK(scene.pickerCalls() == 2);
+    CHECK(store->recoveryDirectory() == kept.store);
+    clickFile(scene, "kept.txt");
+    expectText(scene.text("resultText"), kept.draft, "the draft after opening the repository again");
+    CHECK(scene.progress().saved);
+    checkOffline(scene);
+}
+
+// Typing that recovery still writes keeps the picker closed, so a switch is never refused after
+// the user picked a folder. The picker shows once the write finishes.
+void recordingTypingKeepsThePickerClosed(Sandbox &sandbox)
+{
+    Repository repo({chosenByHand("typed.txt")});
+    Repository other({chosenByHand("other.txt")});
+    Scene scene(sandbox, repo, {.directory = {}, .listen = false});
+    auto *loader = scene.app().loader();
+    auto *store = scene.app().store();
+    clickFile(scene, "typed.txt");
+    appendToResult(scene, "typed");
+    scene.setPickedDirectory(other.root);
+    // As the action does, the open burst goes to the journal first. Its write is not yet done.
+    scene.app().commands()->recordTyping();
+    CHECK(store->recording());
+    loader->chooseAnotherRepository();
+    expectText(scene.app().feedback()->message(),
+               "Open another repository after the running resolution or pending recovery input finishes.",
+               "the refusal notice for the picker");
+    CHECK(scene.pickerCalls() == 0);
+    CHECK(loader->repositoryRoot() == repo.root);
+    test_support::awaitRecovery(*store);
+    CHECK(!store->recording());
+    loader->chooseAnotherRepository();
+    waitFor(
+        "the picked repository to open",
+        [&] {
+            return loader->startupState() == SessionLoader::StartupState::ReadyWithoutMergetool
+                && loader->repositoryRoot() == other.root;
+        },
+        [&] { return loaderState(*loader); });
+    CHECK(scene.pickerCalls() == 1);
+    checkOffline(scene);
+}
+
+// A worktree moved after it opened does not keep the window from opening another repository.
+void movedWorktreeStillOpensAnother(Sandbox &sandbox)
+{
+    Repository repo({chosenByHand("moved.txt")});
+    Repository other({chosenByHand("other.txt")});
+    Scene scene(sandbox, repo, {.directory = {}, .listen = false});
+    auto *loader = scene.app().loader();
+    // The launch captures finish recording, so the switch shows the picker without asking.
+    test_support::awaitRecovery(*scene.app().store());
+    CHECK(loader->canOpenAnother() && !loader->holdsUserWork() && scene.app().store()->size() > 0);
+    const auto moved = repo.root + QStringLiteral("-moved");
+    CHECK(QDir().rename(repo.root, moved));
+    const auto moveBack = qScopeGuard([&] { QDir().rename(moved, repo.root); });
+    scene.setPickedDirectory(other.root);
+    scene.click("openRepository");
+    waitFor(
+        "the picked repository to open",
+        [&] {
+            return loader->startupState() == SessionLoader::StartupState::ReadyWithoutMergetool
+                && loader->repositoryRoot() == other.root;
+        },
+        [&] { return loaderState(*loader); });
+    CHECK(scene.pickerCalls() == 1);
+    clickFile(scene, "other.txt");
+    expectText(scene.text("resultText"), "other chosen by hand\n", "the picked repository's result");
+    checkOffline(scene);
+}
 } // namespace
 
 void addHandoffJourneys(JourneySuite &suite)
@@ -441,6 +687,17 @@ void addHandoffJourneys(JourneySuite &suite)
         reselectingTheLaunchedPathOffersLeave);
     add("PRD.md:155 interrupting git mergetool keeps a saved draft from Git and the next window restores it",
         interruptedMergetoolKeepsTheSavedDraft);
+    add("a window that listens for git mergetool launches refuses to open another repository and changes nothing",
+        listeningWindowRefusesToOpenAnother);
+    add("a window that git mergetool started refuses to open another repository and changes nothing",
+        mergetoolWindowRefusesToOpenAnother);
+    add("Open repository with a saved draft asks first, and Keep This Session keeps the session and its draft",
+        keepSessionKeepsTheDraft);
+    add("confirming Open repository opens the picked repository and the old recovery store keeps the draft",
+        confirmOpensAnotherAndKeepsTheDraft);
+    add("Open repository waits for typing that recovery still writes before it shows the picker",
+        recordingTypingKeepsThePickerClosed);
+    add("a window whose worktree moved after it opened still opens another repository", movedWorktreeStillOpensAnother);
 }
 
 } // namespace journey

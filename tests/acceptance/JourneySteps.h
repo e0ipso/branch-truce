@@ -81,6 +81,9 @@ void expectContains(const QString &actual, const QString &expected, const char *
 // Offline and account-free: no Git network command ran, this window ran local Git itself, and
 // nothing asks for an account.
 void checkOffline(Scene &scene);
+// The same for a window that opened no files, so it read no blobs: no Git network command ran,
+// this window ran rev-parse itself, and nothing asks for an account.
+void checkOfflineWithoutFiles(Scene &scene);
 // Waits until the result folds each conflict-marker block into one row, or shows every line.
 void expectMarkersFolded(Scene &scene, bool folded);
 // Checks a read-only pane against the result's font and row geometry, selects its first

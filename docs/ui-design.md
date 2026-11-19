@@ -8,6 +8,8 @@ The approved mockups in [ui-mockup/](ui-mockup/README.md) are the target:
 | --- | --- |
 | [light-text.png](ui-mockup/light-text.png), [dark-text.png](ui-mockup/dark-text.png) | A text conflict in the three panes, with one conflict undecided, one changed passage, one accepted line and one ignored line |
 | [light-binary.png](ui-mockup/light-binary.png), [dark-binary.png](ui-mockup/dark-binary.png) | A binary file selected; it has to be resolved outside the app |
+| [light-ready.png](ui-mockup/light-ready.png), [dark-ready.png](ui-mockup/dark-ready.png) | The text conflict with the Open repository… button and its separator in the header |
+| [light-error.png](ui-mockup/light-error.png), [dark-error.png](ui-mockup/dark-error.png) | The window opened on a folder that is not a repository: the error placeholder with its Open repository… button |
 
 Each PNG is rendered from the HTML file beside it at 1280x720. Pixel sizes quoted from the mockups below are CSS pixels in that HTML. They show what the `Kirigami.Units` values look like with Noto Sans 10 pt; the units are the rule. Section 10 records implemented reference elements and the kept rule that differs from the mockups.
 
@@ -50,12 +52,12 @@ Nothing in the chrome wraps. Every chrome label is one line and elides. Paths el
 
 ## 2. Layout
 
-The window is a `Kirigami.ApplicationWindow` holding one `Kirigami.Page`. The app launches straight into the session; there is no start page.
+The window is a `Kirigami.ApplicationWindow` holding one `Kirigami.Page`. The app launches straight into the session; there is no start page. The Error, NoSession and Unsupported placeholders offer the same Open repository… action as the header, so a window that opened nothing still has a way forward. That action does not make a start page.
 
 ```
 +------------------------------------------------------------------------------+
-| [=] repository  operation      [^ (!) 1 conflict left v] | << Previous file  |
-|                                   >> Next file | (i) Review handoff... | menu |
+| [=] [Open repository...] | repository  operation  [^ (!) 1 conflict left v]  |
+|              << Previous file | >> Next file | (i) Review handoff... | menu  |
 +--------------+---------------------------------------------------------------+
 | Conflicted   | [icon] dir/name           Save  [Mark resolved...] | undo    |
 | files    (3) |                                    redo | find | overflow     |
@@ -86,11 +88,12 @@ The minimum targets a 960x540 logical screen at the default font. Strict control
 One toolbar row in the Header colour set, using native Qt Quick Controls buttons and a framed conflict group, from left to right:
 
 1. **Sidebar toggle.** `sidebar-expand-left`, icon only, checkable and checked while the file list shows.
-2. **Title.** The repository name as a `Kirigami.Heading`, then the operation in muted `smallFont`, for example "Merging feature/backoff into main". The name, not the path; the full path is in the tooltip.
-3. **Conflict stepper.** One framed group: Previous conflict (`arrow-up`, icon only), the count with `vcs-conflicting` ("1 conflict left"), and Next conflict (`arrow-down`, icon only). It steps through the undecided conflicts of the selected file, and clicking the count moves to the next one. With none to step through it reads "No conflicts to step through" and its buttons are disabled. This is the undecided counter; it lives here and not in a pane header.
-4. **Separator, then file navigation.** Previous file (`go-previous-skip`) and Next file (`go-next-skip`), with labels. They move to the previous and next unfinished file.
-5. **Separator, then Review handoff…** (`documentinfo`, with label). It opens the handoff dialog.
-6. **Application menu** (`application-menu`). It holds the rest of the navigation: previous and next difference, previous and next saved or reviewed file.
+2. **Open repository…** (`document-open-folder`, with label), then a separator. It is visible in every state. It collapses to an icon with a tooltip when the window is narrow. It is disabled, with the reason in its tooltip, while the window receives git mergetool launches, a launcher is attached, git mergetool started the window, or session work is running.
+3. **Title.** The repository name as a `Kirigami.Heading`, then the operation in muted `smallFont`, for example "Merging feature/backoff into main". The name, not the path; the full path is in the tooltip.
+4. **Conflict stepper.** One framed group: Previous conflict (`arrow-up`, icon only), the count with `vcs-conflicting` ("1 conflict left"), and Next conflict (`arrow-down`, icon only). It steps through the undecided conflicts of the selected file, and clicking the count moves to the next one. With none to step through it reads "No conflicts to step through" and its buttons are disabled. This is the undecided counter; it lives here and not in a pane header.
+5. **Separator, then file navigation.** Previous file (`go-previous-skip`) and Next file (`go-next-skip`), with labels. They move to the previous and next unfinished file.
+6. **Separator, then Review handoff…** (`documentinfo`, with label). It opens the handoff dialog.
+7. **Application menu** (`application-menu`). It holds the rest of the navigation: previous and next difference, previous and next saved or reviewed file.
 
 ### Sidebar
 
@@ -285,6 +288,7 @@ All names are Breeze icon names, used through `Kirigami.Icon` or an action's `ic
 | Previous / next file (unfinished) | `go-previous-skip` / `go-next-skip` |
 | Previous / next difference | `go-previous` / `go-next` |
 | Previous / next saved or reviewed file | `go-up` / `go-down` |
+| Open repository | `document-open-folder` |
 | Review handoff | `documentinfo` |
 | Application menu | `application-menu` |
 | Toolbar overflow | `overflow-menu` |
