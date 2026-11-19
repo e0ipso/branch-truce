@@ -15,12 +15,12 @@ namespace journey {
 
 // Every named control of the main view, in reading order.
 inline constexpr const char *mainControls[] = {
-    "openHandoff",   "previousUndecided", "previousUnfinished", "nextUnfinished",    "undecidedCounter",
-    "nextUndecided", "navigateMenu",      "toggleFileList",     "fileList",          "selectedPath",
-    "saveDraft",     "markResolved",      "discardUnsaved",     "undoCommand",       "redoCommand",
-    "copyResult",    "pasteResult",       "sourceChoicesMenu",  "showSourceChoices", "openPassageSearch",
-    "wrapLines",     "showWhitespace",    "stage2Label",        "resultLabel",       "stage3Label",
-    "showEarlier",   "workflowStatus",
+    "openHandoff",       "previousUndecided", "previousUnfinished", "nextUnfinished",    "undecidedCounter",
+    "nextUndecided",     "navigateMenu",      "toggleFileList",     "openRepository",    "fileList",
+    "selectedPath",      "saveDraft",         "markResolved",       "discardUnsaved",    "undoCommand",
+    "redoCommand",       "copyResult",        "pasteResult",        "sourceChoicesMenu", "showSourceChoices",
+    "openPassageSearch", "wrapLines",         "showWhitespace",     "stage2Label",       "resultLabel",
+    "stage3Label",       "showEarlier",       "workflowStatus",
 };
 inline constexpr const char *textPanes[] = {"stage2Viewport", "resultViewport", "stage3Viewport"};
 
