@@ -1,3 +1,9 @@
+## [1.6.3](https://github.com/e0ipso/branch-truce/compare/v1.6.2...v1.6.3) (2026-11-20)
+
+### Bug Fixes
+
+* let git mergetool resolve large files and recover refused writes ([#22](https://github.com/e0ipso/branch-truce/issues/22)) ([9c0ad15](https://github.com/e0ipso/branch-truce/commit/9c0ad15a2f4749d9dd503f71088462bac0ec39ed))
+
 ## [1.6.2](https://github.com/e0ipso/branch-truce/compare/v1.6.1...v1.6.2) (2026-11-20)
 
 ### Bug Fixes
