@@ -1268,6 +1268,63 @@ void aLargeFileWithOneConflictingLineLoadsItsChoices()
     }
 }
 
+// A 23,583-line lockfile with a conflict on line 7 and a change only theirs
+// has on line 12,001, which Git already merged into the result. Ours differs
+// from theirs and from the result at both places, so the shared lines leave
+// almost the whole file between the changes. The changed lines are few, so
+// loading it still offers the conflict's choices.
+void aLargeFileWithScatteredChangesLoadsItsChoices()
+{
+    const auto package = [](std::size_t line, const std::string &version) {
+        return "    \"package-" + std::to_string(line) + "\": \"" + version + "\",\n";
+    };
+    const auto packages = [&](std::size_t from, std::size_t to) {
+        std::string text;
+        for (auto line = from; line < to; ++line) text += package(line, "1.0.0");
+        return text;
+    };
+    const auto head = packages(0, 6);
+    const auto middle = packages(7, 12000);
+    const auto tail = packages(12001, 23583);
+    const auto hash = [](const std::string &value) { return "    \"content-hash\": \"" + value + "\",\n"; };
+    const auto kept = package(12000, "1.0.0");
+    const auto changed = package(12000, "2.0.0");
+    const auto base = head + hash("base") + middle + kept + tail;
+    const auto ours = head + hash("ours") + middle + kept + tail;
+    const auto theirs = head + hash("theirs") + middle + changed + tail;
+    const auto result = head + "<<<<<<< ours\n" + hash("ours") + "||||||| base\n" + hash("base") + "=======\n"
+        + hash("theirs") + ">>>>>>> theirs\n" + middle + changed + tail;
+    CHECK(lineCount(ours) == 23583 && lineCount(ours) * lineCount(theirs) > kMaxAlignmentCells);
+    FileSnapshots sources;
+    sources.path = "composer.lock";
+    sources.provenance.sessionId = "lockfile";
+    sources.earlier = SourceSnapshot{"base-object", "100644", base, {base, base, {}}, "base-commit", "Base"};
+    sources.stage2 = SourceSnapshot{"ours-object", "100644", ours, {ours, ours, {}}, "ours-commit", "Ours"};
+    sources.stage3 = SourceSnapshot{"theirs-object", "100644", theirs, {theirs, theirs, {}}, "theirs-commit", "Theirs"};
+    sources.launchResult.text = {result, result, {}};
+    FileSession file("lock", sources.path, {result, {}, 0}, {.snapshots = sources});
+    CHECK(file.support() == Support::LargeFile);
+    CHECK(file.loadLargeFile() == Transition::Applied);
+    CHECK(file.support() == Support::Supported && !file.loadFailure());
+    // A section and a line pick on each side for the content-hash line, and
+    // the same for line 12,001, where ours and theirs differ too.
+    CHECK(file.choices().size() == 8);
+    std::size_t conflict = 0;
+    for (const auto &target : file.choices()) {
+        const bool stage2 = target.source.side == SourceSide::Stage2;
+        const auto &side = stage2 ? ours : theirs;
+        const auto text = side.substr(target.source.range.begin, target.source.range.end - target.source.range.begin);
+        if (target.source.range.begin == head.size()) {
+            CHECK(text == hash(stage2 ? "ours" : "theirs"));
+            ++conflict;
+        } else {
+            CHECK(target.source.range.begin == side.size() - tail.size() - kept.size());
+            CHECK(text == (stage2 ? kept : changed));
+        }
+    }
+    CHECK(conflict == 4);
+}
+
 void textOutsideTheEnvelopeIsUnreadable()
 {
     const auto atLine = std::string(kMaxLineBytes, 'a');
@@ -1315,6 +1372,7 @@ int main()
               multiEditAndMarkerCleanupCommandsAlignOnlyTheirFinalText);
     suite.run("a large file with one conflicting line loads its choices",
               aLargeFileWithOneConflictingLineLoadsItsChoices);
+    suite.run("a large file with scattered changes loads its choices", aLargeFileWithScatteredChangesLoadsItsChoices);
     suite.run("discarding after loading a large file restores its launch text",
               discardAfterLoadingALargeFileRestoresItsLaunchText);
     suite.run("whole drafts and edits keep UTF-8 text with LF line endings", wholeDraftsKeepTheTextInvariant);

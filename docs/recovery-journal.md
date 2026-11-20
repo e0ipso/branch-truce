@@ -63,7 +63,7 @@ record. A keystroke therefore stores the typed bytes, not the whole file. The
 launch record's earlier text is empty, so it stores its whole text.
 
 The launch record also names, in `alignment`, the identity of the
-correspondence algorithm the session aligned with. Choice and decision IDs come
+correspondence algorithm the session aligned with (`exact-line/4` for the default; a journal that names `exact-line/3` is refused). Choice and decision IDs come
 from that algorithm's passages, so replay refuses a journal whose launch record
 names another algorithm.
 

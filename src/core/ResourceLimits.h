@@ -21,13 +21,15 @@ inline constexpr std::size_t kMaxRecoveryPayloadBytes = 8388608;
 // Longest conflict marker the engine recognizes. Git's default is 7, and
 // projects that change it with conflict-marker-size use a few dozen.
 inline constexpr std::size_t kMaxConflictMarkerSize = 1024;
-// Line pairs one alignment of a source with a result may compare: the
-// algorithm's cost(), at most the product of their line counts. The line
-// alignment takes time in proportion to it, so a pair that costs more is one
-// Ambiguous passage instead: its anchors stay unmapped and only direct editing
-// applies there. Any pair up to 8192 lines against 8192, twice the
-// representative size in each text, fits. Longer texts fit when the lines they
-// share at their start and end leave only a few lines that differ.
+// Work one line alignment may spend. Myers runs first and may change at most
+// kMaxAlignmentCells / (N' + M') lines, where N' and M' are the line counts
+// between the lines the texts share at their start and end. It also stops
+// after twice this many work units. A pair over either limit falls back to the
+// banded Hirschberg, which runs when its band cost is at most this many line
+// pairs. A pair neither path can align is one Ambiguous passage: its anchors
+// stay unmapped and only direct editing applies there. Any pair up to 8192
+// lines against 8192, twice the representative size in each text, fits.
+// Longer texts, up to kMaxIndexedLines, fit when few lines differ.
 inline constexpr std::size_t kMaxAlignmentCells = 67108864;
 inline constexpr std::size_t kMaxIndexedLines = 65536;
 // Derived choices, anchors and decision identifiers have their own admission

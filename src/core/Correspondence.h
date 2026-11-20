@@ -40,10 +40,12 @@ struct Passage {
 // - compare is deterministic, keeps no state between calls and may run on
 //   several threads at once.
 // - It fails only by throwing std::bad_alloc.
-// - cost() is the work compare spends on the same texts, in line-pair cells,
-//   at most the product of their line counts. It takes time linear in the
-//   texts. Callers charge it to a budget several comparisons share before
-//   calling compare. The default is the product of the line counts.
+// - cost() is a linear-time admission estimate of the work compare spends on
+//   the same texts, at most the product of their line counts. Callers charge
+//   it to a budget several comparisons share before calling compare. An
+//   implementation may limit its own work inside compare and return one
+//   Ambiguous passage when it passes that limit. The default, the product of
+//   the line counts, still satisfies this.
 // - identity() names it. Choice and decision IDs come from the passages it
 //   returns, so recovery journals record the name and replay refuses a
 //   journal another algorithm wrote. Two implementations, or two versions of
