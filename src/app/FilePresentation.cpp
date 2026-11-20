@@ -254,7 +254,7 @@ QStringList FilePresentation::blockers(std::size_t row) const
     return result;
 }
 
-FilePresentation::Route FilePresentation::route(std::size_t row) const
+FilePresentation::Route FilePresentation::route(std::size_t row, bool reloadable) const
 {
     const auto &facts = store_.facts(row);
     const auto &id = store_.files()[row].id();
@@ -277,6 +277,9 @@ FilePresentation::Route FilePresentation::route(std::size_t row) const
         return {HandoffCategory::Failed, NextAction::Inspect, tr("Inspect the uncertain outcome")};
     case FileStatus::CheckpointFailed: return {HandoffCategory::Failed, NextAction::RetrySave, tr("Retry Save")};
     case FileStatus::WriteFailed:
+        if (reloadable)
+            return {HandoffCategory::Failed, NextAction::ReloadDestination, tr("Reload the repository file and retry")};
+        [[fallthrough]];
     case FileStatus::StageFailed: return {HandoffCategory::Failed, NextAction::MarkResolved, tr("Retry Mark resolved")};
     case FileStatus::EarlierStaged:
         return {HandoffCategory::NewerDraft, NextAction::ApplyOrDiscard,

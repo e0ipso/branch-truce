@@ -66,7 +66,9 @@ enum class NextAction {
     MarkResolved,
     ApplyOrDiscard,
     CheckGit,
-    Decide
+    Decide,
+    // A write failed because the repository file changed; reload it and retry.
+    ReloadDestination
 };
 Q_ENUM_NS(NextAction)
 }

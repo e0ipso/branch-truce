@@ -6,6 +6,7 @@
 #include "app/AppPaths.h"
 #include "app/Application.h"
 #include "app/Translations.h"
+#include "core/ResourceLimits.h"
 #include "fixtures/AppSession.h"
 #include "fixtures/Await.h"
 #include "fixtures/GitOnPath.h"
@@ -44,10 +45,10 @@ QString checkSocketDirectory(const ParentRepository &repo)
     return socket;
 }
 
-void openController(Application &controller, const ParentRepository &repo)
+void openController(Application &controller, const ParentRepository &repo, const QString &preferredFileId = {})
 {
     checkSocketDirectory(repo);
-    CHECK(controller.loader()->openRepository(repo.root));
+    CHECK(controller.loader()->openRepository(repo.root, preferredFileId));
     // Opening takes about 0.5 s on an idle host. At load averages of 25 to 36 on 8 cores it
     // averaged 2.5 s and some opens took over 10 s.
     pump([&] { return !controller.loader()->opening() && !controller.store()->recording(); },
@@ -223,6 +224,68 @@ QString twoEditedStores(const ParentRepository &repo)
     editDraft(chosen, "other.txt", QStringLiteral("chosen\n"));
     editDraft(other, "other.txt", QStringLiteral("other\n"));
     return QFileInfo(chosen.store()->recoveryDirectory()).fileName();
+}
+
+// A diff3 conflict in a file over the large-file limit: each side changes one line of distinct
+// lines, so the loaded comparison stays within its budgets.
+struct LargeConflict {
+    static constexpr std::size_t Lines = kLargeFileLines + 1000;
+    QByteArray path = "large.txt";
+    QByteArray base;
+    QByteArray ours;
+    QByteArray theirs;
+    LargeConflict()
+    {
+        for (std::size_t line = 1; line <= Lines; ++line) {
+            const auto number = QByteArray::number(static_cast<qulonglong>(line));
+            const bool changed = line == Lines / 2;
+            base += "line " + number + '\n';
+            ours += (changed ? "main " : "line ") + number + '\n';
+            theirs += (changed ? "side " : "line ") + number + '\n';
+        }
+    }
+    ConflictPath conflict() const { return {path, base, ours, theirs, {}}; }
+};
+
+// Writes Git's own diff3 markers over the large path, as a merge with merge.conflictStyle=diff3 does.
+void markDiff3(const ParentRepository &repo, const LargeConflict &large)
+{
+    repo.git({"checkout", "--conflict=diff3", "--", QString::fromLatin1(large.path)});
+    const auto markers = readFile(repo.path(QString::fromLatin1(large.path)));
+    CHECK(markers.contains("\n<<<<<<< ") && markers.contains("\n||||||| ") && markers.contains("\n>>>>>>> "));
+}
+
+// Git waits on the large path, but the window holds the file back, so the waiter stays unassigned
+// until the user loads it. Then it takes the right side, marks it resolved and Git stages it.
+void resolveLargeFile(Application &controller, const ParentRepository &repo, ParentProcess &parent,
+                      const LargeConflict &large)
+{
+    const auto &path = large.path;
+    pump([&] { return controller.mergetoolSession()->hasWaiter(path); },
+         QStringLiteral("no waiter | ") + controller.feedback()->message());
+    CHECK(controller.feedback()->message()
+          == QStringLiteral("Git is waiting on large.txt. Load the large file to resolve it, or leave it unresolved."));
+    CHECK(opened(controller, path).support() == Support::LargeFile);
+    CHECK(controller.mergetool()->parentSessionActive() && controller.mergetoolSession()->blocks(path));
+    CHECK(!controller.mergetoolSession()->waitingOn(path) && controller.mergetoolSession()->waitingPath().isEmpty());
+    CHECK(parent.state() == QProcess::Running);
+    const auto id = select(controller, path);
+    CHECK(commandResult(controller, controller.commands()->loadLargeFile(id)));
+    CHECK(opened(controller, path).support() == Support::Supported);
+    waitForWaiter(controller, path);
+    CHECK(controller.choices()->previewWholeFile(id, revisionOf(controller, path), ChoicePreviewFlow::Side::RightSide));
+    pump([&] { return !controller.choices()->previewPending(); }, controller.feedback()->message());
+    CHECK(commandResult(controller, controller.choices()->applyWholeFile()));
+    CHECK(QByteArray::fromStdString(draftOf(controller, path)) == large.theirs);
+    CHECK(controller.commands()->markResolved(id, revisionOf(controller, path), true));
+    waitParent(parent, 0, controller.feedback()->message());
+    pump([&] { return opened(controller, path).facts().resolved; }, controller.feedback()->message());
+    CHECK(!repo.unmerged(QString::fromLatin1(path)));
+    CHECK(repo.git({"diff", "--cached", "--name-only"}).split('\n').contains(path));
+    CHECK(repo.git({"show", QString::fromLatin1(":" + path)}) == large.theirs);
+    CHECK(readFile(repo.path(QString::fromLatin1(path))) == large.theirs);
+    CHECK(repo.stagedObject("notes.txt") == repo.notesObject);
+    CHECK(!controller.mergetoolSession()->hasWaiter(path));
 }
 
 }
@@ -865,6 +928,44 @@ int main(int argc, char **argv)
         CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
         CHECK(repo.index() == indexBefore);
         CHECK(!QFile::exists(sentinel));
+    });
+
+    // Git moves MERGED aside and copies it back before the tool runs, so the window the launcher
+    // starts captures the copy. It opens on the launched path and the launcher attaches as soon
+    // as the window listens.
+    suite.run("a launcher-started window accepts a large file and Mark resolved after the load hands it to Git", [] {
+        const LargeConflict large;
+        ParentRepository repo(launcherBinary, {large.conflict()});
+        markDiff3(repo, large);
+        ScopedEnvironment environment(repo.environment);
+        auto parent = startParent(repo, ParentRepository::StartingTool, {"large.txt"});
+        pump([&] { return repo.starts() == "large.txt\n"; }, QStringLiteral("Git did not run the tool"));
+        CHECK(repo.gitTemporaries(large.path).size() == 4);
+        auto config = test_support::windowConfig();
+        config.launchedByMergetool = true;
+        Application controller{std::move(config)};
+        openController(controller, repo, QString::fromLatin1(large.path.toHex()));
+        CHECK(controller.selection()->fileId() == QString::fromLatin1(large.path.toHex()));
+        repo.release();
+        resolveLargeFile(controller, repo, *parent, large);
+    });
+
+    // The window captured MERGED before Git moved it aside and copied it back.
+    suite.run("an already-open window accepts a large file and Mark resolved after the load hands it to Git", [] {
+        const LargeConflict large;
+        ParentRepository repo(launcherBinary, {large.conflict(), conflict("other.txt", "other launch bytes\n")});
+        markDiff3(repo, large);
+        ScopedEnvironment environment(repo.environment);
+        Application controller{test_support::windowConfig()};
+        openController(controller, repo);
+        const auto launchInode = inodeOf(repo.path("large.txt"));
+        auto parent = startParent(repo, ParentRepository::Tool, {"large.txt"});
+        pump([&] { return controller.mergetoolSession()->hasWaiter(large.path); },
+             QStringLiteral("no waiter | ") + controller.feedback()->message());
+        // Git's copy is a new file with the same bytes.
+        CHECK(inodeOf(repo.path("large.txt")) != launchInode);
+        resolveLargeFile(controller, repo, *parent, large);
+        CHECK(repo.unmerged("other.txt"));
     });
 
     return suite.report();

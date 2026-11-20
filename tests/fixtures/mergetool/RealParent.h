@@ -64,6 +64,10 @@ public:
     // The same command, then the parent overwrites MERGED with other bytes before Git stages it.
     static constexpr const char *TamperTool = "truce-tamper";
     static constexpr const char *TamperedBytes = "bytes the parent wrote after the launcher\n";
+    // The same command, after it appends "<MERGED>" to startsFile() and waits for release(). Git
+    // has already moved MERGED aside and copied it back, so a window the case opens meanwhile
+    // stands in for the one the launcher starts.
+    static constexpr const char *StartingTool = "truce-starting";
 
     ParentRepository(const QString &launcher, const QList<ConflictPath> &conflicts)
     {
@@ -112,7 +116,10 @@ public:
     // The gated tool appends "<MERGED> <launcher status>" here after each launcher exit.
     QString exitsFile() const { return probe + QStringLiteral("/exits"); }
     QByteArray exits() const { return QFile::exists(exitsFile()) ? readFile(exitsFile()) : QByteArray(); }
-    // Lets one gated tool command finish, now or when it next waits.
+    // The starting tool appends "<MERGED>" here before it waits.
+    QString startsFile() const { return probe + QStringLiteral("/starts"); }
+    QByteArray starts() const { return QFile::exists(startsFile()) ? readFile(startsFile()) : QByteArray(); }
+    // Lets one gated or starting tool command go on, now or when it next waits.
     void release() const { releaseGate_->pass(); }
 
     QString probe;
@@ -131,14 +138,16 @@ private:
         const auto tamper = invoke + QStringLiteral("; status=$?; if [ $status -eq 0 ]; then printf '%s\\n' ")
             + shellQuote(QString::fromLatin1(TamperedBytes).chopped(1))
             + QStringLiteral(" > \"$MERGED\"; fi; exit $status");
+        const auto starting = QStringLiteral("printf '%s\\n' \"$MERGED\" >> ") + shellQuote(startsFile())
+            + QStringLiteral("; read -r line < ") + shellQuote(releaseFile()) + QStringLiteral("; ") + invoke;
         global({"user.name", "Branch Truce Tests"});
         global({"user.email", "tests@example.invalid"});
         global({"core.autocrlf", "false"});
         global({"init.defaultBranch", "main"});
         global({"mergetool.keepBackup", "false"});
         global({"mergetool.keepTemporaries", "false"});
-        for (const auto &[tool, command] :
-             {std::pair{Tool, invoke}, std::pair{GatedTool, gated}, std::pair{TamperTool, tamper}}) {
+        for (const auto &[tool, command] : {std::pair{Tool, invoke}, std::pair{GatedTool, gated},
+                                            std::pair{TamperTool, tamper}, std::pair{StartingTool, starting}}) {
             global({QStringLiteral("mergetool.%1.cmd").arg(QLatin1String(tool)), command});
             global({QStringLiteral("mergetool.%1.trustExitCode").arg(QLatin1String(tool)), QStringLiteral("true")});
         }

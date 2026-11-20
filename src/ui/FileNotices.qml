@@ -66,6 +66,8 @@ ObjectModel {
                 && fileNotices.mergetool.parentStagingPath.length === 0)
         type: Kirigami.MessageType.Error
         text: fileNotices.selectedFile.status
+        // Offered only when the write failed because the repository file changed.
+        actions: [NamedAction { controlName: "reloadDestination"; text: qsTr("Reload the repository file and retry"); visible: fileNotices.commands.destinationReloadable; enabled: !fileNotices.commands.resolutionBusy && !fileNotices.composing; onTriggered: fileNotices.commands.reloadDestination(fileNotices.selectedFile.fileId, fileNotices.selectedFile.currentRevision) }]
     }
     PlainInlineMessage {
         objectName: "staleStagedNotice"

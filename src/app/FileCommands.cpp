@@ -43,6 +43,9 @@ FileCommands::FileCommands(SessionStore &store, const Selection &selection, Resu
                 feedback_.showMarkers(message, id.toStdString(), revision, count, line);
             });
     connect(&store_, &SessionStore::replaced, this, &FileCommands::resolutionChanged);
+    // Whether a reload applies follows the selected file and every resolution outcome.
+    connect(this, &FileCommands::resolutionChanged, this, &FileCommands::destinationReloadableChanged);
+    connect(&selection_, &Selection::changed, this, &FileCommands::destinationReloadableChanged);
     connect(&store_, &SessionStore::fileStored, this, [this](int row, SessionStore::Action action) {
         const auto &file = store_.files()[static_cast<std::size_t>(row)];
         if (action == SessionStore::Action::ManualSave)
@@ -77,6 +80,7 @@ bool FileCommands::resolutionConfirmation() const { return publisher_.confirmati
 QString FileCommands::resolutionFileId() const { return publisher_.confirmationFileId(); }
 QString FileCommands::resolutionRevision() const { return publisher_.confirmationRevision(); }
 bool FileCommands::resolutionBusy() const { return publisher_.busy(); }
+bool FileCommands::destinationReloadable() const { return publisher_.canReloadDestination(selection_.id()); }
 
 std::optional<CommandTarget> FileCommands::admit(const QString &fileId, const QString &revision, CommandCheck check)
 {
@@ -147,10 +151,7 @@ bool FileCommands::markResolved(const QString &fileId, const QString &revision, 
     const auto target = admit(fileId, revision, CommandCheck::CurrentSupported);
     if (!target) return false;
     const auto &[session, expected] = *target;
-    if (mergetool_.blocks(QByteArray::fromStdString(session->path()))) {
-        feedback_.show(tr("Waiting for Git to launch this path. It is not resolved."));
-        return false;
-    }
+    if (launchPending(*session)) return false;
     const auto started = publisher_.start(fileId.toStdString(), expected, confirmUndecided);
     const auto firstMarker = started.markers ? started.markers->first() : std::nullopt;
     if (started.markers && firstMarker)
@@ -161,6 +162,23 @@ bool FileCommands::markResolved(const QString &fileId, const QString &revision, 
     // Starting drops the parent staging offer and can ask for confirmation.
     Q_EMIT resolutionChanged();
     return started.transition == Transition::Applied || started.transition == Transition::NoChange;
+}
+
+bool FileCommands::reloadDestination(const QString &fileId, const QString &revision)
+{
+    const auto target = admit(fileId, revision, CommandCheck::CurrentSupported);
+    if (!target || launchPending(*target->file)) return false;
+    const auto started = publisher_.reloadDestination(fileId.toStdString(), target->revision);
+    feedback_.show(started.detail);
+    Q_EMIT resolutionChanged();
+    return started.transition == Transition::Applied;
+}
+
+bool FileCommands::launchPending(const FileSession &file)
+{
+    if (!mergetool_.blocks(QByteArray::fromStdString(file.path()))) return false;
+    feedback_.show(tr("Waiting for Git to launch this path. It is not resolved."));
+    return true;
 }
 
 void FileCommands::cancelResolution() { publisher_.cancelConfirmation(); }

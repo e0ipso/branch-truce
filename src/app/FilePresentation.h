@@ -65,7 +65,9 @@ public:
     [[nodiscard]] QString summary(std::size_t row) const;
     // Why the file keeps the session from finishing.
     [[nodiscard]] QStringList blockers(std::size_t row) const;
-    [[nodiscard]] Route route(std::size_t row) const;
+    // reloadable: the row's failed write can reload its repository file and
+    // retry, so a write failure routes there instead of to Mark resolved.
+    [[nodiscard]] Route route(std::size_t row, bool reloadable = false) const;
 
 private:
     const SessionStore &store_;
