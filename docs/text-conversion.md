@@ -59,9 +59,8 @@ clean it, read the canonical blob and check it out again. These operations use
 an app-owned temporary object store with the repository's validated local object
 store as an alternate. No worktree, index or repository object is written by
 preparation. Private objects are removed before completion, including on failure
-or cancellation. Existing adapter time and input limits apply. Canonical blob and
-checkout reads each have a separate 4194304-byte output budget shared by stdout and
-stderr, and that budget is not reduced by earlier preflight output. See
+or cancellation. Existing adapter time and input limits apply, and the canonical blob and
+checkout reads each get their own Git output budget. See
 [resource limits](resource-limits.md).
 
 The prepared snapshot binds the worktree root, exact byte path, displayed text,

@@ -14,15 +14,13 @@ The canonical artifact retains 16 native captures at both heights, eight zero-di
 
 Twelve additional original Qt scenes under `ui-scenes/` cover compact and long-message placeholders, literal diagnostic paths, earlier context and ordered-choice previews. They were inspected at their retained sizes. The stressed 960x540 scene scrolls to Technical details; literal markup remains text. Earlier/context previews retain visible keyboard selection and shared row geometry. Their JSON records `Fusion` for the review dialogs and `org.kde.desktop` for the window stress scenes; these observations do not imply the same style in every fixture. The synthetic localized prose is a stress input, not a shipped translation.
 
-That run's documentation pair and review scenes remain historical CI evidence. Current README media comes from the local development captures below. Build-tree captures do not establish installed-package UI or physical Plasma/AT-SPI behavior. The earlier [CI baseline](https://github.com/e0ipso/branch-truce/actions/runs/41235434979) remains historical and did not execute the highlighting-disabled desktop variant.
+That run's documentation pair and review scenes remain historical CI evidence. Current README media comes from the local development captures below. The earlier [CI baseline](https://github.com/e0ipso/branch-truce/actions/runs/41235434979) remains historical and did not execute the highlighting-disabled desktop variant.
 
 ## Current development captures
 
 Local development captures from 2026-11-11 use source `18d528e7350285bc9d73bf2ab5d3580e319b578d`. The native replay runs the real application in a private headless Wayland session with Breeze Light and Dark at 1280x720 and 1280x800, repeating each scene. Acceptance journeys retain the actual ordered-choice preview and earlier-context windows with offscreen Fusion controls.
 
 The [media provenance](images/readme-media-provenance.json) records the source, executable SHA-256, producing commands, original frame hashes and encoding. The documentation pair at 1440x900 is copied unchanged from `native/720/documentation-readme/`; [its provenance](images/redesigned-comparison-provenance.json) records both originals. The GIF and MP4 are a four-state screenshot gallery with four seconds per state, rather than a continuous interaction recording.
-
-These observations apply to a development build. Installed-package UI, physical Plasma/KWin, input methods and AT-SPI still require separate observation.
 
 ## Historical installed-package status
 
@@ -40,9 +38,9 @@ it does on a Wayland compositor with Breeze, three scale factors and AT-SPI.
 
 ## Redesign evidence still required
 
-No fresh installed-desktop UI observation is established by the current build-tree captures. The 2026-10-25 package results and 2026-10-26 startup observations remain historical, with their original hashes, dates and scope. Every README screenshot, GIF and video uses the inspected 2026-11-11 local development captures recorded above. Earlier media remains in Git history.
+No installed-package UI observation exists for the current source. The 2026-10-25 package results and 2026-10-26 startup observations remain historical, with their original hashes, dates and scope.
 
-For installed-UI validation, run the commands under [How to reproduce](#how-to-reproduce) against current packages, using a new owned output directory per target. Record the actual run date, source revision, package SHA-256, environment, command, exit status and emitted `.validation`, `.atspi` and PNG paths here. Replace pending observations only with the results that run produced. The current CI package lifecycle checks and development screenshots do not substitute for this observation.
+For installed-UI validation, run the commands under [How to reproduce](#how-to-reproduce) against current packages, using a new owned output directory per target. Record the actual run date, source revision, package SHA-256, environment, command, exit status and emitted `.validation`, `.atspi` and PNG paths here. Replace pending observations only with the results that run produced.
 
 The current native replay exercises real source-editor right-click, Menu and Shift+F10 routes after decisions, plus Undo/Redo and verified staging. The passing acceptance journeys exercise hover controls, toolbar overflow, combinations and history. Touch, physical pointer behavior and assistive-technology routing remain separate observations. Save must remain an app-only draft checkpoint; publishing and verified staging belong to Mark resolved.
 
@@ -75,7 +73,7 @@ Artifacts, built with the since-removed per-base builder from the commit that ad
 
 The container `/etc/os-release` of the Tuxedo base still names Ubuntu,
 because Tuxedo's branding packages are not installed; see
-[target-platforms.md](target-platforms.md#os-bases).
+[target-platforms.md](target-platforms.md#developer-os-bases).
 
 Runtime packages after `apt-get install --no-install-recommends` of the
 `.deb`:
@@ -251,7 +249,7 @@ under `org.kde.desktop` and compare the sidebar and the four panes with the
 scheme's View background. `ui.theme-icons` checks that every icon name in
 `src/ui` resolves with Breeze as the fallback theme, and `ui.theme-cues` that
 every coloured line has a gutter glyph. They skip, rather than pass, when the
-host lacks the KDE style, the colour schemes or the Breeze icons. The historical installed-package screenshots above predate the redesigned scene; fresh package evidence is still required.
+host lacks the KDE style, the colour schemes or the Breeze icons.
 
 Since then `src/app/main.cpp` picks the Qt Quick Controls style itself,
 before it loads the window. If `QT_QUICK_CONTROLS_STYLE` is set, Qt uses that
@@ -340,7 +338,7 @@ The historical scaling observations used `QT_SCALE_FACTOR` on a 1920x1080 headle
 
 The 150% observations predated the package's `qt6-wayland` dependency and the validator's factor-1.5 capture loop. Those runs reported 36 passed, 0 failed and 1 warning per base, the warning being closure-only Wayland startup. The 37-check runs in the status table are separate later observations. Neither run is evidence for the current layout.
 
-The installed theme and scaling matrix still needs fresh package observations with dated results and artifact paths. The current passing offscreen window journeys cover the 1280x720 eight-row and control/menu reachability assertions and the 1280x800 no-wrap/whole-word assertions. They do not measure KWin scaling. The strict 960x540 fit waiver supplies no measured full-fit pass. A live theme switch, 125% scaling and real-desktop pointer/assistive-technology behavior remain unobserved.
+The installed theme and scaling matrix still needs fresh package observations with dated results and artifact paths. The strict 960x540 fit waiver supplies no measured full-fit pass. A live theme switch, 125% scaling and real-desktop pointer/assistive-technology behavior remain unobserved.
 
 ### Editor input
 

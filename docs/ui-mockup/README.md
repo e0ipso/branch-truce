@@ -9,17 +9,17 @@ The target look of the Branch Truce window. [ui-design.md](../ui-design.md) stat
 | `light-ready.png`, `dark-ready.png` | The text conflict with the Open repository… button and its separator in the header |
 | `light-error.png`, `dark-error.png` | The window opened on a folder that is not a repository: the error placeholder with its Open repository… button |
 
-The text and binary pages are the references that [native replay](../../tools/native-replay/README.md) pins by hash, so they keep the header they were approved with. The ready pages show the same text conflict with the current header.
+The text and binary pages are the references that [native replay](../../tools/native-replay/README.md) pins by hash, so they keep the header they were approved with. The ready pages show the same text conflict with the current header. The native replay also keeps the sample repository and code, and its pinned sources preserve the approved bytes independently of changes to this HTML.
 
-The sample repository and code also have a maintained [native fixture and replay](../../tools/native-replay/README.md). Its pinned sources preserve the approved bytes independently of changes to this HTML. Each PNG is the HTML file beside it rendered as a 1280x720 window at 1.5x scale. The HTML inlines the Breeze icons and uses the Breeze Light and Breeze Dark colour values with Noto Sans and Hack, so it looks right on a machine with those fonts. Each page takes its favicon from `../../assets/branding/web/`, so open the pages from a repository checkout. To render one again:
+Each PNG is the HTML file beside it rendered as a 1280x720 window at 1.5x scale. The HTML inlines the Breeze icons and uses the Breeze Light and Breeze Dark colour values with Noto Sans and Hack, so it looks right on a machine with those fonts. Each page takes its favicon from `../../assets/branding/web/`, so open the pages from a repository checkout. To render one again:
 
 ```sh
 chrome --headless --hide-scrollbars --window-size=1280,720 --force-device-scale-factor=1.5 \
     --screenshot=light-text.png light-text.html
 ```
 
-The native app implements the footer progress and file facts, folded-row Take both,
-and source Accept/Ignore controls. Source controls overlay the full-width panes on
-hover or keyboard/menu focus, following the current design brief and owner direction.
-The approved files remain reference artifacts; native replay retains independent
-captures and measured residuals rather than claiming every reference pixel matches.
+[ui-design.md](../ui-design.md#10-targets-and-differences) lists the reference
+elements the native app implements and the kept rule that differs from the
+mockups. The approved files remain reference artifacts. Native replay retains
+independent captures and measured residuals and does not claim that every
+reference pixel matches.

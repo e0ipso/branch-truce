@@ -2,13 +2,13 @@
 
 The build separates `branch_truce_core`, `branch_truce_controller`,
 `branch_truce_git`, `branch_truce_storage`, `branch_truce_ui`, and the
-`branch-truce` executable. The controller includes object targets for session,
-recovery, publication, mergetool and highlighting code. Git provides constrained asynchronous inspection and
-conversion; storage provides lossless text codecs. See the
-[supported conversion envelope](text-conversion.md). The window opens the launched repository's complete conflict inventory in a status sidebar. Read-only captured sources surround the editable result, with common earlier context on demand. Flat panes retain native editor focus and scroll bars. Compact range controls put Accept toward the result and Ignore beside it; hover highlights the corresponding passage and ribbon. Range menus retain precise line and order-aware choices, including through the source editor after a range is fully decided. The result gutter reserves one state glyph beside its line number, with provenance available for inspection. Source headings separate roles and commit hashes without inventing branch identities.
-
-The session toolbar's remaining-conflict count and the per-file undecided-decision count describe different work. Sidebar states preserve failed, outside-app and newer-than-staged drafts; verified resolution uses the native positive status icon and text. Toolbar overflow and work-area scrolling handle limited space. Source-editor context-menu gesture routing still needs final-gate runtime evidence. Using Save, Mark resolved and the handoff is described in the [README](../README.md#use-it).
-The core uses C++20 and the standard library without Qt or platform I/O.
+`branch-truce` executable. The core uses C++20 and the standard library without
+Qt or platform I/O. The controller includes object targets for session,
+recovery, publication, mergetool and highlighting code. Git provides constrained
+asynchronous inspection and conversion, and storage provides lossless text
+codecs. See the [supported conversion envelope](text-conversion.md).
+[ui-design.md](ui-design.md) describes the window, and the
+[README](../README.md#use-it) describes Save, Mark resolved and the handoff.
 
 ## Machine provisioning
 
@@ -34,7 +34,9 @@ QApplication bootstrap for desktop controls; the interface is Qt Quick/Kirigami.
 The current API floor is Qt 6.6 and KF6 6.0, below the selected reference stack
 Qt 6.10.2/KF6 6.24.
 Stock Ubuntu noble's Qt 6.4 cannot build the desktop target. Do not substitute
-stock packages for Tuxedo's vendor packages.
+stock packages for Tuxedo's vendor packages. A user-owned prefix through
+`CMAKE_PREFIX_PATH` can supply compatible Qt/KDE packages, but it must keep
+their ABI and runtime modules consistent.
 
 ## Configure, build and test
 
@@ -76,6 +78,10 @@ The QML lint target fails on any qmllint warning, because
 `src/ui/.qmllint.ini` sets `MaxWarnings=0`. The desktop CTest run includes it
 as `ui.qmllint`, so a complete CTest run invokes lint once. For lint alone, use
 `cmake --build build/desktop --target branch_truce_ui_qmllint`.
+
+`.ai/sift/config/worktree-setup` runs `./tools/prepare-worktree.sh desktop` for
+each new worktree. CI checks that a fresh checkout stays clean after the core
+and sanitizer preparation, build and CTest.
 
 Two independent desktop tests may overlap. `install.prefix`, `ui.qmllint`
 and `performance.workloads` have `RUN_SERIAL`.
@@ -315,15 +321,14 @@ Agents sharing the headless session run the script under
 the package checkers and the install-prefix check use the same functions for
 their single `tracked.txt` conflict.
 
-The README uses inspected local captures from 2026-11-11, source `18d528e7350285bc9d73bf2ab5d3580e319b578d`. Their [provenance](images/readme-media-provenance.json) records the executable hash, commands and original image hashes. Comparison and binary scenes use Breeze on private headless Wayland; preview and earlier-context scenes use the acceptance suite's offscreen Fusion controls. The animation is an encoded gallery of actual application states, not a continuous interaction recording.
+### README media
 
-| Breeze Light | Breeze Dark |
-| --- | --- |
-| [![Current comparison in Breeze Light](images/comparison-light.png)](images/comparison-light.png) | [![Current comparison in Breeze Dark](images/comparison-dark.png)](images/comparison-dark.png) |
-
-The README also shows the current [ordered-choice preview](images/choice-preview.png) and [earlier-context pane](images/earlier-version.png), captured by the acceptance journeys with Fusion controls. These are original application screenshots, not mockups. The [GIF](images/demo.gif) and [video](images/demo.mp4) use those frames alongside the comparison and binary-file guidance.
-
-To produce a new pair from a sway session, set `capture_dir` to a new owned artifact directory and run:
+The README screenshots, GIF and video are local development captures from
+2026-11-11. [Platform validation](platform-validation.md#current-development-captures)
+describes them, and their [provenance](images/readme-media-provenance.json)
+records the executable hash, commands and image hashes. To produce a new
+comparison pair from a sway session, set `capture_dir` to a new owned artifact
+directory and run:
 
 ```sh
 PREVIEW_FILE=notes.md PREVIEW_SIZE=1440x900 PREVIEW_OUTPUT="$capture_dir" \
@@ -331,9 +336,15 @@ PREVIEW_FILE=notes.md PREVIEW_SIZE=1440x900 PREVIEW_OUTPUT="$capture_dir" \
     build/desktop/src/app/branch-truce
 ```
 
-Retain the printed `branch-truce-BreezeLight-1440x900.png` and `branch-truce-BreezeDark-1440x900.png`, the source revision, build identity, command, date and display environment. Inspect the actual captures before updating the documentation images, provenance and README caption. The published pair was copied unchanged from the 2026-11-11 local replay's `720/documentation-readme/` originals. [Its provenance](images/redesigned-comparison-provenance.json) records the source and commands. Development-build captures on sway do not replace installed-package or real Plasma evidence.
+Retain the printed `branch-truce-BreezeLight-1440x900.png` and
+`branch-truce-BreezeDark-1440x900.png`, the source revision, build identity,
+command, date and display environment. Inspect the actual captures before you
+update the documentation images, provenance and README caption.
 
-Collect separate 1280x720 and 1280x800 evidence with the corresponding `PREVIEW_SIZE` examples above. Screenshots alone do not establish eight visible rows, control/menu reachability or no-wrap fit. Those obligations need the final acceptance and native interaction checks, including source context-menu gestures, source-fill continuity and connector hover behaviour. Keep the narrow strict-960x540 fit waiver separate from these required checks.
+Screenshots alone do not establish eight visible rows, control or menu
+reachability, or no-wrap fit. The window-fit journey checks those
+([ui-design.md](ui-design.md#vertical-budget)). Development-build captures on
+sway do not replace installed-package or real Plasma evidence.
 
 ## Install
 
@@ -408,45 +419,20 @@ The metainfo identifies Branch Truce contributors as the developer, links to
 the project homepage, and declares GPL-3.0-or-later as the project license.
 The validators run without suppressing missing-homepage warnings.
 
-On 2026-10-25 every step above passed on the development host: four files
-deployed, `RUNPATH` `$ORIGIN:$ORIGIN/../lib/x86_64-linux-gnu`, both validators
+On 2026-10-25, when the install had four files, every step above passed on
+the development host: `RUNPATH` `$ORIGIN:$ORIGIN/../lib/x86_64-linux-gnu`, both validators
 passed, the smoke test opened the merge session, the desktop-launched and the
 launcher-started GUIs each held their launcher until they closed (exit 1,
 file unmerged), and the protocol suite passed 7/7 against the installed
 executable. A Plasma menu launch, Wayland and a physical display were not
 exercised.
 
-## Coordinator setup hook
-
-After this scaffold lands, run from the newly prepared checkout:
-
-```sh
-./tools/prepare-worktree.sh desktop
-```
-
-CI checks that a fresh checkout stays clean after the core and sanitizer
-preparation, build and CTest, the same commands as above.
-
-The desktop preparation above is the per-worktree setup command to register with Sift. It configures;
-checks remain separate `cmake --build` and `ctest` commands above. Hook registration
-belongs to the coordinator and is deliberately deferred.
-
 ## Platform evidence
 
-Development verification runs on Tuxedo OS 24.04.4 with GCC 13.3.0, CMake 4.2.3,
-Git 2.43.0, Qt 6.10.2 and ECM/Kirigami 6.24.0. No system packages were changed.
-The provisioning check and repeated install-mode reruns report no changes on this
-prepared host. Desktop CTest passed 2/2 canaries; independent core and sanitized
-core CTest each passed 1/1. QML lint completed without diagnostics. The same
-checks passed in a disposable detached worktree, which stayed clean and was
-removed afterward. These are scaffold checks only.
-The install-prefix check under [Install](#install) passed on this host.
-The current release pipeline builds Kubuntu DEB, Fedora 44 RPM and pinned Arch
-pkg.tar.zst artifacts. The earlier per-base Kubuntu/Tuxedo developer artifacts
-remain historical evidence in [target-platforms.md](target-platforms.md).
-The user reports the Kubuntu release DEB works on Tuxedo OS. Real desktop
-Wayland, theme/scaling and accessibility coverage remains limited to the dated
+The development host runs Tuxedo OS 24.04.4 with GCC 13.3.0, CMake 4.2.3,
+Git 2.43.0, Qt 6.10.2 and ECM/Kirigami 6.24.0. The release pipeline builds
+Kubuntu DEB, Fedora 44 RPM and pinned Arch pkg.tar.zst artifacts
+([target-platforms.md](target-platforms.md)). The user reports that the
+Kubuntu release DEB works on Tuxedo OS. Real desktop Wayland, theme, scaling
+and accessibility coverage is limited to the dated
 [platform validation record](platform-validation.md).
-A user-owned prefix via
-`CMAKE_PREFIX_PATH` can supply compatible Qt/KDE packages, but must keep their ABI
-and runtime modules consistent; no such alternate toolchain was needed here.
