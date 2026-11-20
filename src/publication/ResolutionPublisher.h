@@ -2,6 +2,7 @@
 #pragma once
 
 #include "git/TextConversion.h"
+#include "problems/Problem.h"
 #include "publication/ParentStaging.h"
 #include "session/SessionCoordinator.h"
 #include "storage/DestinationWriter.h"
@@ -52,9 +53,11 @@ public:
     [[nodiscard]] const std::shared_ptr<const storage::FileSystem> &destinations() const { return destinations_; }
     // Uses live, the repository file a worker just captured, as the launch
     // destination of a recovered file that git mergetool replaced by a copy.
-    // It must still have the identity recovery validated and the launch bytes.
-    bool adoptCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity,
-                           const storage::DestinationCapture &live);
+    // It must still have the identity recovery validated and the launch bytes,
+    // and no outcome of the file may wait for reconciliation. Returns why the
+    // copy is refused, or an empty problem once it is the launch destination.
+    [[nodiscard]] Problem adoptCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity,
+                                            const storage::DestinationCapture &live);
     // Empty path clears the assignment. The assigned path is never passed to git add.
     bool assignParentStaging(const QByteArray &path);
     [[nodiscard]] bool busy() const;

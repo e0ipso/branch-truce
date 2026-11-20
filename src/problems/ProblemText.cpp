@@ -378,6 +378,9 @@ Sentence format(ProblemCode code)
     case ProblemCode::RecoveryCopiedLaunch:
         return Text::tr("Recovered draft retained, but the repository file was replaced by a copy with the same bytes. "
                         "Work remains outstanding unless git mergetool is waiting on this path with those bytes.");
+    case ProblemCode::RecoveryCopiedLaunchUncertain:
+        return Text::tr("Recovered draft retained, but an earlier outcome for this file is uncertain. Inspect the "
+                        "repository file and index. Work remains outstanding; no publication is authorized.");
     case ProblemCode::RecoveryUnsafeDirectory: return Text::tr("Unsafe recovery directory rejected: %1");
     case ProblemCode::RecoverySessionActive:
         return Text::tr("Recovery session %1 is active or unavailable; it was not restored.");

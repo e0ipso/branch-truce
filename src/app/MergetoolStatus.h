@@ -23,6 +23,9 @@ class MergetoolStatus : public QObject {
     Q_PROPERTY(bool parentStagingUnknown READ parentStagingUnknown NOTIFY changed)
     // Git launched the selected path and waits for its decision.
     Q_PROPERTY(bool waiting READ waiting NOTIFY changed)
+    // Git launched the selected path and waits, but Mark resolved cannot hand the path back yet,
+    // as with a large file that is not loaded. Leave still releases Git.
+    Q_PROPERTY(bool waitingUnassigned READ waitingUnassigned NOTIFY changed)
     Q_PROPERTY(bool parentSessionActive READ parentSessionActive NOTIFY changed)
     Q_PROPERTY(bool canEndParentSession READ canEndParentSession NOTIFY changed)
 public:
@@ -31,6 +34,7 @@ public:
     [[nodiscard]] QString parentStagingPath() const;
     [[nodiscard]] bool parentStagingUnknown() const;
     [[nodiscard]] bool waiting() const;
+    [[nodiscard]] bool waitingUnassigned() const;
     [[nodiscard]] bool parentSessionActive() const;
     [[nodiscard]] bool canEndParentSession() const;
     // Tells the launcher waiting on the selected path to leave it unresolved.

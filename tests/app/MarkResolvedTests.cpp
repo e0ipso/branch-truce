@@ -1038,6 +1038,13 @@ int main(int argc, char **argv)
         CHECK(index.contains(" 1\ttracked.txt") && !index.contains(" 0\ttracked.txt"));
         CHECK(unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
+        // The first refusal already offers the reload, in the notice and the handoff.
+        CHECK(session.controller.commands()->destinationReloadable());
+        const auto route = handoffEntry(session.controller.completion()->handoffData(), session.id);
+        CHECK(route.value("action").value<FileStates::NextAction>() == FileStates::NextAction::ReloadDestination);
+        // Once the file holds the written bytes again, the reload stages them.
+        writeFile(merged, reviewed);
+        expectReloadPublishes(session, revision, reviewed);
     });
     suite.run("leave refuses unrecovered input and a running resolution and finish waits for a clean handoff", [] {
         Session session;
@@ -1406,7 +1413,8 @@ int main(int argc, char **argv)
         notifies(controller.commands(), "destinationReloadable",
                  QMetaMethod::fromSignal(&FileCommands::destinationReloadableChanged));
         const auto mergetool = QMetaMethod::fromSignal(&MergetoolStatus::changed);
-        for (const auto *name : {"parentStagingPath", "waiting", "parentSessionActive", "canEndParentSession"})
+        for (const auto *name :
+             {"parentStagingPath", "waiting", "waitingUnassigned", "parentSessionActive", "canEndParentSession"})
             notifies(controller.mergetool(), name, mergetool);
         notifies(controller.completion(), "handoff", QMetaMethod::fromSignal(&SessionCompletion::changed));
 

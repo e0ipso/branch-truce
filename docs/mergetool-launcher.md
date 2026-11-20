@@ -65,6 +65,8 @@ An attach for such a file is accepted as an unassigned waiter, and the window
 shows "Git is waiting on <path>. Load the large file to resolve it, or leave it
 unresolved." After the user loads the large file, the session assigns the
 waiter. If the load leaves the file unsupported, the waiter stays unassigned.
+While the waiter is unassigned, Mark resolved stays blocked for the path, and
+the file's notice offers Leave unresolved, which releases only that launcher.
 
 The session refuses an attach for a path it cannot wait on, and the rejection
 names the reason and the next step:
@@ -82,9 +84,9 @@ names the reason and the next step:
 The launcher prints every refusal in the terminal and exits 1. The window shows
 the same text as a notice. The session's other refusals, such as a
 configuration that differs or inputs that fail the manifest check, keep their
-texts and are shown the same way. A frame that the transport refuses before the
-session reads it, such as an invalid attach message, and an attach whose
-check runs out of time appear only in the terminal.
+texts and are shown the same way, and so is an attach whose check runs out of
+time. A frame that the transport refuses before the session reads it, such as
+an invalid attach message, appears only in the terminal.
 
 Frames are a 4-byte big-endian length plus one compact JSON object, at most
 65536 bytes. `src/mergetool/MergetoolMessages.h` defines every message and

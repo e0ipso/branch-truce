@@ -47,7 +47,7 @@ A refusal says "The repository file changed while Git was waiting. The draft was
 
 ### Reload and retry
 
-When a write fails because the repository file changed, the failure notice offers "Reload the repository file and retry". It appears when the write failed with `DestinationIdentityChanged` or `DestinationContentChanged`, or when the re-base above refused the file.
+When a write fails because the repository file changed, the failure notice offers "Reload the repository file and retry". It appears when the write failed with `DestinationIdentityChanged` or `DestinationContentChanged`, when the re-base above refused the file, or when a written file no longer holds the written revision before staging.
 
 The action captures the repository file again off the GUI thread. It applies the same byte rule as the re-base, with the launch bytes allowed for a parent-owned path or a file not yet written. If the bytes match, the capture becomes the baseline and Mark resolved runs again for the same revision. If the bytes differ, the failure, the draft and the recovery records stay, and the window says "The repository file changed outside Branch Truce. The draft is still available."
 

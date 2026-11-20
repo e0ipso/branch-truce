@@ -40,6 +40,9 @@ MergetoolSession::MergetoolSession(ResolutionPublisher &publisher, SessionStore 
     connect(acknowledgment_, &QTimer::timeout, this, &MergetoolSession::pollAcknowledgment);
     connect(&server_, &MergetoolServer::attachReceived, this, &MergetoolSession::attachReceived);
     connect(&server_, &MergetoolServer::closed, this, &MergetoolSession::closed);
+    // The launcher prints the reason in the terminal; the window shows it too.
+    connect(&server_, &MergetoolServer::attachExpired, this,
+            [this](quint64, const QString &reason) { Q_EMIT notice(reason); });
     // A large file's launcher waits unassigned until the user loads the file.
     // A load that leaves it held back keeps the waiter unassigned.
     connect(&files_, &SessionStore::fileStored, this, [this](int row, SessionStore::Action action) {
@@ -497,12 +500,10 @@ void MergetoolSession::settleCopiedLaunch(const std::string &fileId, const Snaps
     }
     // The launcher left while Git inspected the path; a later attach checks again.
     if (!launchedWithCapturedBytes(*file)) return;
-    // The copy must still be the file recovery validated; any change keeps the path failed.
-    const bool settled = failure.isEmpty() && publisher_.adoptCopiedLaunch(fileId, identity, live)
-        ? files_.settleRecoveryFailure(fileId, ProblemCode::RecoveryCopiedLaunch)
-        : files_.settleRecoveryFailure(fileId, ProblemCode::RecoveryCopiedLaunch,
-                                       !failure.isEmpty() ? failure
-                                                          : Problem{ProblemCode::RecoveryChangedAfterValidation});
+    // The copy must still be the file recovery validated, and no earlier
+    // outcome may be uncertain; otherwise the path stays failed and says why.
+    const auto refusal = !failure.isEmpty() ? failure : publisher_.adoptCopiedLaunch(fileId, identity, live);
+    const bool settled = files_.settleRecoveryFailure(fileId, ProblemCode::RecoveryCopiedLaunch, refusal);
     copiedLaunches_.erase(entry);
     if (settled) Q_EMIT changed();
 }

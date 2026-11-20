@@ -377,6 +377,52 @@ void reselectingTheLaunchedPathOffersLeave(Sandbox &sandbox)
     settleFor("leave control gone after leaving", [&] { return !scene.item("leaveMergetool")->isVisible(); });
     checkOffline(scene);
 }
+// Git launched a file over the line limit that the user has not loaded. The window holds the file
+// back, and its load leaves it outside the app, so Mark resolved can never hand it back. Leave
+// unresolved releases Git both before and after the load.
+void heldBackLargeFileOffersLeave(Sandbox &sandbox)
+{
+    // Lines this alike put the comparison over its budget once the file loads.
+    Repository repo({{"large.txt", QByteArray("base\n"), QByteArray(8200, '\n'), QByteArray("x\n").repeated(8200),
+                      QByteArray(8200, '\n')},
+                     chosenByHand("other.txt")});
+    Scene scene(sandbox, repo);
+    auto &app = scene.app();
+    const auto launchBytes = readFile(repo.path("large.txt"));
+    clickFile(scene, "large.txt");
+    CHECK(app.selectedFile()->support() == FileStates::SupportKind::LargeFile);
+    auto parent = startMergetool(sandbox, repo, {"large.txt"});
+    waitFor(
+        "Git to launch large.txt", [&] { return app.mergetoolSession()->hasWaiter(QByteArrayLiteral("large.txt")); },
+        mergetoolState(scene));
+    settleFor("waiting state on the held-back path",
+              [&] { return scene.item("mergetoolHolding")->isVisible() && scene.item("leaveMergetool")->isVisible(); });
+    CHECK(!app.mergetool()->waiting() && app.mergetoolSession()->waitingPath().isEmpty());
+    expectText(scene.text("mergetoolHolding"),
+               QStringLiteral("Git is waiting on this path. Load the large file to resolve it. Leave keeps the draft "
+                              "and returns the original file."),
+               "held-back path");
+    CHECK(scene.item("leaveMergetool")->isEnabled());
+
+    // The load keeps Git waiting on a file the app cannot edit, and Leave stays.
+    CHECK(app.commands()->loadLargeFile(fileId("large.txt")));
+    settleFor("the load to hold the file outside the app",
+              [&] { return app.selectedFile()->support() == FileStates::SupportKind::OutsideApp; });
+    CHECK(app.mergetoolSession()->hasWaiter(QByteArrayLiteral("large.txt")) && !app.mergetool()->waiting());
+    CHECK(scene.item("mergetoolHolding")->isVisible() && scene.item("leaveMergetool")->isEnabled());
+    expectText(scene.text("mergetoolHolding"),
+               QStringLiteral("Git is waiting on this path, but Branch Truce cannot resolve it. Leave returns the "
+                              "original file to Git unresolved."),
+               "path outside the app");
+
+    scene.click("leaveMergetool");
+    waitForGitToExit(scene, *parent);
+    CHECK(parent->exitStatus() == QProcess::NormalExit && parent->exitCode() != 0);
+    CHECK(readFile(repo.path("large.txt")) == launchBytes);
+    CHECK(repo.unmerged("large.txt") && repo.unmerged("other.txt"));
+    settleFor("leave control gone after leaving", [&] { return !scene.item("leaveMergetool")->isVisible(); });
+    checkOffline(scene);
+}
 // An interrupt to the git mergetool process group, as Ctrl+C in its terminal, ends Git and the
 // launcher with a saved draft unresolved. The window drops the waiting state and Leave, Git keeps
 // the conflict and the launch bytes, and the next window restores the saved draft.
@@ -685,6 +731,8 @@ void addHandoffJourneys(JourneySuite &suite)
         resolvedHandoffDropsTheWaitingText);
     add("clicking the launched path again after Git attached shows the waiting state and Leave unresolved",
         reselectingTheLaunchedPathOffersLeave);
+    add("a large file Git launched before it was loaded offers Leave unresolved, which releases Git",
+        heldBackLargeFileOffersLeave);
     add("PRD.md:155 interrupting git mergetool keeps a saved draft from Git and the next window restores it",
         interruptedMergetoolKeepsTheSavedDraft);
     add("a window that listens for git mergetool launches refuses to open another repository and changes nothing",

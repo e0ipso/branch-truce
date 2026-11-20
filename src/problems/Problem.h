@@ -257,6 +257,7 @@ namespace branch_truce {
     X(RecoveryChanged) \
     X(RecoveryChangedAfterValidation) \
     X(RecoveryCopiedLaunch) \
+    X(RecoveryCopiedLaunchUncertain) \
     X(RecoveryUnsafeDirectory) \
     X(RecoverySessionActive) \
     X(RecoverySessionExpired) \

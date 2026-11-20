@@ -210,8 +210,10 @@ void deadlinesCoverRunningAndQueuedWork()
     waitUntil([&] { return owner.reader->entered.load(); }, "first read never entered");
     Peer queued(owner, owner.attach());
     waitUntil([&] { return owner.session->pendingIntakes() == 2; }, "second intake never queued");
-    for (auto *peer : {&running, &queued})
-        peer->refused(QStringLiteral("The mergetool inputs could not be checked in time. Try again."));
+    const auto late = QStringLiteral("The mergetool inputs could not be checked in time. Try again.");
+    for (auto *peer : {&running, &queued}) peer->refused(late);
+    // The window shows each refusal the launchers print.
+    CHECK_EQ(owner.notices, QStringList({late, late}));
     CHECK_EQ(owner.session->pendingIntakes(), 2);
     CHECK(!owner.session->parentSessionActive());
     Peer excess(owner, owner.attach());
@@ -332,15 +334,21 @@ void aSecondLauncherForAWaitingPathIsRefusedByName()
     CHECK(owner.session->waitingOn("choices.txt")); // The first launcher keeps its wait.
 }
 
+// A conflict over the large-file line limit at path. Distinct lines keep the comparison within its
+// budgets, so a load makes it editable.
+FileSession largeConflictAt(const QByteArray &path)
+{
+    std::string left;
+    for (std::size_t line = 1; line <= kLargeFileLines + 1; ++line) left += "line " + std::to_string(line) + '\n';
+    const auto right = "first\n" + left.substr(left.find('\n') + 1);
+    return conflictAt(path, test_support::choiceFile(left, right));
+}
+
 void aLargeFileAttachWaitsUntilTheFileLoads()
 {
     const QByteArray path = "large.txt";
     const auto id = path.toHex().toStdString();
-    // Distinct lines keep the comparison within its budgets, so the load makes it editable.
-    std::string left;
-    for (std::size_t line = 1; line <= kLargeFileLines + 1; ++line) left += "line " + std::to_string(line) + '\n';
-    const auto right = "first\n" + left.substr(left.find('\n') + 1);
-    Session owner(5000, {conflictAt(path, test_support::choiceFile(left, right))});
+    Session owner(5000, {largeConflictAt(path)});
     CHECK(owner.store.file(id)->support() == Support::LargeFile);
     Peer peer(owner, owner.attach(path));
     CHECK(std::holds_alternative<AttachedMessage>(peer.next()));
@@ -355,6 +363,26 @@ void aLargeFileAttachWaitsUntilTheFileLoads()
     CHECK(owner.store.file(id)->support() == Support::Supported);
     CHECK_EQ(owner.session->waitingPath(), path);
     CHECK(owner.session->waitingOn(path) && !owner.session->blocks(path));
+}
+
+void leavingAnUnassignedLargeFileTellsOnlyItsLauncher()
+{
+    const QByteArray path = "large.txt";
+    Session owner(5000, {largeConflictAt(path)});
+    Peer assigned(owner, owner.attach());
+    CHECK(std::holds_alternative<AttachedMessage>(assigned.next()));
+    owner.drained();
+    Peer held(owner, owner.attach(path));
+    CHECK(std::holds_alternative<AttachedMessage>(held.next()));
+    owner.drained();
+    CHECK(owner.session->waitingOn("choices.txt") && owner.session->hasWaiter(path) && !owner.session->waitingOn(path));
+    CHECK(owner.session->leave(path));
+    CHECK(std::holds_alternative<LeaveMessage>(held.next()));
+    held.closed();
+    CHECK(!owner.session->hasWaiter(path));
+    // The other launcher keeps its wait and gets nothing.
+    CHECK(owner.session->waitingOn("choices.txt") && owner.session->parentSessionActive());
+    CHECK(assigned.received.isEmpty() && assigned.socket.state() == QLocalSocket::ConnectedState);
 }
 
 void aLargeFileThatLoadsHeldBackKeepsGitWaiting()
@@ -396,6 +424,8 @@ int main(int argc, char **argv)
     suite.run("an unreadable file is refused by name", anUnreadableFileIsRefusedByName);
     suite.run("a second launcher for a waiting path is refused by name", aSecondLauncherForAWaitingPathIsRefusedByName);
     suite.run("a large file attach waits until the file loads", aLargeFileAttachWaitsUntilTheFileLoads);
+    suite.run("leaving an unassigned large file tells only its launcher",
+              leavingAnUnassignedLargeFileTellsOnlyItsLauncher);
     suite.run("a large file that loads held back keeps Git waiting", aLargeFileThatLoadsHeldBackKeepsGitWaiting);
     return suite.report();
 }

@@ -48,6 +48,13 @@ bool destinationChanged(const Problem &problem)
     return problem.code == ProblemCode::DestinationIdentityChanged
         || problem.code == ProblemCode::DestinationContentChanged;
 }
+
+// The capture read the file, or found that another file replaced it. A write
+// it refuses failed because the file changed, so a reload may retry it.
+bool reloadableCapture(const storage::DestinationCapture &capture)
+{
+    return capture.problem.isEmpty() || destinationChanged(capture.problem);
+}
 }
 
 ResolutionPublisher::ResolutionPublisher(SessionStore &files, SessionCoordinator &coordinator,
@@ -110,18 +117,20 @@ void ResolutionPublisher::adoptBaselines(const git::RepositoryContext &repositor
     baselines_ = std::move(baselines);
 }
 
-bool ResolutionPublisher::adoptCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity,
-                                            const storage::DestinationCapture &live)
+Problem ResolutionPublisher::adoptCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity,
+                                               const storage::DestinationCapture &live)
 {
     const auto *session = file(fileId);
+    // An uncertain outcome is inspected against the baseline it had.
+    if (session && awaitsReconciliation(*session)) return ProblemCode::RecoveryCopiedLaunchUncertain;
     // The same files readBaselines captures: a large file still held for its load takes the baseline too.
     if ((attempt_ && attempt_->fileId == fileId) || !session
         || (session->support() != Support::Supported && session->support() != Support::LargeFile)
         || !session->snapshots() || !live.destination || live.destination->identity() != identity
         || live.destination->bytes().toStdString() != session->snapshots()->launchResult.text.bytes)
-        return false;
+        return ProblemCode::RecoveryChangedAfterValidation;
     baselines_.insert_or_assign(fileId, Baseline{live.destination, QString{}});
-    return true;
+    return {};
 }
 
 bool ResolutionPublisher::assignParentStaging(const QByteArray &path)
@@ -685,12 +694,14 @@ void ResolutionPublisher::inspectedIndex(storage::DestinationCapture current)
     const auto *session = file(attempt_->fileId);
     if (!session || !session->snapshots()) return;
     const bool written = matchesWrittenBaseline(*session, *attempt_);
+    // A written file that holds other bytes changed outside the app. A reload
+    // retries once it holds the written bytes again.
     if (written && !attempt_->parentOwned
         && (!current.destination || current.destination->bytes() != attempt_->serialized)) {
         fail(Outcome::Failed,
              current.problem.isEmpty() ? tr("The repository file no longer matches the written revision.")
                                        : problem_text::text(current.problem),
-             false);
+             false, reloadableCapture(current));
         return;
     }
     if (written && current.destination && current.destination->bytes() == attempt_->serialized) {
@@ -723,7 +734,7 @@ void ResolutionPublisher::inspectedIndex(storage::DestinationCapture current)
                  : attempt_->parentOwned
                  ? tr("The repository file changed while Git was waiting. The draft was not published.")
                  : tr("The repository file changed outside Branch Truce. The draft was not published."),
-             false, current.problem.isEmpty() || destinationChanged(current.problem));
+             false, reloadableCapture(current));
         return;
     }
     auto evidence = std::make_shared<storage::PublicationResult>();
