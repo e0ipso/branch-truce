@@ -2,6 +2,7 @@
 #pragma once
 
 #include "git/TextConversion.h"
+#include "problems/Problem.h"
 #include "publication/ParentStaging.h"
 #include "session/SessionCoordinator.h"
 #include "storage/DestinationWriter.h"
@@ -11,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -51,9 +53,11 @@ public:
     [[nodiscard]] const std::shared_ptr<const storage::FileSystem> &destinations() const { return destinations_; }
     // Uses live, the repository file a worker just captured, as the launch
     // destination of a recovered file that git mergetool replaced by a copy.
-    // It must still have the identity recovery validated and the launch bytes.
-    bool adoptCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity,
-                           const storage::DestinationCapture &live);
+    // It must still have the identity recovery validated and the launch bytes,
+    // and no outcome of the file may wait for reconciliation. Returns why the
+    // copy is refused, or an empty problem once it is the launch destination.
+    [[nodiscard]] Problem adoptCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity,
+                                            const storage::DestinationCapture &live);
     // Empty path clears the assignment. The assigned path is never passed to git add.
     bool assignParentStaging(const QByteArray &path);
     [[nodiscard]] bool busy() const;
@@ -62,6 +66,17 @@ public:
     [[nodiscard]] QString confirmationRevision() const;
     [[nodiscard]] std::optional<Offer> parentStagingOffer(const std::string &fileId) const;
     StartResult start(const std::string &fileId, RevisionId expected, bool confirmUndecided);
+    // True while fileId's recorded write failed because its repository file
+    // changed, so reloadDestination may retry it. Never while the file awaits
+    // reconciliation.
+    [[nodiscard]] bool canReloadDestination(const std::string &fileId) const;
+    // Captures fileId's repository file again on a worker after a write that
+    // canReloadDestination allows. The capture becomes the baseline only when
+    // it holds exactly the baseline bytes, or the launch bytes where Mark
+    // resolved accepts them, and Mark resolved then runs again for expected.
+    // Otherwise the failure, the draft and the recovery records stay as they
+    // are, and changed says why.
+    StartResult reloadDestination(const std::string &fileId, RevisionId expected);
     void cancelConfirmation();
     // True only when verified parent staging was recorded. A still-unmerged index stays waiting.
     bool verifyParentAcknowledgment(const std::string &fileId, RevisionId expected);
@@ -71,7 +86,7 @@ Q_SIGNALS:
     void markersBlocked(const QString &fileId, quint64 revision, quint64 count, quint64 line, const QString &message);
 
 private:
-    enum class Step { Prepare, Discover, Index, Publish, Stage, ParentPreflight, Verify, Inspect };
+    enum class Step { Prepare, Discover, Index, Publish, Stage, ParentPreflight, Verify, Inspect, Reload };
     // What finishes each step, and whether the step runs after the write, so
     // that a failure there is a staging failure.
     struct StepHandling {
@@ -100,15 +115,34 @@ private:
     [[nodiscard]] bool parentOwns(const QByteArray &path) const;
     [[nodiscard]] bool previouslyWritten(const FileSession &session, RevisionId revision) const;
     [[nodiscard]] bool matchesWrittenBaseline(const FileSession &session, const Attempt &attempt) const;
+    // A recorded Uncertain outcome or an exchange slot a publication kept waits
+    // for inspection. The baseline must not move until it is reconciled.
+    [[nodiscard]] bool awaitsReconciliation(const FileSession &session) const;
+    // Makes live, a fresh off-thread capture of session's repository file, its
+    // baseline when live holds exactly the baseline bytes, or the launch bytes
+    // when allowLaunchBytes is set. Otherwise, and always while the file
+    // awaitsReconciliation, it returns false and keeps the baseline. It reads no file.
+    bool rebaseOnLive(const FileSession &session, const storage::DestinationCapture &live, bool allowLaunchBytes);
+    // Remembers the file when the attempt's writer kept its exchange slot.
+    void noteRetainedSlot();
     [[nodiscard]] bool preserveWrite() const;
     [[nodiscard]] static StartResult result(Transition transition, const QString &detail);
-    void fail(Outcome outcome, const QString &detail, bool stage);
+    // Records the attempt's failed write or staging and ends the attempt.
+    // reloadable marks a failed write whose repository file changed, so that
+    // canReloadDestination offers to retry it.
+    void fail(Outcome outcome, const QString &detail, bool stage, bool reloadable = false);
     void finishResolved();
     void clearAttempt();
     bool launch(Step step, git::Request request);
+    // Emits what a start outside a command said, with its first marker.
+    void announce(const std::string &fileId, RevisionId revision, const StartResult &started);
     StartResult reviewed(Transition review);
     void preparePublication();
+    // Captures the attempt's repository file on a worker. captured runs only
+    // for a current completion, with the worker's result and the capture.
+    void submitCapture(std::function<void(const TaskResult &, const storage::DestinationCapture &)> captured);
     void inspectDestination(std::function<void(storage::DestinationCapture)> inspected);
+    void reloaded(const TaskResult &captured, const storage::DestinationCapture &live);
     void inspectedIndex(storage::DestinationCapture current);
     bool startPrepare();
     bool startVerify();
@@ -128,6 +162,12 @@ private:
     git::RepositoryContext repository_;
     git::TextConversion conversion_;
     Baselines baselines_;
+    // Files whose publication kept its exchange slot in this session. A later
+    // outcome can replace the recorded Uncertain one; this set stays.
+    std::set<std::string> retained_;
+    // Files whose recorded write failed because the repository file changed,
+    // with that write's revision.
+    std::map<std::string, RevisionId> reloadable_;
     std::shared_ptr<Attempt> attempt_;
     ParentStaging parent_;
     std::optional<std::pair<std::string, RevisionId>> confirmation_;

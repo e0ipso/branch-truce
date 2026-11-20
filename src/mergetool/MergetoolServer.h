@@ -56,6 +56,8 @@ Q_SIGNALS:
     // A peer sent a valid attach. Its deadline runs until Attached is sent; any
     // further byte closes it. A late Attached is refused even before timer delivery.
     void attachReceived(quint64 connection, const branch_truce::AttachMessage &message);
+    // An attach ran out of time before Attached was sent. The peer was sent reason and is closed.
+    void attachExpired(quint64 connection, const QString &reason);
     // The connection is gone, whichever side closed it.
     void closed(quint64 connection);
 

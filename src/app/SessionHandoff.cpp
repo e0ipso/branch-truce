@@ -65,7 +65,7 @@ Handoff SessionHandoff::build(const SessionStore &store, const SessionActivity &
         store.size() > 0 && !store.hasPendingRecovery() && !store.hasRecoveryFailures() && !store.recording();
     for (std::size_t row = 0; row < store.size(); ++row) {
         const auto &file = store.files()[row];
-        const auto route = presentation.route(row);
+        const auto route = presentation.route(row, activity.reloadable && activity.reloadable(file.id()));
         HandoffEntry entry{file.id(),
                            git::displayPath(QByteArray(file.path().data(), static_cast<qsizetype>(file.path().size()))),
                            route.category,

@@ -29,6 +29,9 @@ class FileCommands : public QObject {
     Q_PROPERTY(QString resolutionFileId READ resolutionFileId NOTIFY resolutionChanged)
     Q_PROPERTY(QString resolutionRevision READ resolutionRevision NOTIFY resolutionChanged)
     Q_PROPERTY(bool resolutionBusy READ resolutionBusy NOTIFY resolutionChanged)
+    // The selected file's write failed because its repository file changed,
+    // and reloadDestination may capture the file again and retry.
+    Q_PROPERTY(bool destinationReloadable READ destinationReloadable NOTIFY destinationReloadableChanged)
 public:
     FileCommands(SessionStore &store, const Selection &selection, ResultEditorAdapter &editor,
                  ResolutionPublisher &publisher, const MergetoolSession &mergetool, CommandFeedback &feedback,
@@ -37,6 +40,7 @@ public:
     [[nodiscard]] QString resolutionFileId() const;
     [[nodiscard]] QString resolutionRevision() const;
     [[nodiscard]] bool resolutionBusy() const;
+    [[nodiscard]] bool destinationReloadable() const;
 
     // Editor offsets are UTF-16 units and must identify scalar boundaries.
     // A cut, paste or drop: one command, acknowledged once durable.
@@ -54,6 +58,10 @@ public:
     // Review, checkpoint and publish one exact revision. Confirmation is
     // required while source choices remain undecided.
     Q_INVOKABLE bool markResolved(const QString &fileId, const QString &revision, bool confirmUndecided = false);
+    // After a write failed because the repository file changed: captures the
+    // file again and retries Mark resolved when it holds the bytes Branch
+    // Truce expects. Other bytes keep the failure and the draft.
+    Q_INVOKABLE bool reloadDestination(const QString &fileId, const QString &revision);
     Q_INVOKABLE void cancelResolution();
     // Moves the result cursor to the first marker named by the marker blocker.
     Q_INVOKABLE bool showFirstMarker();
@@ -69,11 +77,15 @@ public:
 Q_SIGNALS:
     // A resolution started, finished or asked for confirmation.
     void resolutionChanged();
+    // The selection or a resolution changed whether the selected file can be reloaded.
+    void destinationReloadableChanged();
     void stagedDiscardFinished(const QString &fileId, const QString &revision, bool succeeded);
 
 private:
     // The command target for the current revision of a supported file, or a shown refusal.
     std::optional<CommandTarget> admit(const QString &fileId, const QString &revision, CommandCheck check);
+    // True, with a shown refusal, while git mergetool has not launched the file's path.
+    bool launchPending(const FileSession &file);
     // The byte edit an editor change makes to the target's current text, or a shown refusal.
     std::optional<ResultEdit> resultEdit(const CommandTarget &target, int begin, int end, const QString &replacement);
     [[nodiscard]] QString discardedMessage(const FileSession &file) const;

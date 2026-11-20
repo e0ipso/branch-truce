@@ -89,8 +89,9 @@ public:
     void clearCopiedLaunches();
     // Clears the recovery error of a restored file that git mergetool replaced
     // by a same-byte copy, once a launcher waits on its path with a MERGED copy
-    // of the launch bytes, the file still has the identity recovery saw, and a
-    // background check finds its index entries and conversion policy unchanged.
+    // of the launch bytes, the file still has the identity recovery saw, no
+    // earlier outcome is uncertain, and a background check finds its index
+    // entries and conversion policy unchanged.
     void acceptCopiedLaunches();
 
 Q_SIGNALS:
@@ -114,6 +115,9 @@ private:
     };
     void attachReceived(quint64 connection, const AttachMessage &message);
     void intakeChecked(quint64 connection, const AttachMessage &message, const IntakeCheck &check);
+    // Why a launcher cannot wait on path, translated, or empty when it can.
+    // A large file is accepted; it takes the wait once the user loads it.
+    [[nodiscard]] static QString attachRefusal(const FileSession *file, const QByteArray &path);
     void closed(quint64 connection);
     void reject(quint64 connection, const QString &invocation, const QString &reason);
     // Removes the waiter and gives its staging assignment to the next one.

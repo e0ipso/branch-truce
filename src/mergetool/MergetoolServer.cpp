@@ -103,13 +103,13 @@ void MergetoolServer::accept()
             const auto found = connections_.find(id);
             if (found == connections_.end()) return;
             auto *socket = found->socket;
-            if (!found->invocation.isEmpty())
-                send(id,
-                     RejectedMessage{found->invocation,
-                                     tr("The mergetool inputs could not be checked in time. Try again.")});
+            const auto reason = tr("The mergetool inputs could not be checked in time. Try again.");
+            // A connection already closing got its refusal from the session.
+            const bool refused = !found->invocation.isEmpty() && send(id, RejectedMessage{found->invocation, reason});
             // Flush above is best effort. Expiry must also drop a peer that stopped reading.
             socket->abort();
             drop(id);
+            if (refused) Q_EMIT attachExpired(id, reason);
         });
         deadline->start(limits_.attachDeadlineMs);
         if (socket->bytesAvailable() > 0) read(id);

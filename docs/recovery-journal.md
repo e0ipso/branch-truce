@@ -270,8 +270,10 @@ resolved hands the path back to Git. This happens right after an in-window
 choice, or when the launcher attaches to a window it started. Any other change
 keeps the error: different bytes, mode or index entries, a changed conversion
 policy, or a file, index or policy that changed after the restore, such as a
-staged path or a new `core.autocrlf`. Leaving such a path returns it to Git
-unresolved.
+staged path or a new `core.autocrlf`. A recorded Uncertain outcome also keeps
+it: the copy does not become the launch destination, and the error asks to
+inspect the repository file and index first. Leaving such a path returns it to
+Git unresolved.
 
 The restore adapter replays the existing domain transitions and compares every
 complete state with its canonical encoding. This validates the state schema,

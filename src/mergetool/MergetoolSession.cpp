@@ -40,6 +40,18 @@ MergetoolSession::MergetoolSession(ResolutionPublisher &publisher, SessionStore 
     connect(acknowledgment_, &QTimer::timeout, this, &MergetoolSession::pollAcknowledgment);
     connect(&server_, &MergetoolServer::attachReceived, this, &MergetoolSession::attachReceived);
     connect(&server_, &MergetoolServer::closed, this, &MergetoolSession::closed);
+    // The launcher prints the reason in the terminal; the window shows it too.
+    connect(&server_, &MergetoolServer::attachExpired, this,
+            [this](quint64, const QString &reason) { Q_EMIT notice(reason); });
+    // A large file's launcher waits unassigned until the user loads the file.
+    // A load that leaves it held back keeps the waiter unassigned.
+    connect(&files_, &SessionStore::fileStored, this, [this](int row, SessionStore::Action action) {
+        if (action != SessionStore::Action::LoadLarge || row < 0 || static_cast<std::size_t>(row) >= files_.size())
+            return;
+        const auto path = QByteArray::fromStdString(files_.files()[static_cast<std::size_t>(row)].path());
+        const auto index = indexOfPath(path);
+        if (index >= 0 && !waiters_.at(index).assigned) tryAssign();
+    });
     // A fenced revalidation never completes; the next attach may check again.
     connect(&coordinator_, &SessionCoordinator::taskFinished, this, [this](const TaskCompletion &completion) {
         if (completion.disposition == TaskDisposition::Current) return;
@@ -253,24 +265,48 @@ void MergetoolSession::intakeChecked(quint64 connection, const AttachMessage &me
                check.error.isEmpty() ? tr("The mergetool inputs could not be kept.") : problem_text::text(check.error));
         return;
     }
-    if (indexOfPath(check.intake->path) >= 0) {
-        reject(connection, message.invocation, tr("Git is already waiting on this path."));
+    const auto &path = check.intake->path;
+    if (indexOfPath(path) >= 0) {
+        reject(connection, message.invocation,
+               tr("Git is already waiting on %1. Finish or leave that git mergetool run first.")
+                   .arg(git::displayPath(path)));
         return;
     }
-    const auto *file = files_.file(check.intake->path.toHex().toStdString());
-    if (!file || file->support() != Support::Supported) {
-        reject(connection, message.invocation, tr("This path is not an editable conflict in the open session."));
+    const auto *file = files_.file(path.toHex().toStdString());
+    if (const auto refusal = attachRefusal(file, path); !refusal.isEmpty()) {
+        reject(connection, message.invocation, refusal);
         return;
     }
+    // A large file takes the wait once the user loads it; see the constructor.
+    const auto waiting = file->support() == Support::LargeFile
+        ? tr("Git is waiting on %1. Load the large file to resolve it, or leave it unresolved.")
+              .arg(git::displayPath(path))
+        : tr("Git is waiting. Mark resolved hands this path back, or leave it unresolved.");
     // Reply before taking the waiter: a launcher that left meanwhile changes nothing.
     if (!server_.send(connection, AttachedMessage{message.invocation})) return;
-    waiters_.append(
-        Waiter{message.invocation, check.intake->path, message.intake, check.intake->mergedSha256, connection});
+    waiters_.append(Waiter{message.invocation, path, message.intake, check.intake->mergedSha256, connection});
     parentSession_ = true;
     acceptCopiedLaunches();
     tryAssign();
-    Q_EMIT notice(tr("Git is waiting. Mark resolved hands this path back, or leave it unresolved."));
+    Q_EMIT notice(waiting);
     Q_EMIT changed();
+}
+
+QString MergetoolSession::attachRefusal(const FileSession *file, const QByteArray &path)
+{
+    const auto shown = git::displayPath(path);
+    if (!file)
+        return tr("%1 is not a conflict in the open Branch Truce session. Reload the session or open the repository "
+                  "that git mergetool runs in.")
+            .arg(shown);
+    switch (file->support()) {
+    case Support::Supported:
+    case Support::LargeFile: return {};
+    case Support::OutsideApp: return tr("Branch Truce cannot edit %1. Resolve it with another tool.").arg(shown);
+    case Support::Unreadable:
+        return tr("Branch Truce could not read %1. Select it in this window to see why.").arg(shown);
+    }
+    return {};
 }
 
 void MergetoolSession::closed(quint64 connection)
@@ -293,6 +329,8 @@ void MergetoolSession::reject(quint64 connection, const QString &invocation, con
 {
     server_.send(connection, RejectedMessage{invocation, reason});
     server_.close(connection);
+    // The launcher prints the reason in the terminal; the window shows it too.
+    Q_EMIT notice(reason);
 }
 
 void MergetoolSession::release(qsizetype index)
@@ -462,12 +500,10 @@ void MergetoolSession::settleCopiedLaunch(const std::string &fileId, const Snaps
     }
     // The launcher left while Git inspected the path; a later attach checks again.
     if (!launchedWithCapturedBytes(*file)) return;
-    // The copy must still be the file recovery validated; any change keeps the path failed.
-    const bool settled = failure.isEmpty() && publisher_.adoptCopiedLaunch(fileId, identity, live)
-        ? files_.settleRecoveryFailure(fileId, ProblemCode::RecoveryCopiedLaunch)
-        : files_.settleRecoveryFailure(fileId, ProblemCode::RecoveryCopiedLaunch,
-                                       !failure.isEmpty() ? failure
-                                                          : Problem{ProblemCode::RecoveryChangedAfterValidation});
+    // The copy must still be the file recovery validated, and no earlier
+    // outcome may be uncertain; otherwise the path stays failed and says why.
+    const auto refusal = !failure.isEmpty() ? failure : publisher_.adoptCopiedLaunch(fileId, identity, live);
+    const bool settled = files_.settleRecoveryFailure(fileId, ProblemCode::RecoveryCopiedLaunch, refusal);
     copiedLaunches_.erase(entry);
     if (settled) Q_EMIT changed();
 }

@@ -52,10 +52,41 @@ initial `MERGED` bytes into `<socket directory>/intake/<session>/<invocation>/`,
 each directory with mode 0700, then sends one attach frame. The session checks
 those bytes against the manifest off the GUI thread before accepting the
 waiter. The launcher removes its copies when it exits, and a session that
-starts listening removes those of launchers that were killed. Each path has at
-most one live waiter. A repeated attach for that path is rejected and does not
-release the first waiter. Another path can wait, but it is not assigned until
-the previous path's offer has been acknowledged.
+starts listening removes those of launchers that were killed. That prune keeps
+an intake whose owner record is not completely written yet, until the intake is
+a minute old, so a window that starts listening while a launcher writes its
+intake does not delete it. Each path has at most one live waiter. A repeated
+attach for that path is rejected and does not release the first waiter. Another
+path can wait, but it is not assigned until the previous path's offer has been
+acknowledged.
+
+The window holds back a file of more than 4000 lines until the user loads it.
+An attach for such a file is accepted as an unassigned waiter, and the window
+shows "Git is waiting on <path>. Load the large file to resolve it, or leave it
+unresolved." After the user loads the large file, the session assigns the
+waiter. If the load leaves the file unsupported, the waiter stays unassigned.
+While the waiter is unassigned, Mark resolved stays blocked for the path, and
+the file's notice offers Leave unresolved, which releases only that launcher.
+
+The session refuses an attach for a path it cannot wait on, and the rejection
+names the reason and the next step:
+
+- Not a conflict in the session: "<path> is not a conflict in the open Branch
+  Truce session. Reload the session or open the repository that git mergetool
+  runs in."
+- Support `OutsideApp`: "Branch Truce cannot edit <path>. Resolve it with
+  another tool."
+- Support `Unreadable`: "Branch Truce could not read <path>. Select it in this
+  window to see why."
+- A waiter already exists for the path: "Git is already waiting on <path>.
+  Finish or leave that git mergetool run first."
+
+The launcher prints every refusal in the terminal and exits 1. The window shows
+the same text as a notice. The session's other refusals, such as a
+configuration that differs or inputs that fail the manifest check, keep their
+texts and are shown the same way, and so is an attach whose check runs out of
+time. A frame that the transport refuses before the session reads it, such as
+an invalid attach message, appears only in the terminal.
 
 Frames are a 4-byte big-endian length plus one compact JSON object, at most
 65536 bytes. `src/mergetool/MergetoolMessages.h` defines every message and

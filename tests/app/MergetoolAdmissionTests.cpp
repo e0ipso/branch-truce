@@ -1,5 +1,6 @@
 // Intake admission on the real socket and owned worker, without Git processes or a window.
 #include "TestHarness.h"
+#include "core/SessionFixtures.h"
 #include "fixtures/Await.h"
 #include "fixtures/ChoiceFile.h"
 #include "mergetool/MergetoolSession.h"
@@ -9,6 +10,7 @@
 #include <QCryptographicHash>
 #include <QLocalSocket>
 #include <QScopeGuard>
+#include <QStringList>
 #include <QTemporaryDir>
 #include <QUuid>
 #include <atomic>
@@ -39,9 +41,20 @@ struct Reader {
     std::binary_semaphore gate{0};
 };
 
+// A captured conflict at path, keyed the way a load keys it.
+FileSession conflictAt(const QByteArray &path, const FileSession &choice)
+{
+    auto snapshots = *choice.snapshots();
+    snapshots.path = path.toStdString();
+    return FileSession(path.toHex().toStdString(), path.toStdString(), choice.current().draft,
+                       {.snapshots = std::move(snapshots), .initializeChoices = true});
+}
+
 struct Session {
-    explicit Session(int deadline = 5000)
-        : session(std::make_unique<MergetoolSession>(
+    // extra joins choices.txt in every session this owner loads.
+    explicit Session(int deadline = 5000, std::vector<FileSession> extra = {})
+        : others(std::move(extra)),
+          session(std::make_unique<MergetoolSession>(
               publisher, store, coordinator, [this] { return repository; },
               MergetoolSession::Config{
                   .socketDirectory = directory.path(),
@@ -59,6 +72,8 @@ struct Session {
         repository.stage2.commitId = QByteArray(40, 'a');
         repository.stage3.commitId = QByteArray(40, 'b');
         replace();
+        QObject::connect(session.get(), &MergetoolSession::notice, session.get(),
+                         [this](const QString &message) { notices.append(message); });
         QString error;
         CHECK(session->listen(repository, &error) == MergetoolSession::Listen::Listening);
     }
@@ -68,13 +83,14 @@ struct Session {
         std::vector<FileSession> files;
         files.emplace_back(QByteArray("choices.txt").toHex().toStdString(), choice.path(), choice.current().draft,
                            FileLaunch{.snapshots = *choice.snapshots(), .initializeChoices = true});
+        files.insert(files.end(), others.begin(), others.end());
         CHECK(coordinator.replaceSession(directory.path(), "merge", std::move(files)));
         test_support::awaitRecovery(store);
     }
-    AttachMessage attach()
+    AttachMessage attach(const QByteArray &path = "choices.txt")
     {
         MergetoolSources sources;
-        sources.path = "choices.txt";
+        sources.path = path;
         sources.merged = "merged\n";
         sources.local = "local\n";
         sources.localPresent = true;
@@ -90,6 +106,7 @@ struct Session {
         waitUntil([&] { return session->pendingIntakes() == 0; }, "owned intake work did not settle");
     }
 
+    std::vector<FileSession> others;
     QTemporaryDir directory{QStringLiteral("/tmp/bt-admit-XXXXXX")};
     git::RepositoryContext repository;
     std::shared_ptr<Reader> reader = std::make_shared<Reader>();
@@ -99,6 +116,8 @@ struct Session {
     SessionCoordinator coordinator{store, git, workers};
     ResolutionPublisher publisher{store, coordinator, git};
     std::unique_ptr<MergetoolSession> session;
+    // Every notice the session gave the window, oldest first.
+    QStringList notices;
 };
 
 struct Peer {
@@ -191,8 +210,10 @@ void deadlinesCoverRunningAndQueuedWork()
     waitUntil([&] { return owner.reader->entered.load(); }, "first read never entered");
     Peer queued(owner, owner.attach());
     waitUntil([&] { return owner.session->pendingIntakes() == 2; }, "second intake never queued");
-    for (auto *peer : {&running, &queued})
-        peer->refused(QStringLiteral("The mergetool inputs could not be checked in time. Try again."));
+    const auto late = QStringLiteral("The mergetool inputs could not be checked in time. Try again.");
+    for (auto *peer : {&running, &queued}) peer->refused(late);
+    // The window shows each refusal the launchers print.
+    CHECK_EQ(owner.notices, QStringList({late, late}));
     CHECK_EQ(owner.session->pendingIntakes(), 2);
     CHECK(!owner.session->parentSessionActive());
     Peer excess(owner, owner.attach());
@@ -253,6 +274,138 @@ void destroyingTheOwnerDoesNotWaitForTheRead()
     owner.reader.reset();
     waitUntil([&] { return work.expired(); }, "value-only worker did not release its read state");
 }
+
+// The launcher prints the reason and the window shows it as a notice.
+void refusedInBoth(Session &owner, const QByteArray &path, const QString &reason)
+{
+    Peer peer(owner, owner.attach(path));
+    peer.refused(reason);
+    owner.drained();
+    CHECK(!owner.notices.isEmpty());
+    CHECK_EQ(owner.notices.last(), reason);
+}
+
+// Files the window holds back from editing, beside choices.txt.
+std::vector<FileSession> heldBackFiles()
+{
+    std::vector<FileSession> files;
+    files.emplace_back(QByteArray("image.png").toHex().toStdString(), "image.png", Draft{},
+                       FileLaunch{.support = Support::OutsideApp, .supportDetail = "binary"});
+    files.emplace_back(QByteArray("broken.txt").toHex().toStdString(), "broken.txt", Draft{"crlf\r\n", {}, 0});
+    return files;
+}
+
+void aPathOutsideTheSessionIsRefusedByName()
+{
+    Session owner;
+    refusedInBoth(owner, "missing.txt",
+                  QStringLiteral("missing.txt is not a conflict in the open Branch Truce session. Reload the session "
+                                 "or open the repository that git mergetool runs in."));
+    CHECK(!owner.session->parentSessionActive() && !owner.session->hasWaiter("missing.txt"));
+}
+
+void aFileOutsideTheAppIsRefusedByName()
+{
+    Session owner(5000, heldBackFiles());
+    CHECK(owner.store.file(QByteArray("image.png").toHex().toStdString())->support() == Support::OutsideApp);
+    refusedInBoth(owner, "image.png",
+                  QStringLiteral("Branch Truce cannot edit image.png. Resolve it with another tool."));
+    CHECK(!owner.session->parentSessionActive() && !owner.session->hasWaiter("image.png"));
+}
+
+void anUnreadableFileIsRefusedByName()
+{
+    Session owner(5000, heldBackFiles());
+    CHECK(owner.store.file(QByteArray("broken.txt").toHex().toStdString())->support() == Support::Unreadable);
+    refusedInBoth(owner, "broken.txt",
+                  QStringLiteral("Branch Truce could not read broken.txt. Select it in this window to see why."));
+    CHECK(!owner.session->parentSessionActive() && !owner.session->hasWaiter("broken.txt"));
+}
+
+void aSecondLauncherForAWaitingPathIsRefusedByName()
+{
+    Session owner;
+    Peer first(owner, owner.attach());
+    CHECK(std::holds_alternative<AttachedMessage>(first.next()));
+    owner.drained();
+    refusedInBoth(owner, "choices.txt",
+                  QStringLiteral("Git is already waiting on choices.txt. Finish or leave that git mergetool run "
+                                 "first."));
+    CHECK(owner.session->waitingOn("choices.txt")); // The first launcher keeps its wait.
+}
+
+// A conflict over the large-file line limit at path. Distinct lines keep the comparison within its
+// budgets, so a load makes it editable.
+FileSession largeConflictAt(const QByteArray &path)
+{
+    std::string left;
+    for (std::size_t line = 1; line <= kLargeFileLines + 1; ++line) left += "line " + std::to_string(line) + '\n';
+    const auto right = "first\n" + left.substr(left.find('\n') + 1);
+    return conflictAt(path, test_support::choiceFile(left, right));
+}
+
+void aLargeFileAttachWaitsUntilTheFileLoads()
+{
+    const QByteArray path = "large.txt";
+    const auto id = path.toHex().toStdString();
+    Session owner(5000, {largeConflictAt(path)});
+    CHECK(owner.store.file(id)->support() == Support::LargeFile);
+    Peer peer(owner, owner.attach(path));
+    CHECK(std::holds_alternative<AttachedMessage>(peer.next()));
+    owner.drained();
+    // Git waits, but the held file cannot take the parent staging yet.
+    CHECK(owner.session->parentSessionActive() && owner.session->hasWaiter(path));
+    CHECK(owner.session->blocks(path) && !owner.session->waitingOn(path) && owner.session->waitingPath().isEmpty());
+    CHECK(!owner.notices.isEmpty());
+    CHECK_EQ(owner.notices.last(),
+             QStringLiteral("Git is waiting on large.txt. Load the large file to resolve it, or leave it unresolved."));
+    CHECK(test_support::await(owner.store.loadLargeFile(id)) == Transition::Applied);
+    CHECK(owner.store.file(id)->support() == Support::Supported);
+    CHECK_EQ(owner.session->waitingPath(), path);
+    CHECK(owner.session->waitingOn(path) && !owner.session->blocks(path));
+}
+
+void leavingAnUnassignedLargeFileTellsOnlyItsLauncher()
+{
+    const QByteArray path = "large.txt";
+    Session owner(5000, {largeConflictAt(path)});
+    Peer assigned(owner, owner.attach());
+    CHECK(std::holds_alternative<AttachedMessage>(assigned.next()));
+    owner.drained();
+    Peer held(owner, owner.attach(path));
+    CHECK(std::holds_alternative<AttachedMessage>(held.next()));
+    owner.drained();
+    CHECK(owner.session->waitingOn("choices.txt") && owner.session->hasWaiter(path) && !owner.session->waitingOn(path));
+    CHECK(owner.session->leave(path));
+    CHECK(std::holds_alternative<LeaveMessage>(held.next()));
+    held.closed();
+    CHECK(!owner.session->hasWaiter(path));
+    // The other launcher keeps its wait and gets nothing.
+    CHECK(owner.session->waitingOn("choices.txt") && owner.session->parentSessionActive());
+    CHECK(assigned.received.isEmpty() && assigned.socket.state() == QLocalSocket::ConnectedState);
+}
+
+void aLargeFileThatLoadsHeldBackKeepsGitWaiting()
+{
+    // Its comparison metadata is over budget, so the load holds it outside the app.
+    const QByteArray path = "dense.txt";
+    const auto id = path.toHex().toStdString();
+    Session owner(5000,
+                  {conflictAt(path, test_support::choiceFile(std::string(8200, '\n'), test_support::lines(8200)))});
+    CHECK(owner.store.file(id)->support() == Support::LargeFile);
+    Peer peer(owner, owner.attach(path));
+    CHECK(std::holds_alternative<AttachedMessage>(peer.next()));
+    owner.drained();
+    const auto notices = owner.notices.size();
+    int changes = 0;
+    QObject observer;
+    QObject::connect(owner.session.get(), &MergetoolSession::changed, &observer, [&] { ++changes; });
+    CHECK(test_support::await(owner.store.loadLargeFile(id)) == Transition::Applied);
+    CHECK(owner.store.file(id)->support() == Support::OutsideApp);
+    CHECK(owner.session->hasWaiter(path) && owner.session->blocks(path) && owner.session->waitingPath().isEmpty());
+    CHECK_EQ(owner.notices.size(), notices);
+    CHECK_EQ(changes, 0);
+}
 }
 
 int main(int argc, char **argv)
@@ -266,5 +419,13 @@ int main(int argc, char **argv)
     suite.run("read exceptions refuse and release admission", readExceptionsRefuseAndReleaseAdmission);
     suite.run("session replacement fences intake completion", replacingTheSessionFencesTheResult);
     suite.run("owner destruction drains without waiting for a read", destroyingTheOwnerDoesNotWaitForTheRead);
+    suite.run("a path outside the session is refused by name", aPathOutsideTheSessionIsRefusedByName);
+    suite.run("a file outside the app is refused by name", aFileOutsideTheAppIsRefusedByName);
+    suite.run("an unreadable file is refused by name", anUnreadableFileIsRefusedByName);
+    suite.run("a second launcher for a waiting path is refused by name", aSecondLauncherForAWaitingPathIsRefusedByName);
+    suite.run("a large file attach waits until the file loads", aLargeFileAttachWaitsUntilTheFileLoads);
+    suite.run("leaving an unassigned large file tells only its launcher",
+              leavingAnUnassignedLargeFileTellsOnlyItsLauncher);
+    suite.run("a large file that loads held back keeps Git waiting", aLargeFileThatLoadsHeldBackKeepsGitWaiting);
     return suite.report();
 }

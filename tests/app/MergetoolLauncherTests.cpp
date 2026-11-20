@@ -2,6 +2,7 @@
 #include "app/AppPaths.h"
 #include "app/Application.h"
 #include "app/Translations.h"
+#include "core/ResourceLimits.h"
 #include "fixtures/AppSession.h"
 #include "fixtures/Await.h"
 #include "fixtures/ConflictedRepository.h"
@@ -20,6 +21,7 @@
 #include "mergetool/MergetoolSocket.h"
 #include "problems/ProblemText.h"
 #include "recovery/RecoveryRestore.h"
+#include "storage/FileSystem.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -37,6 +39,8 @@
 #include <QTextStream>
 #include <QUuid>
 
+#include <atomic>
+#include <cerrno>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -212,6 +216,23 @@ void storeBeforeCopiedLaunch(const Repository &repo)
     }
     copyInPlace(repo.path("tracked.txt"));
 }
+
+// Loses the reply of the first publication exchange, as a remote file system can: the exchange
+// fails with EIO before it moves anything, so the writer cannot tell whether it happened.
+class LostExchange final : public storage::FileSystem {
+public:
+    int exchange(int fromDirectory, const char *from, int toDirectory, const char *to) const override
+    {
+        if (armed_.exchange(false)) {
+            errno = EIO;
+            return -1;
+        }
+        return FileSystem::exchange(fromDirectory, from, toDirectory, to);
+    }
+
+private:
+    mutable std::atomic_bool armed_ = true;
+};
 
 // Starts a launcher on tracked.txt after the window loaded and waits for its attach.
 void attachLauncher(QProcess &launcher, const Repository &repo, const QTemporaryDir &sides, Application &controller)
@@ -802,6 +823,62 @@ void addRecoveredLaunchCases(test_support::Suite &suite)
         CHECK(readFile(target) == QByteArray::fromStdString(expected));
         CHECK(repo.unmerged("tracked.txt") && repo.unmerged("excluded.txt"));
     });
+    // A window stopped before the user loaded a large file leaves its launch
+    // captures. Git's copy then gives the still-held file a copied launch
+    // error, which the attach must clear like that of an editable file.
+    suite.run(
+        "a copied launch path of an unloaded large file clears on attach and Mark resolved releases the launcher", [] {
+            QByteArray large;
+            for (std::size_t line = 1; line <= kLargeFileLines + 1; ++line)
+                large += "line " + QByteArray::number(static_cast<qulonglong>(line)) + '\n';
+            Repository repo(large, "excluded stays conflicted\n");
+            ScopedEnvironment environment(repo.environment);
+            const auto fileId = QString::fromLatin1(QByteArray("tracked.txt").toHex());
+            {
+                Application before{test_support::windowConfig()};
+                openController(before, repo);
+                CHECK(opened(before, "tracked.txt").support() == Support::LargeFile);
+            }
+            const auto target = repo.path("tracked.txt");
+            copyInPlace(target);
+            Application controller{test_support::windowConfig()};
+            openController(controller, repo);
+            CHECK(opened(controller, "tracked.txt").support() == Support::LargeFile);
+            CHECK(recoveryError(controller, "tracked.txt") == problem_text::text(ProblemCode::RecoveryCopiedLaunch));
+            QTemporaryDir sides;
+            QProcess launcher;
+            launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
+            launcher.setWorkingDirectory(repo.root);
+            launcher.start(launcherBinary, {"--mergetool", "--no-window"});
+            CHECK(launcher.waitForStarted(5000));
+            // Git waits, but the held file takes the parent staging only after its load.
+            pump([&] { return controller.mergetoolSession()->hasWaiter("tracked.txt"); },
+                 controller.feedback()->message());
+            pump(
+                [&] {
+                    return recoveryError(controller, "tracked.txt")
+                        != problem_text::text(ProblemCode::RecoveryCopiedLaunch);
+                },
+                QStringLiteral("the attach did not settle the copied launch"));
+            if (controller.store()->hasRecoveryFailure(fileId.toStdString()))
+                throw std::runtime_error("the large file kept a recovery error: "
+                                         + recoveryError(controller, "tracked.txt").toStdString());
+            CHECK(controller.mergetoolSession()->waitingPath().isEmpty());
+            select(controller, "tracked.txt");
+            CHECK(controller.commands()->loadLargeFile(fileId));
+            pump([&] { return controller.mergetoolSession()->waitingPath() == "tracked.txt"; },
+                 controller.feedback()->message());
+            CHECK(opened(controller, "tracked.txt").support() == Support::Supported);
+            CHECK(commandResult(controller,
+                                controller.commands()->editResult(fileId, revisionOf(opened(controller, "tracked.txt")),
+                                                                  0, 0, QStringLiteral("reviewed after the load\n"))));
+            const auto expected = opened(controller, "tracked.txt").current().draft.text;
+            CHECK(expected == "reviewed after the load\n" + large.toStdString());
+            CHECK(controller.commands()->markResolved(fileId, revisionOf(opened(controller, "tracked.txt")), true));
+            waitFinished(launcher, 0, controller);
+            CHECK(readFile(target) == QByteArray::fromStdString(expected));
+            CHECK(repo.unmerged("tracked.txt") && repo.unmerged("excluded.txt"));
+        });
     // the load validated Git's copy of tracked.txt. Before the
     // launcher attached, the file changed again: a new same-byte copy, which
     // still matches the launcher's MERGED digest, or other bytes, which do not.
@@ -841,6 +918,51 @@ void addRecoveredLaunchCases(test_support::Suite &suite)
             }
             checkCopiedLaunchRefused(controller, launcher, target, expected, expected);
         }
+    });
+    // A window lost the reply of its write, so the outcome is uncertain and the exchange slot may
+    // hold the result. Then Git copied tracked.txt. The copy must not become the launch
+    // destination before that outcome is inspected, so the attach keeps the recovery error.
+    suite.run("a copied launch path whose earlier write is uncertain keeps its recovery error on attach", [] {
+        Repository repo("launch bytes\n", "excluded stays conflicted\n");
+        ScopedEnvironment environment(repo.environment);
+        const auto fileId = QString::fromLatin1(QByteArray("tracked.txt").toHex());
+        const auto target = repo.path("tracked.txt");
+        {
+            Application before{[] {
+                auto config = test_support::windowConfig();
+                config.files = std::make_shared<LostExchange>();
+                return config;
+            }()};
+            openController(before, repo);
+            select(before, "tracked.txt");
+            CHECK(awaitAligned(*before.store(),
+                               before.store()->editResult(fileId.toStdString(),
+                                                          opened(before, "tracked.txt").current().id,
+                                                          {{0, 0}, "recovered edit\n"}))
+                  == Transition::Applied);
+            CHECK(before.commands()->markResolved(fileId, revisionOf(opened(before, "tracked.txt")), true));
+            pump([&] { return !before.commands()->resolutionBusy(); }, before.feedback()->message());
+            const auto write = opened(before, "tracked.txt").publication().writeOutcome();
+            CHECK(write && write->outcome == Outcome::Uncertain);
+        }
+        CHECK(readFile(target) == "launch bytes\n");
+        copyInPlace(target);
+        Application controller{test_support::windowConfig()};
+        openController(controller, repo);
+        CHECK(recoveryError(controller, "tracked.txt") == problem_text::text(ProblemCode::RecoveryCopiedLaunch));
+        QTemporaryDir sides;
+        QProcess launcher;
+        attachLauncher(launcher, repo, sides, controller);
+        pump(
+            [&] {
+                return recoveryError(controller, "tracked.txt")
+                    != problem_text::text(ProblemCode::RecoveryCopiedLaunch);
+            },
+            QStringLiteral("the attach did not settle the copied launch"));
+        // It says why, without blaming a change after recovery validation.
+        CHECK_EQ(recoveryError(controller, "tracked.txt"),
+                 problem_text::text(ProblemCode::RecoveryCopiedLaunchUncertain));
+        checkCopiedLaunchRefused(controller, launcher, target, "launch bytes\n", "launch bytes\n");
     });
     // an outside write lands while Git inspects the index for the
     // late attach's revalidation, after its first file check passed. The

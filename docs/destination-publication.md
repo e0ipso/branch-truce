@@ -35,6 +35,24 @@ Before exchange, failures report `Unchanged`. After exchange, an unverified or u
 
 `Published` means that the new destination was observed and synced, not staged. A cleanup failure can accompany `Published`; it still blocks an overall success and staging. Only a failure-free result returns a new baseline. The writer accepts the serialized result by const reference, so cancellation, stale-state rejection and publication failure leave the caller's draft available. Retry an unchanged transient failure with the same baseline while all captured bytes and metadata still match. File permission or content changes can invalidate that baseline even if their prior values are restored, because ctime changes. Such mismatches and uncertain outcomes need inspection and an explicitly reconciled baseline first.
 
+### Re-base on the live file
+
+Git moves `MERGED` aside and copies it back before the tool runs, and moves its backup back when the tool exits non-zero. The bytes stay the same, but the inode or the ctime changes, so the baseline no longer matches. Before a write, `ResolutionPublisher` captures the repository file again off the GUI thread. It makes that capture the new baseline only when the live bytes equal the baseline bytes, or the launch bytes. Other bytes fail the attempt and leave the draft available.
+
+- An attempt with a parent (Git owns the path) re-bases this way before every write, including a write after the file was already written. A failed tool exit can move the backup back over a written file, so the launch bytes count there too.
+- An attempt without a parent re-bases only until the file is written. After that, the writer's checks alone apply.
+- It never re-bases while a recorded Uncertain outcome or a retained exchange slot waits for reconciliation. The baseline stays, and `DestinationWriter` checks the file against it. The writer's checks are the same as before.
+
+A refusal says "The repository file changed while Git was waiting. The draft was not published." with a parent, and "The repository file changed outside Branch Truce. The draft was not published." without one.
+
+### Reload and retry
+
+When a write fails because the repository file changed, the failure notice offers "Reload the repository file and retry". It appears when the write failed with `DestinationIdentityChanged` or `DestinationContentChanged`, when the re-base above refused the file, or when a written file no longer holds the written revision before staging.
+
+The action captures the repository file again off the GUI thread. It applies the same byte rule as the re-base, with the launch bytes allowed for a parent-owned path or a file not yet written. If the bytes match, the capture becomes the baseline and Mark resolved runs again for the same revision. If the bytes differ, the failure, the draft and the recovery records stay, and the window says "The repository file changed outside Branch Truce. The draft is still available."
+
+The action is not offered after an Uncertain outcome or while an exchange slot is retained. Branch Truce holds it in memory only, so it is not offered after a restart. The session handoff routes such a failure to the same action.
+
 The private directory protects intermediate files from other users. This is not a sandbox against the same user or root deliberately tampering with private entries. The writer refuses observed tampering and keeps uncertain state rather than claiming an atomic transaction with Git. Crash recovery of mutation intent and retained directories belongs to the caller's recovery protocol.
 
 ## Implementation evidence

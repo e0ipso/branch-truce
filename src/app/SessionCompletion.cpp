@@ -20,7 +20,9 @@ SessionCompletion::SessionCompletion(SessionStore &store, const ResolutionPublis
 
 Handoff SessionCompletion::handoff() const
 {
-    return SessionHandoff::build(store_, {publisher_.busy(), mergetool_.unreleasedLaunches(), ended()});
+    return SessionHandoff::build(store_,
+                                 {publisher_.busy(), mergetool_.unreleasedLaunches(), ended(),
+                                  [this](const std::string &id) { return publisher_.canReloadDestination(id); }});
 }
 
 bool SessionCompletion::finish()

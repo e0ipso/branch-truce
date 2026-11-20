@@ -17,6 +17,7 @@
 #include "problems/ProblemText.h"
 #include "recovery/RecoveryRestore.h"
 #include <QCoreApplication>
+#include <QDir>
 #include <QDirIterator>
 #include <QEventLoop>
 #include <QFile>
@@ -41,6 +42,7 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 using test_support::await;
 using test_support::commandResult;
@@ -53,13 +55,23 @@ std::atomic<int> readyWrite{-1};
 std::atomic<int> releaseRead{-1};
 }
 
+// Fails the next exchange with EIO before it moves anything, the way a remote file system that
+// lost the reply reports it. The writer cannot tell whether the exchange happened.
+namespace lost_exchange {
+std::atomic<bool> arm{false};
+}
+
 namespace {
-// The file system a session's recovery store and publisher use: SyncFaults' journal faults, and
-// an exchange that PublishStall can hold after it lands.
+// The file system a session's recovery store and publisher use: SyncFaults' journal faults, an
+// exchange that PublishStall can hold after it lands, and one whose reply is lost.
 class PublishFiles final : public test_support::SyncFaults {
 public:
     int exchange(int fromDirectory, const char *from, int toDirectory, const char *to) const override
     {
+        if (lost_exchange::arm.exchange(false)) {
+            errno = EIO;
+            return -1;
+        }
         const int result = test_support::SyncFaults::exchange(fromDirectory, from, toDirectory, to);
         if (result != 0 || !publish_stall::arm.exchange(false)) return result;
         const int ready = publish_stall::readyWrite.load();
@@ -179,6 +191,118 @@ struct Session {
     }
     QString revision() { return revisionOf(openedFile(controller)); }
 };
+
+// Makes text, without markers, the session's draft and returns its revision.
+QString reviewDraft(Session &session, const QByteArray &text)
+{
+    auto draft = openedFile(session.controller).current().draft;
+    draft.text = text.toStdString();
+    draft.unresolvedMarkers = 0;
+    CHECK(await(session.controller.store()->replaceDraft(session.id.toStdString(),
+                                                         openedFile(session.controller).current().id, draft))
+          == Transition::Applied);
+    return session.revision();
+}
+
+struct stat fileStatus(const QString &path)
+{
+    struct stat entry{};
+    CHECK(::stat(QFile::encodeName(path).constData(), &entry) == 0);
+    return entry;
+}
+
+// cp path path.copy && mv path.copy path: the same bytes under a new inode.
+void replaceByCopy(const QString &path)
+{
+    const auto copy = path + QStringLiteral(".copy");
+    CHECK(QFile::copy(path, copy));
+    CHECK(::rename(QFile::encodeName(copy).constData(), QFile::encodeName(path).constData()) == 0);
+}
+
+// git mergetool moves MERGED aside and copies it back, then moves the backup back over it when the
+// tool fails: the same inode, the same bytes and a new ctime.
+void moveBackLikeGit(const QString &path)
+{
+    const auto backup = path + QStringLiteral(".backup");
+    CHECK(QFile::rename(path, backup) && QFile::copy(backup, path));
+    CHECK(::rename(QFile::encodeName(backup).constData(), QFile::encodeName(path).constData()) == 0);
+}
+
+// Mark resolved without a parent after replace kept the file's bytes but changed its ctime, and
+// its inode when newInode is set.
+void publishesAfterReplacement(void (*replace)(const QString &), bool newInode)
+{
+    Session session;
+    const auto merged = session.repo.path("tracked.txt");
+    const QByteArray reviewed("reviewed in app\n");
+    const auto revision = reviewDraft(session, reviewed);
+    const auto before = fileStatus(merged);
+    replace(merged);
+    const auto after = fileStatus(merged);
+    CHECK((after.st_ino != before.st_ino) == newInode);
+    CHECK(after.st_ctim.tv_sec != before.st_ctim.tv_sec || after.st_ctim.tv_nsec != before.st_ctim.tv_nsec);
+    CHECK(readFile(merged) == session.repo.manual);
+    CHECK(!session.controller.publisher()->parentStagingOffer(session.id.toStdString()));
+    CHECK(session.controller.commands()->markResolved(session.id, revision, true));
+    waitFor(session.controller, [&] { return !session.controller.commands()->resolutionBusy(); });
+    CHECK_EQ(session.controller.feedback()->message(), QStringLiteral("Written and resolved."));
+    CHECK(openedFile(session.controller).facts().resolved);
+    CHECK(readFile(merged) == reviewed);
+    CHECK(session.repo.git({"show", ":tracked.txt"}) == reviewed);
+    const auto remaining = unmerged(session.repo);
+    CHECK(!remaining.contains("tracked.txt") && remaining.contains("excluded.txt"));
+}
+
+// An edit outside the app: one more byte at the end of the file.
+void appendOutside(const QString &path)
+{
+    QFile file(path);
+    CHECK(file.open(QIODevice::Append) && file.write("!") == 1);
+}
+
+// Saves bytes the way an editor that writes a new file and renames it over path does: a new inode.
+void saveByRename(const QString &path, const QByteArray &bytes)
+{
+    const auto saved = path + QStringLiteral(".saved");
+    writeFile(saved, bytes);
+    CHECK(::rename(QFile::encodeName(saved).constData(), QFile::encodeName(path).constData()) == 0);
+}
+
+// Waits for the reload and the Mark resolved it retries, and checks that the reviewed text is
+// written, staged and resolved.
+void expectReloadPublishes(Session &session, const QString &revision, const QByteArray &reviewed)
+{
+    auto &controller = session.controller;
+    CHECK(controller.commands()->destinationReloadable());
+    CHECK(controller.commands()->reloadDestination(session.id, revision));
+    CHECK(controller.commands()->resolutionBusy());
+    waitFor(controller, [&] { return !controller.commands()->resolutionBusy(); });
+    CHECK_EQ(controller.feedback()->message(), QStringLiteral("Written and resolved."));
+    CHECK(openedFile(controller).facts().resolved && revisionOf(openedFile(controller)) == revision);
+    CHECK(readFile(session.repo.path("tracked.txt")) == reviewed);
+    CHECK(session.repo.git({"show", ":tracked.txt"}) == reviewed);
+    CHECK(!unmerged(session.repo).contains("tracked.txt"));
+    CHECK(!controller.commands()->destinationReloadable());
+}
+
+// Mark resolved writes revision, and a post-index-change hook that fails keeps the conflict in the
+// index. The hook is gone afterwards, so a later git add would reach stage 0.
+void writeWithStagingRefused(Session &session, const QString &revision)
+{
+    auto &controller = session.controller;
+    const auto hook = session.repo.path(".git/hooks/post-index-change");
+    writeFile(hook, "#!/bin/sh\nexit 1\n");
+    CHECK(QFile::setPermissions(hook, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    CHECK(controller.commands()->markResolved(session.id, revision, true));
+    waitFor(controller, [&] {
+        const auto &file = openedFile(controller);
+        return !controller.commands()->resolutionBusy() && file.publication().writeOutcome()
+            && file.publication().writeOutcome()->outcome == Outcome::Succeeded && file.publication().stageOutcome();
+    });
+    const auto &staging = openedFile(controller).publication().stageOutcome();
+    CHECK(staging && staging->outcome == Outcome::Failed);
+    CHECK(QFile::remove(hook));
+}
 
 class PublishStall {
 public:
@@ -388,6 +512,7 @@ int main(int argc, char **argv)
         CHECK(unmerged(session.repo).contains("tracked.txt"));
     });
     suite.run("a rejected repository write keeps the draft and the conflict", [] {
+        if (::geteuid() == 0) test_support::skip("root writes to read-only files anyway");
         Session session;
         CHECK(QFile::setPermissions(session.repo.path("tracked.txt"), QFileDevice::ReadOwner));
         const auto before = session.repo.snapshot();
@@ -397,8 +522,8 @@ int main(int argc, char **argv)
                 && openedFile(session.controller).publication().writeOutcome()
                 && openedFile(session.controller).publication().writeOutcome()->outcome != Outcome::Succeeded;
         });
-        // The publisher sees that the destination's permissions changed since the load and refuses
-        // before it writes, so even root, which could write the file, gets a definite failure.
+        // The bytes are unchanged, so the publisher re-bases onto the read-only file. The writer's
+        // access check then refuses it before it creates anything.
         CHECK(openedFile(session.controller).publication().writeOutcome()->outcome == Outcome::Failed);
         CHECK(openedFile(session.controller).publication().reviewed()
               && openedFile(session.controller).publication().checkpoint());
@@ -408,6 +533,11 @@ int main(int argc, char **argv)
         expectUnchanged(session.repo, before, true);
         CHECK(unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
+        // The repository file did not change, so a reload has nothing to offer. Retry stays the route.
+        CHECK(!session.controller.commands()->destinationReloadable());
+        const auto route = handoffEntry(session.controller.completion()->handoffData(), session.id);
+        CHECK(route.value("action").value<FileStates::NextAction>() == FileStates::NextAction::MarkResolved);
+        CHECK_EQ(route.value("actionLabel").toString(), QStringLiteral("Retry Mark resolved"));
     });
     suite.run("staging that Git refuses leaves the written file unresolved", [] {
         Repository repo;
@@ -707,6 +837,176 @@ int main(int argc, char **argv)
         CHECK(index.contains(" 1\ttracked.txt") && !index.contains(" 0\ttracked.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
     });
+    suite.run("Mark resolved without a parent publishes onto a byte-identical copy of the file",
+              [] { publishesAfterReplacement(replaceByCopy, true); });
+    suite.run("Mark resolved without a parent publishes onto the file Git moved back with a new ctime",
+              [] { publishesAfterReplacement(moveBackLikeGit, false); });
+    suite.run("Mark resolved without a parent refuses a file whose bytes changed and keeps the draft", [] {
+        Session session;
+        const auto merged = session.repo.path("tracked.txt");
+        const QByteArray reviewed("reviewed in app\n");
+        const auto revision = reviewDraft(session, reviewed);
+        {
+            QFile file(merged);
+            CHECK(file.open(QIODevice::Append) && file.write("!") == 1);
+        }
+        const auto external = session.repo.manual + "!";
+        CHECK(readFile(merged) == external);
+        CHECK(session.controller.commands()->markResolved(session.id, revision, true));
+        waitFor(session.controller, [&] { return !session.controller.commands()->resolutionBusy(); });
+        CHECK_EQ(session.controller.feedback()->message(),
+                 QStringLiteral("The repository file changed outside Branch Truce. The draft was not published."));
+        const auto &file = openedFile(session.controller);
+        CHECK(file.publication().writeOutcome() && file.publication().writeOutcome()->outcome == Outcome::Failed);
+        CHECK(file.facts().status == FileStatus::WriteFailed && !file.publication().written());
+        CHECK(revisionOf(file) == revision && file.current().draft.text == reviewed.toStdString());
+        CHECK(readFile(merged) == external);
+        const auto index = session.repo.git({"ls-files", "-s", "--", "tracked.txt"});
+        CHECK(index.contains(" 1\ttracked.txt") && !index.contains(" 0\ttracked.txt"));
+    });
+    suite.run(
+        "an uncertain publication and its retained exchange slot keep the baseline for a byte-identical copy", [] {
+            Session session;
+            const auto merged = session.repo.path("tracked.txt");
+            const auto uncertain = reviewDraft(session, "reviewed in app\n");
+            lost_exchange::arm.store(true);
+            CHECK(session.controller.commands()->markResolved(session.id, uncertain, true));
+            waitFor(session.controller, [&] { return !session.controller.commands()->resolutionBusy(); });
+            CHECK(!lost_exchange::arm.load());
+            const auto &recorded = openedFile(session.controller).publication();
+            CHECK(recorded.writeOutcome() && recorded.writeOutcome()->outcome == Outcome::Uncertain);
+            CHECK(openedFile(session.controller).facts().status == FileStatus::OutcomeUncertain);
+            // The writer kept its exchange slot for inspection. Nothing moved.
+            const auto retained = QDir(session.repo.root)
+                                      .entryList({QStringLiteral(".branch-truce-publish-*")},
+                                                 QDir::Dirs | QDir::Hidden | QDir::NoDotAndDotDot);
+            CHECK_EQ(retained.size(), 1);
+            CHECK(readFile(merged) == session.repo.manual);
+            CHECK(!session.controller.commands()->reloadDestination(session.id, uncertain));
+            CHECK_EQ(session.controller.feedback()->message(),
+                     QStringLiteral("Outcome uncertain. Inspect the repository file and index before retrying."));
+            const auto next = reviewDraft(session, "reviewed again\n");
+            replaceByCopy(merged);
+            const auto copy = fileStatus(merged).st_ino;
+            const auto refused = [&](const char *step) {
+                SCOPE(step);
+                CHECK(session.controller.commands()->markResolved(session.id, next, true));
+                waitFor(session.controller, [&] { return !session.controller.commands()->resolutionBusy(); });
+                const auto &file = openedFile(session.controller);
+                CHECK(file.publication().writeOutcome() && file.publication().writeOutcome()->outcome == Outcome::Failed
+                      && file.publication().writeOutcome()->revision == file.current().id);
+                CHECK(!file.publication().written() && !file.facts().resolved);
+                CHECK(readFile(merged) == session.repo.manual && fileStatus(merged).st_ino == copy);
+                CHECK(unmerged(session.repo).contains("tracked.txt"));
+            };
+            refused("Uncertain outcome recorded");
+            // That refusal recorded a failed write over the Uncertain one. The retained slot still
+            // keeps the next attempt from re-basing.
+            refused("retained slot only");
+            // The writer refused the copy's new inode, but the slot waits for inspection, so the
+            // file is not reloaded.
+            CHECK(!session.controller.commands()->destinationReloadable());
+            CHECK(!session.controller.commands()->reloadDestination(session.id, next));
+            CHECK_EQ(session.controller.feedback()->message(),
+                     QStringLiteral("Outcome uncertain. Inspect the repository file and index before retrying."));
+            CHECK(!session.controller.commands()->resolutionBusy());
+        });
+    suite.run("reload and retry publishes once the repository file holds the captured bytes again", [] {
+        Session session;
+        auto &controller = session.controller;
+        const auto merged = session.repo.path("tracked.txt");
+        const QByteArray reviewed("reviewed in app\n");
+        const auto revision = reviewDraft(session, reviewed);
+        appendOutside(merged);
+        CHECK(controller.commands()->markResolved(session.id, revision, true));
+        waitFor(controller, [&] { return !controller.commands()->resolutionBusy(); });
+        CHECK_EQ(controller.feedback()->message(),
+                 QStringLiteral("The repository file changed outside Branch Truce. The draft was not published."));
+        CHECK(openedFile(controller).facts().status == FileStatus::WriteFailed);
+        // The notice and the handoff offer the reload.
+        CHECK(controller.commands()->destinationReloadable());
+        const auto route = handoffEntry(controller.completion()->handoffData(), session.id);
+        CHECK(route.value("action").value<FileStates::NextAction>() == FileStates::NextAction::ReloadDestination);
+        CHECK_EQ(route.value("actionLabel").toString(), QStringLiteral("Reload the repository file and retry"));
+        // The user takes the edit back with an editor that saves to a new inode.
+        const auto edited = fileStatus(merged).st_ino;
+        saveByRename(merged, session.repo.manual);
+        CHECK(fileStatus(merged).st_ino != edited);
+        expectReloadPublishes(session, revision, reviewed);
+    });
+    suite.run("reload and retry recovers a written file that a byte-identical copy replaced", [] {
+        Session session;
+        auto &controller = session.controller;
+        const auto merged = session.repo.path("tracked.txt");
+        const QByteArray written("written first\n");
+        writeWithStagingRefused(session, reviewDraft(session, written));
+        CHECK(readFile(merged) == written && unmerged(session.repo).contains("tracked.txt"));
+        const QByteArray reviewed("reviewed again\n");
+        const auto next = reviewDraft(session, reviewed);
+        replaceByCopy(merged);
+        // A written file keeps its written baseline, so the writer refuses the copy's new inode on
+        // every retry.
+        const auto refused = [&](const char *step) {
+            SCOPE(step);
+            CHECK(controller.commands()->markResolved(session.id, next, true));
+            waitFor(controller, [&] { return !controller.commands()->resolutionBusy(); });
+            CHECK_EQ(controller.feedback()->message(),
+                     problem_text::text(Problem{ProblemCode::DestinationIdentityChanged}));
+            const auto &file = openedFile(controller);
+            CHECK(file.facts().status == FileStatus::WriteFailed && revisionOf(file) == next);
+            CHECK(readFile(merged) == written && unmerged(session.repo).contains("tracked.txt"));
+        };
+        refused("Mark resolved");
+        refused("retry");
+        // Once written, the launch bytes are an edit outside the app like any other.
+        saveByRename(merged, session.repo.manual);
+        CHECK(controller.commands()->reloadDestination(session.id, next));
+        waitFor(controller, [&] { return !controller.commands()->resolutionBusy(); });
+        CHECK_EQ(controller.feedback()->message(),
+                 QStringLiteral("The repository file changed outside Branch Truce. The draft is still available."));
+        CHECK(openedFile(controller).facts().status == FileStatus::WriteFailed);
+        CHECK(readFile(merged) == session.repo.manual && unmerged(session.repo).contains("tracked.txt"));
+        // Another inode with the written bytes is the baseline again.
+        saveByRename(merged, written);
+        expectReloadPublishes(session, next, reviewed);
+    });
+    suite.run(
+        "reload keeps a failed write, its message, the draft and the recovery records when the bytes changed", [] {
+            Session session;
+            auto &controller = session.controller;
+            const auto merged = session.repo.path("tracked.txt");
+            const QByteArray reviewed("reviewed in app\n");
+            const auto revision = reviewDraft(session, reviewed);
+            appendOutside(merged);
+            CHECK(controller.commands()->markResolved(session.id, revision, true));
+            waitFor(controller, [&] { return !controller.commands()->resolutionBusy(); });
+            CHECK(controller.commands()->destinationReloadable());
+            const auto failed = *openedFile(controller).publication().writeOutcome();
+            const storage::RecoveryStore recovery(controller.store()->recoveryDirectory());
+            const auto records = recovery.read().transactions;
+            // A copy of the edited file: a new inode, and still not the captured bytes.
+            replaceByCopy(merged);
+            const auto external = readFile(merged);
+            CHECK(external == session.repo.manual + "!");
+            CHECK(controller.commands()->reloadDestination(session.id, revision));
+            // The capture runs on a worker; until it finishes, nothing else starts.
+            CHECK(controller.commands()->resolutionBusy());
+            CHECK(!controller.commands()->reloadDestination(session.id, revision));
+            CHECK(!controller.commands()->markResolved(session.id, revision, true));
+            waitFor(controller, [&] { return !controller.commands()->resolutionBusy(); });
+            CHECK_EQ(controller.feedback()->message(),
+                     QStringLiteral("The repository file changed outside Branch Truce. The draft is still available."));
+            const auto &file = openedFile(controller);
+            const auto &kept = file.publication().writeOutcome();
+            CHECK(kept && kept->revision == failed.revision && kept->outcome == Outcome::Failed
+                  && kept->detail == failed.detail);
+            CHECK(file.facts().status == FileStatus::WriteFailed && !file.publication().written());
+            CHECK(revisionOf(file) == revision && file.current().draft.text == reviewed.toStdString());
+            CHECK(recovery.read().transactions == records);
+            CHECK(readFile(merged) == external && unmerged(session.repo).contains("tracked.txt"));
+            // The failure stays, and so does the offer to reload once the bytes are back.
+            CHECK(controller.commands()->destinationReloadable());
+        });
     suite.run("repository mode fails before git add when the written revision was edited outside the app", [] {
         Session session;
         const auto merged = session.repo.path("tracked.txt");
@@ -718,21 +1018,8 @@ int main(int argc, char **argv)
                                                              openedFile(session.controller).current().id, draft))
               == Transition::Applied);
         const auto revision = session.revision();
-        // The write succeeds and the refused staging hook keeps the conflict in the index.
-        const auto hook = session.repo.path(".git/hooks/post-index-change");
-        writeFile(hook, "#!/bin/sh\nexit 1\n");
-        CHECK(QFile::setPermissions(hook, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
-        CHECK(session.controller.commands()->markResolved(session.id, revision, true));
-        waitFor(session.controller, [&] {
-            const auto &file = openedFile(session.controller);
-            return !session.controller.commands()->resolutionBusy() && file.publication().writeOutcome()
-                && file.publication().writeOutcome()->outcome == Outcome::Succeeded
-                && file.publication().stageOutcome();
-        });
-        CHECK(openedFile(session.controller).publication().stageOutcome()->outcome == Outcome::Failed);
+        writeWithStagingRefused(session, revision);
         CHECK(readFile(merged) == reviewed && unmerged(session.repo).contains("tracked.txt"));
-        // Staging would now succeed, so any git add would reach stage 0.
-        CHECK(QFile::remove(hook));
         const QByteArray external("edited outside the app after the write\n");
         writeFile(merged, external);
         CHECK(session.controller.commands()->markResolved(session.id, revision, true));
@@ -751,6 +1038,13 @@ int main(int argc, char **argv)
         CHECK(index.contains(" 1\ttracked.txt") && !index.contains(" 0\ttracked.txt"));
         CHECK(unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
+        // The first refusal already offers the reload, in the notice and the handoff.
+        CHECK(session.controller.commands()->destinationReloadable());
+        const auto route = handoffEntry(session.controller.completion()->handoffData(), session.id);
+        CHECK(route.value("action").value<FileStates::NextAction>() == FileStates::NextAction::ReloadDestination);
+        // Once the file holds the written bytes again, the reload stages them.
+        writeFile(merged, reviewed);
+        expectReloadPublishes(session, revision, reviewed);
     });
     suite.run("leave refuses unrecovered input and a running resolution and finish waits for a clean handoff", [] {
         Session session;
@@ -1030,6 +1324,11 @@ int main(int argc, char **argv)
                  return controller.commands()->markResolved(id, revision, true);
              },
              stale, blocked},
+            {"reloadDestination",
+             [&](const QString &id, const QString &revision) {
+                 return controller.commands()->reloadDestination(id, revision);
+             },
+             stale, blocked},
             {"discardUnsaved",
              [&](const QString &id, const QString &revision) {
                  return commandResult(controller, controller.commands()->discardUnsaved(id, revision));
@@ -1111,8 +1410,11 @@ int main(int argc, char **argv)
         const auto resolution = QMetaMethod::fromSignal(&FileCommands::resolutionChanged);
         for (const auto *name : {"resolutionConfirmation", "resolutionFileId", "resolutionRevision", "resolutionBusy"})
             notifies(controller.commands(), name, resolution);
+        notifies(controller.commands(), "destinationReloadable",
+                 QMetaMethod::fromSignal(&FileCommands::destinationReloadableChanged));
         const auto mergetool = QMetaMethod::fromSignal(&MergetoolStatus::changed);
-        for (const auto *name : {"parentStagingPath", "waiting", "parentSessionActive", "canEndParentSession"})
+        for (const auto *name :
+             {"parentStagingPath", "waiting", "waitingUnassigned", "parentSessionActive", "canEndParentSession"})
             notifies(controller.mergetool(), name, mergetool);
         notifies(controller.completion(), "handoff", QMetaMethod::fromSignal(&SessionCompletion::changed));
 

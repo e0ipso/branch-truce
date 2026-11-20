@@ -33,6 +33,14 @@ bool MergetoolStatus::waiting() const
     return file && session_.waitingOn(QByteArray::fromStdString(file->path()));
 }
 
+bool MergetoolStatus::waitingUnassigned() const
+{
+    const auto *file = files_.store().file(selection_.id());
+    if (!file) return false;
+    const auto path = QByteArray::fromStdString(file->path());
+    return session_.hasWaiter(path) && !session_.waitingOn(path);
+}
+
 bool MergetoolStatus::parentSessionActive() const { return session_.parentSessionActive(); }
 
 bool MergetoolStatus::canEndParentSession() const { return session_.canEndParentSession(); }

@@ -66,6 +66,8 @@ ObjectModel {
                 && fileNotices.mergetool.parentStagingPath.length === 0)
         type: Kirigami.MessageType.Error
         text: fileNotices.selectedFile.status
+        // Offered only when the write failed because the repository file changed.
+        actions: [NamedAction { controlName: "reloadDestination"; text: qsTr("Reload the repository file and retry"); visible: fileNotices.commands.destinationReloadable; enabled: !fileNotices.commands.resolutionBusy && !fileNotices.composing; onTriggered: fileNotices.commands.reloadDestination(fileNotices.selectedFile.fileId, fileNotices.selectedFile.currentRevision) }]
     }
     PlainInlineMessage {
         objectName: "staleStagedNotice"
@@ -87,14 +89,19 @@ ObjectModel {
                : qsTr("Written, unresolved. Waiting for Git to stage %1.")).arg(fileNotices.mergetool.parentStagingPath)
         actions: [NamedAction { controlName: "recheckParentStaging"; text: qsTr("Check Git staging"); enabled: !fileNotices.commands.resolutionBusy; onTriggered: fileNotices.mergetool.recheckParentAcknowledgment() }]
     }
+    // A path held back from editing cannot take Git's wait yet, but Leave still releases Git.
     PlainInlineMessage {
         objectName: "mergetoolHolding"
         onPlainTextRequested: item => fileNotices.plainTextRequested(item)
         type: Kirigami.MessageType.Information
         icon.name: "vcs-conflicting"
         Layout.fillWidth: true
-        visible: fileNotices.mergetool.waiting
-        text: qsTr("Git is waiting on this path. Mark resolved hands it back. Leave keeps the draft and returns the original file.")
+        visible: fileNotices.mergetool.waiting || (fileNotices.mergetool.waitingUnassigned && !fileNotices.supportedSelection)
+        text: fileNotices.mergetool.waiting
+            ? qsTr("Git is waiting on this path. Mark resolved hands it back. Leave keeps the draft and returns the original file.")
+            : fileNotices.selectedFile.support === FileStates.SupportKind.LargeFile
+            ? qsTr("Git is waiting on this path. Load the large file to resolve it. Leave keeps the draft and returns the original file.")
+            : qsTr("Git is waiting on this path, but Branch Truce cannot resolve it. Leave returns the original file to Git unresolved.")
         actions: [NamedAction { controlName: "leaveMergetool"; text: qsTr("Leave unresolved"); enabled: !fileNotices.commands.resolutionBusy; onTriggered: fileNotices.mergetool.leave() }]
     }
     // A path whose result Git already staged is not waiting for a launch.

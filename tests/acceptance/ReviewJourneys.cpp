@@ -515,6 +515,51 @@ void saveKeepsAnAppOnlyDraftAndMarkResolvedPublishes(Sandbox &sandbox)
     checkOffline(scene);
 }
 
+// --- a write the changed repository file refused -------------------------------------------
+
+void reloadRetriesAWriteTheChangedFileRefused(Sandbox &sandbox)
+{
+    Repository repo({chosenByHand("changed.txt")});
+    Scene scene(sandbox, repo);
+    auto &app = scene.app();
+    const auto merged = repo.path("changed.txt");
+    const auto launched = readFile(merged);
+    clickFile(scene, "changed.txt");
+    appendToResult(scene, "reviewed");
+    const auto reviewed = work(scene, "changed.txt");
+
+    // Another program edits the file, so Mark resolved does not write over it.
+    test_support::writeFile(merged, launched + "edited elsewhere\n");
+    markResolvedByMouse(scene);
+    settleFor("write failure notice", [&] { return scene.item("fileFailureNotice")->isVisible(); });
+    expectText(app.feedback()->message(),
+               "The repository file changed outside Branch Truce. The draft was not published.", "refusal");
+    auto *reload = test_support::waitForLayout(scene.window(), QStringLiteral("reloadDestination"), Scene::settleMs);
+    CHECK(reload->isVisible() && reload->isEnabled());
+    expectText(scene.handoffEntries().value(fileId("changed.txt")).actionLabel, "Reload the repository file and retry",
+               "handoff route");
+
+    // While the edit stays, the reload keeps the failure and the draft.
+    scene.click("reloadDestination");
+    settleFor("reload refused", [&] {
+        return !app.commands()->resolutionBusy()
+            && app.feedback()->message()
+            == QStringLiteral("The repository file changed outside Branch Truce. The draft is still available.");
+    });
+    CHECK(scene.item("fileFailureNotice")->isVisible() && !scene.progress().resolved);
+    CHECK(work(scene, "changed.txt") == reviewed);
+    CHECK(readFile(merged) == launched + "edited elsewhere\n" && repo.unmerged("changed.txt"));
+
+    // Once the program takes its edit back, the reload retries and Mark resolved writes and resolves.
+    test_support::writeFile(merged, launched);
+    scene.click("reloadDestination");
+    settleFor("reloaded and resolved", [&] { return !app.commands()->resolutionBusy() && scene.progress().resolved; });
+    expectText(app.feedback()->message(), "Written and resolved.", "resolution");
+    CHECK(!scene.item("fileFailureNotice")->isVisible());
+    CHECK(readFile(merged) == reviewed.shown.toUtf8() && !repo.unmerged("changed.txt"));
+    checkOffline(scene);
+}
+
 // --- scoped search, wrapping, whitespace and clipboard -------------------------------------
 
 // What every reading aid must leave alone: the result, its history and both sources.
@@ -724,6 +769,9 @@ void addReviewJourneys(JourneySuite &suite)
     add("PRD.md:135 PRD.md:153 Save keeps an app-only draft and Mark resolved without a prior Save confirms, writes "
         "and resolves",
         saveKeepsAnAppOnlyDraftAndMarkResolvedPublishes);
+    add("a write refused because the repository file changed offers Reload, which keeps the draft until the file "
+        "holds its bytes again",
+        reloadRetriesAWriteTheChangedFileRefused);
     add("PRD.md:137 PRD.md:141 scoped search, wrapping, whitespace, mouse inspection and clipboard shortcuts keep the "
         "work",
         readingAidsKeepTheWork);

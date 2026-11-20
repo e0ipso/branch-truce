@@ -8,6 +8,7 @@
 #include <QStringList>
 #include <QVariantMap>
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -63,6 +64,8 @@ struct SessionActivity {
     int unreleasedLaunches = 0;
     // The session already finished or was left.
     bool ended = false;
+    // Whether a file's failed write can reload its repository file and retry.
+    std::function<bool(const std::string &fileId)> reloadable = {};
 };
 
 class SessionHandoff {
