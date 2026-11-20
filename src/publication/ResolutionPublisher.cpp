@@ -114,7 +114,9 @@ bool ResolutionPublisher::adoptCopiedLaunch(const std::string &fileId, const Sna
                                             const storage::DestinationCapture &live)
 {
     const auto *session = file(fileId);
-    if ((attempt_ && attempt_->fileId == fileId) || !session || session->support() != Support::Supported
+    // The same files readBaselines captures: a large file still held for its load takes the baseline too.
+    if ((attempt_ && attempt_->fileId == fileId) || !session
+        || (session->support() != Support::Supported && session->support() != Support::LargeFile)
         || !session->snapshots() || !live.destination || live.destination->identity() != identity
         || live.destination->bytes().toStdString() != session->snapshots()->launchResult.text.bytes)
         return false;
