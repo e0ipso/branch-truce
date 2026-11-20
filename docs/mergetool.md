@@ -12,12 +12,15 @@ What has been run:
   against the launcher built from this repository. Only Git 2.43.0 on a
   Tuxedo OS 24.04 host has been tested.
 - The installed package's `/usr/bin/branch-truce` ran under a real
-  `git mergetool` in containers of both OS bases, with Git 2.53.0 on the
-  Kubuntu 26.04 base and Git 2.43.0 on the Tuxedo OS 24.04 base. See
+  `git mergetool` in containers of both OS bases: Git 2.53.0 on the
+  Kubuntu 26.04 base, one handoff resolved and one with the window killed,
+  and Git 2.43.0 on the Tuxedo OS 24.04 base. See
   [platform-validation.md](platform-validation.md#mergetool-handoff-with-real-git).
 
 Neither is a claim that the tool works on a Kubuntu 26.04 or Tuxedo OS
-desktop. No real desktop has been tested.
+desktop. No real desktop has run it, so the Plasma menu, KWin scaling, input
+methods and screen readers are untested. See the status table in
+[platform-validation.md](platform-validation.md#historical-installed-package-status).
 
 ## Register the tool
 
@@ -32,16 +35,9 @@ git config --global mergetool.keepBackup false
 git config --global mergetool.keepTemporaries false
 ```
 
-The result is the tool section the tests write:
-
-```ini
-[mergetool "truce"]
-	cmd = MERGED=\"$MERGED\" BASE=\"$BASE\" LOCAL=\"$LOCAL\" REMOTE=\"$REMOTE\" '/usr/bin/branch-truce' --mergetool
-	trustExitCode = true
-[mergetool]
-	keepBackup = false
-	keepTemporaries = false
-```
+The tests write the same tool section.
+[mergetool-launcher.md](mergetool-launcher.md#tested-with-a-real-parent) lists
+their complete configuration.
 
 `/usr/bin/branch-truce` is where the `.deb` installs the program. For a
 build tree or a custom install prefix, put that absolute path between the
@@ -88,6 +84,10 @@ longer on a slow machine. Add `--no-window` after `--mergetool` to stop the
 launcher starting a window. It then
 exits 1 with "No Branch Truce session is listening for this repository."
 when none is open, and Git restores the file.
+
+The launcher and the window talk over a socket in
+`$XDG_RUNTIME_DIR/branch-truce`, or `/tmp/branch-truce-<uid>` when that path
+is too long. Both must run as the same user.
 
 Start `git mergetool` from the same environment as the window, or let the
 launcher start the window. A window whose Git reads other configuration files
@@ -153,29 +153,11 @@ including drafts for paths Git never launched.
 
 ## What Branch Truce does not control
 
-Git runs the configured command in its own shell, and that shell is outside
-the app. By the time the launcher starts, Git has already written the file
-and its backup and temporary copies, and has run any checkout filter, hook
-or filesystem monitor configured for that step. The launcher trusts the four
-paths it receives and copies their bytes. After the launcher exits, Git's
-own `git add` stages the file. The app checks the result in the index but
-cannot stop Git or another program changing the file before that.
-
-The app's guards cover only the handoff it performs. When `core.fsmonitor`
-is set during the wait, Mark resolved still writes the file but refuses to
-release Git, and leaving restores the launch bytes. Guards for filters, hooks
-and other helpers are tested against the app's own Git calls, not under a
-real `git mergetool`. See
+Git runs the configured command in its own shell. Everything Git does before
+the launcher starts is outside the app: writing the file and its copies, and
+running checkout filters, hooks or a filesystem monitor. So is Git's own
+`git add` after the launcher exits. The app checks the result in the index, but it cannot stop
+Git or another program changing the file before that. When `core.fsmonitor` is
+set during the wait, Mark resolved still writes the file but refuses to release
+Git, and leaving restores the launch bytes. See
 [mergetool-launcher.md](mergetool-launcher.md#trust-boundaries).
-
-## Limits
-
-- The real-parent suite has run only Git 2.43.0. The container runs add
-  two Git 2.53.0 handoffs on the Kubuntu 26.04 base, one resolved and one
-  with the window killed.
-- No Kubuntu 26.04 or Tuxedo OS desktop has run the tool. The Plasma menu,
-  KWin scaling, input methods and screen readers are untested; see the
-  status table in [platform-validation.md](platform-validation.md#status).
-- The launcher and the window talk over a socket in
-  `$XDG_RUNTIME_DIR/branch-truce`, or `/tmp/branch-truce-<uid>` when that path
-  is too long. Both must run as the same user.

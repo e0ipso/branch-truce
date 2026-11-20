@@ -23,7 +23,7 @@ is not recovered work.
 | Indexed lines | 65536 | the edit is refused and the previous buffer stays in place |
 | Revision history | 1024 undo entries, 268435456 retained bytes | oldest undo entries are pruned; current, launch and publication-held revisions remain protected |
 | Metadata | 65536 entries, 16777216 bytes | derived decisions, ranges or command candidates are refused before exceeding admission |
-| Destination read | 16908291 raw bytes | publication refuses the changed or oversized destination before reading it into memory |
+| Destination read | 16908291 raw bytes, the editable envelope expanded to UTF-16 with CRLF and a BOM ([destination publication](destination-publication.md#containment-and-identity)) | publication refuses the changed or oversized destination before reading it into memory |
 | Line alignment | 67108864 work units. Myers aligns a pair when its changed lines between the shared first and last lines number at most 67108864 / (N' + M'), where N' and M' are the source and result line counts between them, and its search stays within twice that many units. Otherwise the banded Hirschberg aligns it when its band cost is at most 67108864 line pairs. Pairs with few changed lines fit at any length up to 65536 lines (see `src/core/Correspondence.md`) | that source and result are one ambiguous passage: no choice in it is mapped and only direct editing applies |
 
 Each Git phase, including the canonical blob read and the checkout read, gets
@@ -32,21 +32,13 @@ Preflight output does not reduce a later read. A worktree file read stops at the
 recovery ceiling, and a complete read still has to fit the line and text-size
 limits before it becomes editable.
 
-Destination reads compare the launch identity before allocating a buffer, then
-read bounded chunks and check for growth and identity changes. The raw ceiling
-allows the canonical text envelope expanded to UTF-16 with CRLF and a BOM.
-Deferred large-file loads retain the same destination baseline; an outside edit
-continues to block publication after loading.
+An edit that would cross a line or text-size limit is not acknowledged.
+The editor does not load that text. Mark resolved of a result that is already
+inside the envelope is unchanged.
 
 Recovery storage, continuation and inventory limits are documented in
 [the recovery journal contract](recovery-journal.md#continuation-and-bounded-discovery).
 They retain pending input on refusal and never report partial recovery as success.
-
-An edit that would cross a line or text-size limit is not acknowledged.
-The editor does not load that text. Mark resolved of a result that is already
-inside the envelope is unchanged. A recovery commit that exceeds the payload
-limit leaves the acknowledged journal record in place and says that pending
-input is retained.
 
 ## Word-level differences
 
@@ -123,7 +115,4 @@ It is excluded from routine CTest and CI because CPU cost depends on the runner
 and native style. The registered `performance.workloads` test checks completion,
 refusal and recorded resource limits without latency assertions; its evidence
 profile still measures budgets. Focused editor and syntax-highlighting tests
-cover correctness in CI. Command computation and persistence use
-the serial journal worker; these historical synchronous cost breakdowns cannot
-predict current GUI latency. A journal append compares `fstat` with the last
-verified stamp and rereads the journal when it differs.
+cover correctness in CI.

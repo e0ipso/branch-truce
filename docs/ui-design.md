@@ -384,7 +384,6 @@ How they apply here:
 - The per-side source hover arrow accepts a range; the ignore icon beside it declines that side. Both are reversible with undo.
 - The conflict stepper in the header band shows the undecided conflicts left in the selected file and, when clicked, moves to the next one.
 - Take both respects the order of the sources and never reorders text silently.
-- Mark resolved is always available for a file the app can edit (`PRD.md:103`). While source choices remain undecided it opens a confirmation that names how many, instead of being disabled. Once none remain, it acts at once.
 - The terminal actions are Save (keep an app-only draft) and Mark resolved (write the result and resolve the file in Git). Nothing else ends work on a file.
 
 ## 9. Test contract
@@ -395,7 +394,7 @@ The acceptance and UI tests find controls by `objectName` and read their state b
 - Icon-only buttons set `text`. Tests and assistive tools read the label there, not from the icon.
 - Status text stays in `Label`s, so tests can read `text` directly. Do not move it into painted items or images.
 - A change that alters when a control is visible, or where it lives, updates the journeys that check it in the same change.
-- The size claims in section 2 are enforced by the window-fit journey in `tests/acceptance/JourneyAcceptanceTests.cpp`. If a layout change needs a different budget, update the journey and section 2 together.
+- The window-fit journey enforces the size claims in section 2 (vertical budget).
 - `branch_truce_ui_qmllint` must stay at zero warnings.
 - A change under `src/ui` ships with before and after captures of every surface it affects, in BreezeLight and BreezeDark, attached to the resolution of its work item. Tests and `qmllint` do not show the whole window. `tools/preview-app.sh` takes the captures; set `PREVIEW_FILE` when the change shows on a text or Markdown file (see [build.md](build.md)).
 

@@ -24,9 +24,7 @@ menu delegates are created when their menu opens, rather than on every edit.
 
 Paths and captured identities render as plain text, including in native tooltips.
 Controls with custom labels leave their native backing text empty because a
-style can retain an unused label that would otherwise interpret markup. Preview
-confirmation and staged-discard dialogs await their correlated durable command
-completion before closing; a refused or failed operation retains the draft.
+style can retain an unused label that would otherwise interpret markup.
 
 Every pane has a line-number gutter. The `LineGutter` component sits inside the
 pane's Flickable as a sibling of the TextArea, so the result TextArea is still
@@ -177,11 +175,6 @@ the editor, is durable (docs/recovery-journal.md, Typing). A failed commit
 keeps the pending input visible and blocks further edits until recovery is retried.
 Source comparisons and view changes do not replace that pending draft.
 
-Permanent comparison regressions are deferred to the wave gate. Focused authoring
-checks use disposable Qt scenes and merge/rebase repositories. Product QML changes
-also require the full integrated e2e gate. The standalone experiment below remains
-useful for component behavior and does not replace product checks.
-
 ## Candidates and decision
 
 - TextArea inherits TextEdit's document, selection and input APIs and adds Quick
@@ -224,7 +217,7 @@ only once across repeated retries.
 ### Text and positions
 
 The baseline `Aé😀é\n` occupies 11 UTF-8 bytes and 7 editor UTF-16 units. The
-nmapping includes the end boundary, round-trips every scalar boundary in both
+mapping includes the end boundary, round-trips every scalar boundary in both
 directions, and rejects interior UTF-8 bytes, split surrogates, unpaired
 surrogates, malformed UTF-8 and out-of-range positions. Combining marks remain
 separate scalar boundaries; cursor movement may instead follow grapheme clusters.
@@ -321,9 +314,7 @@ unsaved; it implies neither review nor Git resolution.
 
 ## Integration and platform gates
 
-New committed regression tests are deferred to the wave gate under the worker
-contract; these local acceptance fixtures remain reproducible. Add coverage for
-all native mutation routes.
+Add coverage for all native mutation routes.
 Representative editor, correspondence, Git and recovery measurements, including long lines, are in tests/fixtures/performance/evidence.md. The enforced envelope is documented in [resource limits](resource-limits.md). Replace full-buffer snapshots,
 linear offset scans and whole-text rerendering before production-scale use.
 Implement acknowledgment queuing and normal-close/file-switch behavior, including
@@ -334,10 +325,8 @@ This run used Qt's software offscreen platform. Synthetic IME events validate th
 Qt event API, not a physical keyboard, IBus/Fcitx candidate window or real input
 context. Kubuntu 26.04 and Tuxedo OS Wayland sessions still need physical composed
 input, clipboard/selection, pointer selection, scrolling, bidi hit testing,
-scaling, Breeze/dark theme and accessibility checks. No installed components were
-changed. The standalone experiment changed no shared product render markup. The
-subsequent product comparison requires the full integrated e2e gate and retains
-the platform obligations.
+scaling, Breeze/dark theme and accessibility checks. The product comparison
+keeps these platform obligations.
 
 ## Primary API references
 
