@@ -721,15 +721,16 @@ public:
             const auto &file = conflict.file();
             CHECK(file.publication().writeOutcome() && file.publication().writeOutcome()->revision == revision
                   && file.publication().writeOutcome()->outcome == Outcome::Failed);
-            CHECK(QString::fromStdString(file.publication().writeOutcome()->detail).contains(QLatin1String("content")));
+            CHECK(QString::fromStdString(file.publication().writeOutcome()->detail)
+                      .contains(QLatin1String("changed outside Branch Truce")));
             CHECK(!file.publication().written() && !file.publication().staged() && !file.facts().resolved);
             CHECK(file.current().draft.text == conflict.reviewed.toStdString());
             CHECK(readFile(conflict.path(QStringLiteral("result.txt"))) == external);
             CHECK(conflict.indexEntries() == conflicted);
             const auto replay = replayedJournal(conflict.controller->store()->recoveryDirectory());
-            const auto *publication = journalMutation(replay, MutationKind::Publication);
-            CHECK(publication && publication->observation == MutationObservation::NotAttempted
-                  && !publication->completed);
+            // The fresh capture before the write already refuses the changed
+            // bytes, so no publication mutation is journaled.
+            CHECK(journalMutation(replay, MutationKind::Publication) == nullptr);
             CHECK(observation(replay.files.front()) == observation(file));
         });
         // Git index faults run through the real publisher; the recovery journal syncs normally
