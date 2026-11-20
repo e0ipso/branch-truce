@@ -1,3 +1,9 @@
+## [1.6.2](https://github.com/e0ipso/branch-truce/compare/v1.6.1...v1.6.2) (2026-11-20)
+
+### Bug Fixes
+
+* align long texts by their changed-line count ([#21](https://github.com/e0ipso/branch-truce/issues/21)) ([c174dbb](https://github.com/e0ipso/branch-truce/commit/c174dbbec83303c50be15705fd78231fe87917cc)), closes [#15](https://github.com/e0ipso/branch-truce/issues/15)
+
 ## [1.6.1](https://github.com/e0ipso/branch-truce/compare/v1.6.0...v1.6.1) (2026-11-19)
 
 ### Bug Fixes
