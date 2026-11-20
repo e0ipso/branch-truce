@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -100,6 +101,16 @@ private:
     [[nodiscard]] bool parentOwns(const QByteArray &path) const;
     [[nodiscard]] bool previouslyWritten(const FileSession &session, RevisionId revision) const;
     [[nodiscard]] bool matchesWrittenBaseline(const FileSession &session, const Attempt &attempt) const;
+    // A recorded Uncertain outcome or an exchange slot a publication kept waits
+    // for inspection. The baseline must not move until it is reconciled.
+    [[nodiscard]] bool awaitsReconciliation(const FileSession &session) const;
+    // Makes live, a fresh off-thread capture of session's repository file, its
+    // baseline when live holds exactly the baseline bytes, or the launch bytes
+    // when allowLaunchBytes is set. Otherwise, and always while the file
+    // awaitsReconciliation, it returns false and keeps the baseline. It reads no file.
+    bool rebaseOnLive(const FileSession &session, const storage::DestinationCapture &live, bool allowLaunchBytes);
+    // Remembers the file when the attempt's writer kept its exchange slot.
+    void noteRetainedSlot();
     [[nodiscard]] bool preserveWrite() const;
     [[nodiscard]] static StartResult result(Transition transition, const QString &detail);
     void fail(Outcome outcome, const QString &detail, bool stage);
@@ -128,6 +139,9 @@ private:
     git::RepositoryContext repository_;
     git::TextConversion conversion_;
     Baselines baselines_;
+    // Files whose publication kept its exchange slot in this session. A later
+    // outcome can replace the recorded Uncertain one; this set stays.
+    std::set<std::string> retained_;
     std::shared_ptr<Attempt> attempt_;
     ParentStaging parent_;
     std::optional<std::pair<std::string, RevisionId>> confirmation_;

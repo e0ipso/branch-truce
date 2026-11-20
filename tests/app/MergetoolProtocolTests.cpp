@@ -562,8 +562,14 @@ void intakesArePrivateCheckedAndRemoved()
     CHECK(owner.size() == 2 && owner[0] == QByteArray::number(QCoreApplication::applicationPid()));
     writeFile(reused + QStringLiteral("/launcher"),
               owner[0] + ' ' + QByteArray::number(owner[1].toLongLong() + 1) + '\n');
+    // A launcher creates its owner record before it writes it. A prune that
+    // runs in between, as a window starts to listen, keeps that intake.
+    const auto writing = writeMergetoolIntake(root, key, uuid(), sources, &error);
+    CHECK(!writing.isEmpty());
+    writeFile(writing + QStringLiteral("/launcher"), {});
     CHECK_EQ(pruneMergetoolIntakes(root, key), 2);
     CHECK(!QFileInfo::exists(orphan) && !QFileInfo::exists(reused) && QFileInfo::exists(live));
+    CHECK(QFileInfo::exists(writing));
 }
 
 void aRestoreReplacesTheFileWholeAndKeepsItsMode()

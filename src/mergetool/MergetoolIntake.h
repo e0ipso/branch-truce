@@ -51,6 +51,8 @@ using MergetoolRead = std::function<bool(const QByteArray &, QByteArray *, Probl
 void removeMergetoolIntake(const QString &directory);
 // Removes the session's intakes whose launcher process has ended, as after a
 // launcher was killed. A process that reuses the launcher's PID does not keep
-// an intake, since its start time differs. Blocking; returns how many it removed.
+// an intake, since its start time differs. An intake without a complete owner
+// record may still be being written, so it stays until it is a minute old.
+// Blocking; returns how many it removed.
 int pruneMergetoolIntakes(const QString &root, const QByteArray &sessionKey);
 }

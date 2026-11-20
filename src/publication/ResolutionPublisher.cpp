@@ -58,6 +58,7 @@ ResolutionPublisher::ResolutionPublisher(SessionStore &files, SessionCoordinator
         conversion_.cancel();
         attempt_.reset();
         baselines_.clear();
+        retained_.clear();
         parent_.clear();
         confirmation_.reset();
     });
@@ -561,6 +562,32 @@ bool ResolutionPublisher::matchesWrittenBaseline(const FileSession &session, con
     return destination && destination->bytes() == attempt.serialized;
 }
 
+bool ResolutionPublisher::awaitsReconciliation(const FileSession &session) const
+{
+    const auto &publication = session.publication();
+    for (const auto *outcome :
+         {&publication.checkpointOutcome(), &publication.writeOutcome(), &publication.stageOutcome()})
+        if (*outcome && (*outcome)->outcome == Outcome::Uncertain) return true;
+    return retained_.contains(session.id());
+}
+
+bool ResolutionPublisher::rebaseOnLive(const FileSession &session, const storage::DestinationCapture &live,
+                                       bool allowLaunchBytes)
+{
+    const auto found = baselines_.find(session.id());
+    if (awaitsReconciliation(session) || !live.destination || !session.snapshots() || found == baselines_.end())
+        return false;
+    auto &baseline = found->second;
+    const auto &bytes = live.destination->bytes();
+    if (!baseline.destination
+        || (bytes != baseline.destination->bytes()
+            && (!allowLaunchBytes || bytes.toStdString() != session.snapshots()->launchResult.text.bytes)))
+        return false;
+    baseline.destination = live.destination;
+    baseline.diagnostic.clear();
+    return true;
+}
+
 void ResolutionPublisher::inspectedIndex(storage::DestinationCapture current)
 {
     if (!attempt_) return;
@@ -590,25 +617,23 @@ void ResolutionPublisher::inspectedIndex(storage::DestinationCapture current)
         return;
     }
     // Git mergetool moves the worktree file aside and copies it back before the
-    // tool runs. The launch inode is then the backup. Publish onto the copy when
-    // its bytes are still the captured launch bytes; a different file is refused.
-    // A failed exit moves that backup back over a written file, so the launch
-    // bytes are accepted after a write as well.
-    if (attempt_->parentOwned) {
-        auto live = current;
-        auto baseline = baselines_.find(attempt_->fileId);
-        if (!live.destination || baseline == baselines_.end() || !baseline->second.destination
-            || (live.destination->bytes() != baseline->second.destination->bytes()
-                && live.destination->bytes().toStdString() != session->snapshots()->launchResult.text.bytes)) {
-            fail(Outcome::Failed,
-                 live.problem.isEmpty()
-                     ? tr("The repository file changed while Git was waiting. The draft was not published.")
-                     : problem_text::text(live.problem),
-                 false);
-            return;
-        }
-        baseline->second.destination = std::move(live.destination);
-        baseline->second.diagnostic.clear();
+    // tool runs. It moves the backup back when the tool exits non-zero, as after
+    // a refused attach. The bytes stay; the inode or the ctime changes. Publish
+    // onto the live file when it still holds the baseline or launch bytes; a
+    // different file is refused. On a parent-owned path the backup can land on a
+    // written file, so the launch bytes count after a write as well. Without a
+    // parent the file re-bases only until it is written. An Uncertain outcome or
+    // a retained exchange slot keeps the baseline, and the writer checks the
+    // file against it.
+    if ((attempt_->parentOwned || !session->publication().written()) && !awaitsReconciliation(*session)
+        && !rebaseOnLive(*session, current, true)) {
+        fail(Outcome::Failed,
+             !current.problem.isEmpty() ? problem_text::text(current.problem)
+                 : attempt_->parentOwned
+                 ? tr("The repository file changed while Git was waiting. The draft was not published.")
+                 : tr("The repository file changed outside Branch Truce. The draft was not published."),
+             false);
+        return;
     }
     auto evidence = std::make_shared<storage::PublicationResult>();
     const auto baseline = baselines_.at(attempt_->fileId).destination;
@@ -650,9 +675,16 @@ void ResolutionPublisher::inspectedIndex(storage::DestinationCapture current)
         fail(Outcome::Failed, tr("Publication could not start. The draft is still available."), preserveWrite());
 }
 
+void ResolutionPublisher::noteRetainedSlot()
+{
+    if (attempt_ && attempt_->published && !attempt_->published->retainedPath.isEmpty())
+        retained_.insert(attempt_->fileId);
+}
+
 void ResolutionPublisher::published(const TaskCompletion &completion, const storage::PublicationResult &published)
 {
     if (!attempt_) return;
+    noteRetainedSlot();
     const bool writerUncertain = published.state == storage::PublicationState::Uncertain
         || (published.state == storage::PublicationState::Published
             && published.failure != storage::DestinationFailure::None);
@@ -749,6 +781,7 @@ void ResolutionPublisher::noteStale(const TaskCompletion &completion)
         clearAttempt();
         return;
     }
+    noteRetainedSlot();
     const auto outcome = failedObservation(completion.result);
     const bool wrote = completion.result.mutation == MutationObservation::ObservedChanged
         && attempt_->step == Step::Publish && completion.result.status == TaskStatus::Succeeded;

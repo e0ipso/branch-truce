@@ -114,6 +114,9 @@ private:
     };
     void attachReceived(quint64 connection, const AttachMessage &message);
     void intakeChecked(quint64 connection, const AttachMessage &message, const IntakeCheck &check);
+    // Why a launcher cannot wait on path, translated, or empty when it can.
+    // A large file is accepted; it takes the wait once the user loads it.
+    [[nodiscard]] static QString attachRefusal(const FileSession *file, const QByteArray &path);
     void closed(quint64 connection);
     void reject(quint64 connection, const QString &invocation, const QString &reason);
     // Removes the waiter and gives its staging assignment to the next one.

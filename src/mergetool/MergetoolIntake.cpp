@@ -20,7 +20,8 @@ namespace branch_truce {
 namespace {
 // The file naming the launcher that owns an intake, written before its copies.
 constexpr char kOwnerFile[] = "launcher";
-// An intake with no owner file yet is still being written, unless it is older than this.
+// An intake without a complete owner record is still being written, unless it
+// is older than this.
 constexpr qint64 kUnownedIntakeSeconds = 60;
 
 QString fail(Problem *error, ProblemCode problem)
@@ -193,11 +194,15 @@ int pruneMergetoolIntakes(const QString &root, const QByteArray &sessionKey)
     const auto now = QDateTime::currentDateTime();
     for (const auto &entry : key.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::NoSymLinks)) {
         QFile owner(entry.filePath() + QLatin1Char('/') + QLatin1String(kOwnerFile));
+        // The launcher creates its owner record and then writes it, newline
+        // last. Until then it may still be writing the intake.
+        bool complete = false;
         if (owner.open(QIODevice::ReadOnly)) {
-            if (launcherAlive(owner.read(64))) continue;
-        } else if (entry.lastModified().secsTo(now) < kUnownedIntakeSeconds) {
-            continue;
+            const auto record = owner.read(64);
+            if (launcherAlive(record)) continue;
+            complete = record.endsWith('\n');
         }
+        if (!complete && entry.lastModified().secsTo(now) < kUnownedIntakeSeconds) continue;
         if (QDir(entry.filePath()).removeRecursively()) ++removed;
     }
     return removed;
